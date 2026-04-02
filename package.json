@@ -1,0 +1,61 @@
+{
+  "name": "cache-bridge",
+  "version": "0.1.0",
+  "description": "Unified multi-layer caching for Node.js with memory, Redis, stampede prevention, and invalidation helpers.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "packages/nestjs/dist",
+    "examples",
+    "benchmarks"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "packages/nestjs"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "build:nestjs": "npm --workspace @cache-bridge/nestjs run build",
+    "build:all": "npm run build && npm run build:nestjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench:latency": "tsx benchmarks/latency.ts",
+    "bench:stampede": "tsx benchmarks/stampede.ts"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
+    "async-mutex": "^0.4.1"
+  },
+  "peerDependencies": {
+    "ioredis": ">=5.0.0"
+  },
+  "optionalDependencies": {
+    "ioredis": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@types/node": "^22.15.2",
+    "ioredis": "^5.6.1",
+    "ioredis-mock": "^8.13.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^1.6.1"
+  }
+}
