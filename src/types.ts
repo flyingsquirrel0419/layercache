@@ -75,7 +75,7 @@ export interface InvalidationBus {
   publish(message: InvalidationMessage): Promise<void>
 }
 
-export interface CacheBridgeOptions {
+export interface CacheStackOptions {
   logger?: CacheLogger | boolean
   metrics?: boolean
   stampedePrevention?: boolean

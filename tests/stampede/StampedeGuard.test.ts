@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CacheBridge } from '../../src/CacheBridge'
+import { CacheStack } from '../../src/CacheStack'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 describe('Stampede prevention', () => {
   it('runs the fetcher once for concurrent requests', async () => {
-    const cache = new CacheBridge([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     let executions = 0
 
     const results = await Promise.all(

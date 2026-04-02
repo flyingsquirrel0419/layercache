@@ -1,4 +1,4 @@
-# 📦 cache-bridge — 프로젝트 플랜
+# 📦 cachestack — 프로젝트 플랜
 
 > 메모리(L1) → Redis(L2) → DB(L3) 계층 캐시를 하나의 API로 통합하는 라이브러리
 
@@ -16,7 +16,7 @@
 
 ### 해결책
 
-**cache-bridge**는 여러 캐시 레이어를 하나의 통합 인터페이스로 묶어준다:
+**cachestack**는 여러 캐시 레이어를 하나의 통합 인터페이스로 묶어준다:
 
 1. L1 Miss 시 L2 자동 조회
 2. L2에서 찾으면 L1에 자동 채우기 (backfill)
@@ -71,12 +71,12 @@
 ### 기본 사용법
 
 ```typescript
-import { CacheBridge, MemoryLayer, RedisLayer } from 'cache-bridge'
+import { CacheStack, MemoryLayer, RedisLayer } from 'cachestack'
 import { Redis } from 'ioredis'
 
 const redis = new Redis(process.env.REDIS_URL)
 
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new MemoryLayer({ ttl: 60, maxSize: 1000 }),      // L1: 로컬 메모리 (60초)
   new RedisLayer({ client: redis, ttl: 3600 }),      // L2: Redis (1시간)
 ])
@@ -124,7 +124,7 @@ const [user1, user2, user3] = await cache.mget([
 ```typescript
 // 동일 키에 대해 동시에 100개 요청이 들어와도
 // fetcher는 한 번만 실행됨 (나머지 99개는 대기)
-const cache = new CacheBridge([...], {
+const cache = new CacheStack([...], {
   stampedePrevention: true,  // 기본값: true
 })
 
@@ -135,12 +135,12 @@ const cache = new CacheBridge([...], {
 
 ```typescript
 // 개발 환경: 메모리만
-const devCache = new CacheBridge([
+const devCache = new CacheStack([
   new MemoryLayer({ ttl: 60 })
 ])
 
 // 프로덕션 환경: 메모리 + Redis
-const prodCache = new CacheBridge([
+const prodCache = new CacheStack([
   new MemoryLayer({ ttl: 60 }),
   new RedisLayer({ client: redis, ttl: 3600 })
 ])
@@ -152,7 +152,7 @@ export const cache = process.env.NODE_ENV === 'production' ? prodCache : devCach
 ### 커스텀 레이어 구현
 
 ```typescript
-import { CacheLayer } from 'cache-bridge'
+import { CacheLayer } from 'cachestack'
 
 // 자체 캐시 레이어 구현 (예: Memcached, DynamoDB)
 class MemcachedLayer implements CacheLayer {
@@ -162,7 +162,7 @@ class MemcachedLayer implements CacheLayer {
   async clear() { /* ... */ }
 }
 
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new MemoryLayer({ ttl: 60 }),
   new MemcachedLayer({ host: 'localhost', port: 11211 }),
 ])
@@ -173,10 +173,10 @@ const cache = new CacheBridge([
 ## 4. 프로젝트 구조
 
 ```
-cache-bridge/
+cachestack/
 ├── src/
 │   ├── index.ts                   # 공개 API
-│   ├── CacheBridge.ts             # 핵심 오케스트레이터
+│   ├── CacheStack.ts             # 핵심 오케스트레이터
 │   ├── layers/
 │   │   ├── CacheLayer.ts          # 레이어 인터페이스
 │   │   ├── MemoryLayer.ts         # LRU 메모리 캐시
@@ -191,7 +191,7 @@ cache-bridge/
 │   │   └── MsgpackSerializer.ts   # 고성능 MessagePack 직렬화
 │   └── types.ts
 ├── tests/
-│   ├── CacheBridge.test.ts
+│   ├── CacheStack.test.ts
 │   ├── layers/
 │   │   ├── MemoryLayer.test.ts
 │   │   └── RedisLayer.test.ts     # ioredis-mock 사용
@@ -211,16 +211,16 @@ cache-bridge/
 
 ## 5. 핵심 구현 코드
 
-### CacheBridge 핵심 로직
+### CacheStack 핵심 로직
 
 ```typescript
-// src/CacheBridge.ts
-export class CacheBridge {
+// src/CacheStack.ts
+export class CacheStack {
   private stampedeGuard = new StampedeGuard()
 
   constructor(
     private layers: CacheLayer[],
-    private options: CacheBridgeOptions = {}
+    private options: CacheStackOptions = {}
   ) {}
 
   async get<T>(key: string, fetcher?: () => Promise<T>, options?: GetOptions): Promise<T | null> {
@@ -263,7 +263,7 @@ export class CacheBridge {
 - [ ] `CacheLayer` 인터페이스 정의
 - [ ] `MemoryLayer` 구현 (LRU 알고리즘)
 - [ ] `RedisLayer` 구현 (ioredis 기반)
-- [ ] `CacheBridge` 오케스트레이터 (get/set/delete)
+- [ ] `CacheStack` 오케스트레이터 (get/set/delete)
 - [ ] Backfill 로직
 - [ ] 단위 테스트
 
@@ -278,12 +278,12 @@ export class CacheBridge {
 
 ### Phase 3: 통합 & 관찰 가능성 (3~4주)
 
-- [ ] NestJS 모듈 (`@cache-bridge/nestjs`)
+- [ ] NestJS 모듈 (`@cachestack/nestjs`)
 - [ ] Next.js 예제
 - [ ] 캐시 히트율 메트릭 수집
 - [ ] Redis pub/sub을 통한 다중 서버 간 L1 무효화 전파
 - [ ] `RedisTagIndex`를 통한 다중 서버 태그 무효화 지원
-- [ ] 디버그 로거 (`cache-bridge:debug`)
+- [ ] 디버그 로거 (`cachestack:debug`)
 
 ### 멀티 서버 주의사항
 
@@ -321,7 +321,7 @@ Cache Stampede 방지 효과:
 
 ## 8. 경쟁 분석
 
-| 항목 | node-cache | ioredis | cache-manager | **cache-bridge** |
+| 항목 | node-cache | ioredis | cache-manager | **cachestack** |
 |------|-----------|---------|---------------|-----------------|
 | 계층 캐시 | ❌ | ❌ | △ | ✅ |
 | 자동 Backfill | ❌ | ❌ | ❌ | ✅ |

@@ -1,11 +1,11 @@
 import Redis from 'ioredis-mock'
 import { performance } from 'node:perf_hooks'
-import { CacheBridge, MemoryLayer, RedisLayer } from '../src'
+import { CacheStack, MemoryLayer, RedisLayer } from '../src'
 
 async function main(): Promise<void> {
   const iterations = 5_000
   const redis = new Redis()
-  const cache = new CacheBridge([
+  const cache = new CacheStack([
     new MemoryLayer({ ttl: 60, maxSize: 10_000 }),
     new RedisLayer({ client: redis, ttl: 300 })
   ])

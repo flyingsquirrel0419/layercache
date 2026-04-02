@@ -15,7 +15,7 @@ export class RedisInvalidationBus implements InvalidationBus {
   constructor(options: RedisInvalidationBusOptions) {
     this.publisher = options.publisher
     this.subscriber = options.subscriber ?? options.publisher.duplicate()
-    this.channel = options.channel ?? 'cache-bridge:invalidation'
+    this.channel = options.channel ?? 'cachestack:invalidation'
   }
 
   async subscribe(handler: (message: InvalidationMessage) => Promise<void> | void): Promise<() => Promise<void>> {

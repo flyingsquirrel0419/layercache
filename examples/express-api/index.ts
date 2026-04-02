@@ -1,9 +1,9 @@
 import express from 'express'
 import Redis from 'ioredis'
-import { CacheBridge, MemoryLayer, RedisLayer } from '../../src'
+import { CacheStack, MemoryLayer, RedisLayer } from '../../src'
 
 const redis = new Redis(process.env.REDIS_URL)
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new MemoryLayer({ ttl: 30, maxSize: 5_000 }),
   new RedisLayer({ client: redis, ttl: 300 })
 ])

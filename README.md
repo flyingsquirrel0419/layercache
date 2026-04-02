@@ -1,10 +1,10 @@
-# cache-bridge
+# cachestack
 
 **Multi-layer caching for Node.js — memory → Redis → your DB, unified in one API.**
 
-[![npm version](https://img.shields.io/npm/v/cache-bridge)](https://www.npmjs.com/package/cache-bridge)
-[![npm downloads](https://img.shields.io/npm/dw/cache-bridge)](https://www.npmjs.com/package/cache-bridge)
-[![license](https://img.shields.io/npm/l/cache-bridge)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/cachestack)](https://www.npmjs.com/package/cachestack)
+[![npm downloads](https://img.shields.io/npm/dw/cachestack)](https://www.npmjs.com/package/cachestack)
+[![license](https://img.shields.io/npm/l/cachestack)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
 
 ```
@@ -15,7 +15,7 @@ miss    ~20   ms  ← fetcher runs once, all layers filled
 
 ---
 
-## Why cache-bridge?
+## Why cachestack?
 
 Most Node.js services end up with the same problem:
 
@@ -23,7 +23,7 @@ Most Node.js services end up with the same problem:
 - **Redis-only** → shared, but every read pays a network round-trip
 - **Hand-rolled layers** → works, but you rewrite stampede prevention, backfill logic, and tag invalidation in every project
 
-cache-bridge solves all three. You declare your layers once and call `get`. Everything else is handled.
+cachestack solves all three. You declare your layers once and call `get`. Everything else is handled.
 
 ```ts
 const user = await cache.get('user:123', () => db.findUser(123))
@@ -45,7 +45,7 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Cross-server L1 invalidation** — Redis pub/sub bus flushes stale memory on other instances when you write or delete
 - **Metrics** — hit/miss/fetch/backfill counters built in
 - **MessagePack serializer** — drop-in replacement for lower Redis memory usage
-- **NestJS module** — `CacheBridgeModule.forRoot(...)` with `@InjectCacheBridge()`
+- **NestJS module** — `CacheStackModule.forRoot(...)` with `@InjectCacheStack()`
 - **Custom layers** — implement the 5-method `CacheLayer` interface to plug in Memcached, DynamoDB, or anything else
 - **ESM + CJS** — works with both module systems, Node.js ≥ 18
 
@@ -54,7 +54,7 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 ## Installation
 
 ```bash
-npm install cache-bridge
+npm install cachestack
 # Redis support (optional)
 npm install ioredis
 ```
@@ -64,10 +64,10 @@ npm install ioredis
 ## Quick start
 
 ```ts
-import { CacheBridge, MemoryLayer, RedisLayer } from 'cache-bridge'
+import { CacheStack, MemoryLayer, RedisLayer } from 'cachestack'
 import Redis from 'ioredis'
 
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new MemoryLayer({ ttl: 60,   maxSize: 1_000 }),   // L1 — local memory
   new RedisLayer({ client: new Redis(), ttl: 3600 }) // L2 — Redis
 ])
@@ -83,7 +83,7 @@ await cache.delete('user:123')
 Memory-only setup (no Redis required):
 
 ```ts
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new MemoryLayer({ ttl: 60 })
 ])
 ```
@@ -169,7 +169,7 @@ const { hits, misses, fetches, backfills } = cache.getMetrics()
 When 100 requests arrive simultaneously for an uncached key, only one fetcher runs. The rest wait and share the result.
 
 ```ts
-const cache = new CacheBridge([...])
+const cache = new CacheStack([...])
 // stampedePrevention is true by default
 
 // 100 concurrent requests → fetcher executes exactly once
@@ -183,7 +183,7 @@ const results = await Promise.all(
 Disable it if you prefer independent fetches:
 
 ```ts
-new CacheBridge([...], { stampedePrevention: false })
+new CacheStack([...], { stampedePrevention: false })
 ```
 
 ---
@@ -195,13 +195,13 @@ new CacheBridge([...], { stampedePrevention: false })
 When one server writes or deletes a key, other servers' memory layers go stale. The `RedisInvalidationBus` propagates invalidation events over Redis pub/sub so every instance stays consistent.
 
 ```ts
-import { RedisInvalidationBus } from 'cache-bridge'
+import { RedisInvalidationBus } from 'cachestack'
 
 const publisher  = new Redis()
 const subscriber = new Redis()
 const bus = new RedisInvalidationBus({ publisher, subscriber })
 
-const cache = new CacheBridge(
+const cache = new CacheStack(
   [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: publisher, ttl: 300 })],
   { invalidationBus: bus }
 )
@@ -212,7 +212,7 @@ await cache.disconnect() // unsubscribes cleanly on shutdown
 By default, every `set` also broadcasts an invalidation so other servers evict stale memory immediately. To suppress broadcasts on writes (high write-volume services):
 
 ```ts
-new CacheBridge([...], { invalidationBus: bus, publishSetInvalidation: false })
+new CacheStack([...], { invalidationBus: bus, publishSetInvalidation: false })
 ```
 
 ### Distributed tag invalidation
@@ -220,15 +220,15 @@ new CacheBridge([...], { invalidationBus: bus, publishSetInvalidation: false })
 The default `TagIndex` lives in process memory — `invalidateByTag` on server A only knows about keys *that server A wrote*. For full cross-server tag invalidation, use `RedisTagIndex`:
 
 ```ts
-import { RedisTagIndex } from 'cache-bridge'
+import { RedisTagIndex } from 'cachestack'
 
 const sharedTagIndex = new RedisTagIndex({
   client: redis,
   prefix: 'myapp:tag-index' // namespaced so it doesn't collide with other data
 })
 
-// Every CacheBridge instance should use the same Redis-backed tag index config
-const cache = new CacheBridge(
+// Every CacheStack instance should use the same Redis-backed tag index config
+const cache = new CacheStack(
   [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })],
   { invalidationBus: bus, tagIndex: sharedTagIndex }
 )
@@ -241,7 +241,7 @@ Now `invalidateByTag('user:123')` on any server deletes every tagged key, regard
 `RedisLayer.clear()` is intentionally conservative. Without a `prefix`, it throws instead of deleting the whole Redis database.
 
 ```ts
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new RedisLayer({
     client: redis,
     prefix: 'myapp:cache:' // recommended for safe clear() and key scans
@@ -292,7 +292,7 @@ await cache.set('key', value, { ttl: { local: 15, shared: 600 } })
 Reduces Redis memory usage and speeds up serialization for large values:
 
 ```ts
-import { MsgpackSerializer } from 'cache-bridge'
+import { MsgpackSerializer } from 'cachestack'
 
 new RedisLayer({
   client: redis,
@@ -308,7 +308,7 @@ new RedisLayer({
 Implement `CacheLayer` to plug in any backend:
 
 ```ts
-import type { CacheLayer } from 'cache-bridge'
+import type { CacheLayer } from 'cachestack'
 
 class MemcachedLayer implements CacheLayer {
   readonly name = 'memcached'
@@ -321,7 +321,7 @@ class MemcachedLayer implements CacheLayer {
   async clear(): Promise<void> { /* … */ }
 }
 
-const cache = new CacheBridge([
+const cache = new CacheStack([
   new MemoryLayer({ ttl: 60 }),
   new MemcachedLayer()
 ])
@@ -332,16 +332,16 @@ const cache = new CacheBridge([
 ## NestJS
 
 ```bash
-npm install @cache-bridge/nestjs
+npm install @cachestack/nestjs
 ```
 
 ```ts
 // app.module.ts
-import { CacheBridgeModule } from '@cache-bridge/nestjs'
+import { CacheStackModule } from '@cachestack/nestjs'
 
 @Module({
   imports: [
-    CacheBridgeModule.forRoot({
+    CacheStackModule.forRoot({
       layers: [
         new MemoryLayer({ ttl: 20 }),
         new RedisLayer({ client: redis, ttl: 300 })
@@ -354,12 +354,12 @@ export class AppModule {}
 
 ```ts
 // your.service.ts
-import { InjectCacheBridge } from '@cache-bridge/nestjs'
-import { CacheBridge } from 'cache-bridge'
+import { InjectCacheStack } from '@cachestack/nestjs'
+import { CacheStack } from 'cachestack'
 
 @Injectable()
 export class UserService {
-  constructor(@InjectCacheBridge() private readonly cache: CacheBridge) {}
+  constructor(@InjectCacheStack() private readonly cache: CacheStack) {}
 
   async getUser(id: number) {
     return this.cache.get(`user:${id}`, () => this.db.findUser(id))
@@ -394,11 +394,11 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
 ```ts
 export const cache = process.env.NODE_ENV === 'production'
-  ? new CacheBridge([
+  ? new CacheStack([
       new MemoryLayer({ ttl: 60 }),
       new RedisLayer({ client: redis, ttl: 3600 })
     ])
-  : new CacheBridge([
+  : new CacheStack([
       new MemoryLayer({ ttl: 60 }) // no Redis needed in dev
     ])
 ```
@@ -433,7 +433,7 @@ Example output from a local run:
 
 ## Comparison
 
-| | node-cache | ioredis | cache-manager | **cache-bridge** |
+| | node-cache | ioredis | cache-manager | **cachestack** |
 |---|:---:|:---:|:---:|:---:|
 | Multi-layer | ❌ | ❌ | △ | ✅ |
 | Auto backfill | ❌ | ❌ | ❌ | ✅ |
@@ -450,13 +450,13 @@ Example output from a local run:
 ## Debug logging
 
 ```bash
-DEBUG=cache-bridge:debug node server.js
+DEBUG=cachestack:debug node server.js
 ```
 
 Or pass a logger instance:
 
 ```ts
-new CacheBridge([...], {
+new CacheStack([...], {
   logger: {
     debug(message, context) { myLogger.debug(message, context) }
   }
@@ -476,8 +476,8 @@ new CacheBridge([...], {
 ## Contributing
 
 ```bash
-git clone https://github.com/flyingsquirrel0419/cache-bridge
-cd cache-bridge
+git clone https://github.com/flyingsquirrel0419/cachestack
+cd cachestack
 npm install
 npm test          # vitest
 npm run build:all # esm + cjs + nestjs package

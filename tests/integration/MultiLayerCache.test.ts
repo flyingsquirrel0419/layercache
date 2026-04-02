@@ -1,13 +1,13 @@
 import Redis from 'ioredis-mock'
 import { describe, expect, it } from 'vitest'
-import { CacheBridge } from '../../src/CacheBridge'
+import { CacheStack } from '../../src/CacheStack'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 
 describe('multi-layer integration', () => {
   it('fetches once and serves repeated hits from cache layers', async () => {
     const redis = new Redis()
-    const cache = new CacheBridge([
+    const cache = new CacheStack([
       new MemoryLayer({ ttl: 60 }),
       new RedisLayer({ client: redis, ttl: 300 })
     ])

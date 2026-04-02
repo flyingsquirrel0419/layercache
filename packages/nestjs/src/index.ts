@@ -1,3 +1,3 @@
-export { CACHE_BRIDGE } from './constants'
-export { CacheBridgeModule, InjectCacheBridge } from './module'
-export type { CacheBridgeModuleOptions } from './module'
+export { CACHE_STACK } from './constants'
+export { CacheStackModule, InjectCacheStack } from './module'
+export type { CacheStackModuleOptions } from './module'

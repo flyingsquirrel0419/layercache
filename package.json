@@ -1,5 +1,5 @@
 {
-  "name": "cache-bridge",
+  "name": "cachestack",
   "version": "0.1.0",
   "description": "Unified multi-layer caching for Node.js with memory, Redis, stampede prevention, and invalidation helpers.",
   "license": "MIT",
@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts",
-    "build:nestjs": "npm --workspace @cache-bridge/nestjs run build",
+    "build:nestjs": "npm --workspace @cachestack/nestjs run build",
     "build:all": "npm run build && npm run build:nestjs",
     "test": "vitest run",
     "test:watch": "vitest",

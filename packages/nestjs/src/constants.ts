@@ -1,1 +1,1 @@
-export const CACHE_BRIDGE = Symbol('CACHE_BRIDGE')
+export const CACHE_STACK = Symbol('CACHE_STACK')

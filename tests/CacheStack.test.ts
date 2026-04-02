@@ -1,6 +1,6 @@
 import Redis from 'ioredis-mock'
 import { describe, expect, it } from 'vitest'
-import { CacheBridge } from '../src/CacheBridge'
+import { CacheStack } from '../src/CacheStack'
 import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { RedisLayer } from '../src/layers/RedisLayer'
@@ -48,12 +48,12 @@ class InMemoryInvalidationBus implements InvalidationBus {
   }
 }
 
-describe('CacheBridge', () => {
+describe('CacheStack', () => {
   it('backfills upper layers on lower-layer hits', async () => {
     const redis = new Redis()
     const memoryLayer = new MemoryLayer({ ttl: 60 })
     const redisLayer = new RedisLayer({ client: redis, ttl: 120 })
-    const cache = new CacheBridge([memoryLayer, redisLayer])
+    const cache = new CacheStack([memoryLayer, redisLayer])
 
     await redisLayer.set('user:1', { id: 1 })
 
@@ -64,7 +64,7 @@ describe('CacheBridge', () => {
   it('supports per-layer ttl overrides', async () => {
     const memoryLayer = new RecordingLayer('memory', 10)
     const redisLayer = new RecordingLayer('redis', 20)
-    const cache = new CacheBridge([memoryLayer, redisLayer])
+    const cache = new CacheStack([memoryLayer, redisLayer])
 
     await cache.set('user:1', { id: 1 }, { ttl: { memory: 5, redis: 15 } })
 
@@ -73,7 +73,7 @@ describe('CacheBridge', () => {
   })
 
   it('invalidates all keys for a tag', async () => {
-    const cache = new CacheBridge([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
     await cache.set('user:1', { id: 1 }, { tags: ['user', 'user:1'] })
     await cache.set('user:1:posts', [{ id: 9 }], { tags: ['user', 'user:1'] })
@@ -84,7 +84,7 @@ describe('CacheBridge', () => {
   })
 
   it('invalidates by wildcard pattern', async () => {
-    const cache = new CacheBridge([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
     await cache.mset([
       { key: 'user:1', value: { id: 1 } },
@@ -99,7 +99,7 @@ describe('CacheBridge', () => {
   })
 
   it('tracks cache metrics', async () => {
-    const cache = new CacheBridge([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
     await cache.get('miss')
     await cache.set('hit', 1)
@@ -115,12 +115,12 @@ describe('CacheBridge', () => {
   it('propagates invalidation to local layers across bridge instances', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
-    const cacheA = new CacheBridge(
+    const cacheA = new CacheStack(
       [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })],
       { invalidationBus: bus }
     )
     const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheBridge(
+    const cacheB = new CacheStack(
       [memoryB, new RedisLayer({ client: redis, ttl: 300 })],
       { invalidationBus: bus }
     )
@@ -141,12 +141,12 @@ describe('CacheBridge', () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:test' })
-    const cacheA = new CacheBridge(
+    const cacheA = new CacheStack(
       [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
       { invalidationBus: bus, tagIndex: sharedTagIndex }
     )
     const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheBridge(
+    const cacheB = new CacheStack(
       [memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
       { invalidationBus: bus, tagIndex: sharedTagIndex }
     )
@@ -186,7 +186,7 @@ describe('CacheBridge', () => {
   })
 
   it('removes stale tag entries when a tagged key has expired from every layer', async () => {
-    const cache = new CacheBridge([new MemoryLayer({ ttl: 1 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 1 })])
 
     await cache.set('session:1', { id: 1 }, { tags: ['session'] })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
@@ -201,11 +201,11 @@ describe('CacheBridge', () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
     const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheA = new CacheBridge(
+    const cacheA = new CacheStack(
       [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
       { invalidationBus: bus, publishSetInvalidation: false }
     )
-    const cacheB = new CacheBridge(
+    const cacheB = new CacheStack(
       [memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
       { invalidationBus: bus }
     )

@@ -1,27 +1,27 @@
 import { DynamicModule, Global, Inject, Module, type Provider } from '@nestjs/common'
-import { CacheBridge } from '../../../src/CacheBridge'
-import type { CacheBridgeOptions, CacheLayer } from '../../../src/types'
-import { CACHE_BRIDGE } from './constants'
+import { CacheStack } from '../../../src/CacheStack'
+import type { CacheStackOptions, CacheLayer } from '../../../src/types'
+import { CACHE_STACK } from './constants'
 
-export interface CacheBridgeModuleOptions {
+export interface CacheStackModuleOptions {
   layers: CacheLayer[]
-  bridgeOptions?: CacheBridgeOptions
+  bridgeOptions?: CacheStackOptions
 }
 
-export const InjectCacheBridge = (): ParameterDecorator & PropertyDecorator => Inject(CACHE_BRIDGE)
+export const InjectCacheStack = (): ParameterDecorator & PropertyDecorator => Inject(CACHE_STACK)
 
 @Global()
 @Module({})
-export class CacheBridgeModule {
-  static forRoot(options: CacheBridgeModuleOptions): DynamicModule {
+export class CacheStackModule {
+  static forRoot(options: CacheStackModuleOptions): DynamicModule {
     const provider: Provider = {
-      provide: CACHE_BRIDGE,
-      useFactory: () => new CacheBridge(options.layers, options.bridgeOptions)
+      provide: CACHE_STACK,
+      useFactory: () => new CacheStack(options.layers, options.bridgeOptions)
     }
 
     return {
       global: true,
-      module: CacheBridgeModule,
+      module: CacheStackModule,
       providers: [provider],
       exports: [provider]
     }

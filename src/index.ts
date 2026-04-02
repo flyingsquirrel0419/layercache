@@ -1,4 +1,4 @@
-export { CacheBridge } from './CacheBridge'
+export { CacheStack } from './CacheStack'
 export { PatternMatcher } from './invalidation/PatternMatcher'
 export { RedisInvalidationBus } from './invalidation/RedisInvalidationBus'
 export { RedisTagIndex } from './invalidation/RedisTagIndex'
@@ -9,7 +9,7 @@ export { JsonSerializer } from './serialization/JsonSerializer'
 export { MsgpackSerializer } from './serialization/MsgpackSerializer'
 export { StampedeGuard } from './stampede/StampedeGuard'
 export type {
-  CacheBridgeOptions,
+  CacheStackOptions,
   CacheGetOptions,
   CacheLayer,
   CacheLogger,

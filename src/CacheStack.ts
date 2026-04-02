@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { TagIndex } from './invalidation/TagIndex'
 import { StampedeGuard } from './stampede/StampedeGuard'
 import type {
-  CacheBridgeOptions,
+  CacheStackOptions,
   CacheGetOptions,
   CacheLayer,
   CacheLogger,
@@ -37,11 +37,11 @@ class DebugLogger implements CacheLogger {
     }
 
     const suffix = context ? ` ${JSON.stringify(context)}` : ''
-    console.debug(`[cache-bridge] ${message}${suffix}`)
+    console.debug(`[cachestack] ${message}${suffix}`)
   }
 }
 
-export class CacheBridge {
+export class CacheStack {
   private readonly stampedeGuard = new StampedeGuard()
   private readonly metrics = EMPTY_METRICS()
   private readonly instanceId = randomUUID()
@@ -52,13 +52,13 @@ export class CacheBridge {
 
   constructor(
     private readonly layers: CacheLayer[],
-    private readonly options: CacheBridgeOptions = {}
+    private readonly options: CacheStackOptions = {}
   ) {
     if (layers.length === 0) {
-      throw new Error('CacheBridge requires at least one cache layer.')
+      throw new Error('CacheStack requires at least one cache layer.')
     }
 
-    const debugEnv = process.env.DEBUG?.split(',').includes('cache-bridge:debug') ?? false
+    const debugEnv = process.env.DEBUG?.split(',').includes('cachestack:debug') ?? false
     this.logger = typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
     this.startup = this.initialize()
