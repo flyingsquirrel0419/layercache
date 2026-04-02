@@ -37,7 +37,7 @@ class DebugLogger implements CacheLogger {
     }
 
     const suffix = context ? ` ${JSON.stringify(context)}` : ''
-    console.debug(`[cachestack] ${message}${suffix}`)
+    console.debug(`[layercache] ${message}${suffix}`)
   }
 }
 
@@ -58,7 +58,7 @@ export class CacheStack {
       throw new Error('CacheStack requires at least one cache layer.')
     }
 
-    const debugEnv = process.env.DEBUG?.split(',').includes('cachestack:debug') ?? false
+    const debugEnv = process.env.DEBUG?.split(',').includes('layercache:debug') ?? false
     this.logger = typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
     this.startup = this.initialize()

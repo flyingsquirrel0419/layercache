@@ -15,7 +15,7 @@ export class RedisTagIndex implements CacheTagIndex {
 
   constructor(options: RedisTagIndexOptions) {
     this.client = options.client
-    this.prefix = options.prefix ?? 'cachestack:tag-index'
+    this.prefix = options.prefix ?? 'layercache:tag-index'
     this.scanCount = options.scanCount ?? 100
   }
 

@@ -1,10 +1,10 @@
-# cachestack
+# layercache
 
 **Multi-layer caching for Node.js — memory → Redis → your DB, unified in one API.**
 
-[![npm version](https://img.shields.io/npm/v/cachestack)](https://www.npmjs.com/package/cachestack)
-[![npm downloads](https://img.shields.io/npm/dw/cachestack)](https://www.npmjs.com/package/cachestack)
-[![license](https://img.shields.io/npm/l/cachestack)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/layercache)](https://www.npmjs.com/package/layercache)
+[![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
+[![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
 
 ```
@@ -15,7 +15,7 @@ miss    ~20   ms  ← fetcher runs once, all layers filled
 
 ---
 
-## Why cachestack?
+## Why layercache?
 
 Most Node.js services end up with the same problem:
 
@@ -23,7 +23,7 @@ Most Node.js services end up with the same problem:
 - **Redis-only** → shared, but every read pays a network round-trip
 - **Hand-rolled layers** → works, but you rewrite stampede prevention, backfill logic, and tag invalidation in every project
 
-cachestack solves all three. You declare your layers once and call `get`. Everything else is handled.
+layercache solves all three. You declare your layers once and call `get`. Everything else is handled.
 
 ```ts
 const user = await cache.get('user:123', () => db.findUser(123))
@@ -54,7 +54,7 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 ## Installation
 
 ```bash
-npm install cachestack
+npm install layercache
 # Redis support (optional)
 npm install ioredis
 ```
@@ -64,7 +64,7 @@ npm install ioredis
 ## Quick start
 
 ```ts
-import { CacheStack, MemoryLayer, RedisLayer } from 'cachestack'
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
@@ -195,7 +195,7 @@ new CacheStack([...], { stampedePrevention: false })
 When one server writes or deletes a key, other servers' memory layers go stale. The `RedisInvalidationBus` propagates invalidation events over Redis pub/sub so every instance stays consistent.
 
 ```ts
-import { RedisInvalidationBus } from 'cachestack'
+import { RedisInvalidationBus } from 'layercache'
 
 const publisher  = new Redis()
 const subscriber = new Redis()
@@ -220,7 +220,7 @@ new CacheStack([...], { invalidationBus: bus, publishSetInvalidation: false })
 The default `TagIndex` lives in process memory — `invalidateByTag` on server A only knows about keys *that server A wrote*. For full cross-server tag invalidation, use `RedisTagIndex`:
 
 ```ts
-import { RedisTagIndex } from 'cachestack'
+import { RedisTagIndex } from 'layercache'
 
 const sharedTagIndex = new RedisTagIndex({
   client: redis,
@@ -292,7 +292,7 @@ await cache.set('key', value, { ttl: { local: 15, shared: 600 } })
 Reduces Redis memory usage and speeds up serialization for large values:
 
 ```ts
-import { MsgpackSerializer } from 'cachestack'
+import { MsgpackSerializer } from 'layercache'
 
 new RedisLayer({
   client: redis,
@@ -308,7 +308,7 @@ new RedisLayer({
 Implement `CacheLayer` to plug in any backend:
 
 ```ts
-import type { CacheLayer } from 'cachestack'
+import type { CacheLayer } from 'layercache'
 
 class MemcachedLayer implements CacheLayer {
   readonly name = 'memcached'
@@ -355,7 +355,7 @@ export class AppModule {}
 ```ts
 // your.service.ts
 import { InjectCacheStack } from '@cachestack/nestjs'
-import { CacheStack } from 'cachestack'
+import { CacheStack } from 'layercache'
 
 @Injectable()
 export class UserService {
@@ -433,7 +433,7 @@ Example output from a local run:
 
 ## Comparison
 
-| | node-cache | ioredis | cache-manager | **cachestack** |
+| | node-cache | ioredis | cache-manager | **layercache** |
 |---|:---:|:---:|:---:|:---:|
 | Multi-layer | ❌ | ❌ | △ | ✅ |
 | Auto backfill | ❌ | ❌ | ❌ | ✅ |
@@ -450,7 +450,7 @@ Example output from a local run:
 ## Debug logging
 
 ```bash
-DEBUG=cachestack:debug node server.js
+DEBUG=layercache:debug node server.js
 ```
 
 Or pass a logger instance:
@@ -476,8 +476,8 @@ new CacheStack([...], {
 ## Contributing
 
 ```bash
-git clone https://github.com/flyingsquirrel0419/cachestack
-cd cachestack
+git clone https://github.com/flyingsquirrel0419/layercache
+cd layercache
 npm install
 npm test          # vitest
 npm run build:all # esm + cjs + nestjs package

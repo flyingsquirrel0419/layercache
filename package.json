@@ -1,6 +1,6 @@
 {
-  "name": "cachestack",
-  "version": "0.1.0",
+  "name": "layercache",
+  "version": "1.0.0",
   "description": "Unified multi-layer caching for Node.js with memory, Redis, stampede prevention, and invalidation helpers.",
   "license": "MIT",
   "type": "module",
