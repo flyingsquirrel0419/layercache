@@ -1,4 +1,5 @@
 import type Redis from 'ioredis'
+import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheSerializer } from '../types'
 
@@ -34,11 +35,40 @@ export class RedisLayer implements CacheLayer {
   }
 
   async get<T>(key: string): Promise<T | null> {
+    const payload = await this.getEntry(key)
+    return unwrapStoredValue<T>(payload)
+  }
+
+  async getEntry<T = unknown>(key: string): Promise<T | null> {
     const payload = await this.client.getBuffer(this.withPrefix(key))
     if (payload === null) {
       return null
     }
     return this.serializer.deserialize<T>(payload)
+  }
+
+  async getMany<T>(keys: string[]): Promise<Array<T | null>> {
+    if (keys.length === 0) {
+      return []
+    }
+
+    const pipeline = this.client.pipeline()
+    for (const key of keys) {
+      pipeline.getBuffer(this.withPrefix(key))
+    }
+
+    const results = await pipeline.exec()
+    if (results === null) {
+      return keys.map(() => null)
+    }
+
+    return results.map((result) => {
+      const [, payload] = result
+      if (payload === null) {
+        return null
+      }
+      return this.serializer.deserialize<T>(payload as Buffer)
+    })
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {

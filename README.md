@@ -41,7 +41,13 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Tag-based invalidation** — `set('user:123:posts', posts, { tags: ['user:123'] })` then `invalidateByTag('user:123')`
 - **Pattern invalidation** — `invalidateByPattern('user:*')`
 - **Per-layer TTL overrides** — different TTLs for memory vs. Redis in one call
+- **Negative caching** — cache known misses for a short TTL to protect the database
+- **Stale strategies** — `staleWhileRevalidate` and `staleIfError` as opt-in read behavior
+- **TTL jitter** — spread expirations to avoid synchronized stampedes
+- **Best-effort writes** — tolerate partial layer write failures when desired
+- **Bulk reads** — `mget` uses layer-level `getMany()` when available
 - **Distributed tag index** — `RedisTagIndex` keeps tag state consistent across multiple servers
+- **Optional distributed single-flight** — plug in a coordinator to dedupe misses across instances
 - **Cross-server L1 invalidation** — Redis pub/sub bus flushes stale memory on other instances when you write or delete
 - **Metrics** — hit/miss/fetch/backfill counters built in
 - **MessagePack serializer** — drop-in replacement for lower Redis memory usage
@@ -106,7 +112,12 @@ const user = await cache.get<User>('user:123', () => db.findUser(123))
 // With options
 const user = await cache.get<User>('user:123', () => db.findUser(123), {
   ttl: { memory: 30, redis: 600 }, // per-layer TTL
-  tags: ['user', 'user:123']       // tag this key for bulk invalidation
+  tags: ['user', 'user:123'],      // tag this key for bulk invalidation
+  negativeCache: true,             // cache null fetches
+  negativeTtl: 15,                 // short TTL for misses
+  staleWhileRevalidate: 30,        // serve stale and refresh in background
+  staleIfError: 300,               // serve stale if refresh fails
+  ttlJitter: 5                     // +/- 5s expiry spread
 })
 ```
 
@@ -117,7 +128,10 @@ Writes to all layers simultaneously.
 ```ts
 await cache.set('user:123', user, {
   ttl: { memory: 60, redis: 600 }, // per-layer TTL (seconds)
-  tags: ['user', 'user:123']
+  tags: ['user', 'user:123'],
+  staleWhileRevalidate: { redis: 30 },
+  staleIfError: { redis: 120 },
+  ttlJitter: { redis: 5 }
 })
 
 await cache.set('user:123', user, {
@@ -149,6 +163,8 @@ await cache.invalidateByPattern('user:*') // deletes user:1, user:2, …
 
 Concurrent multi-key fetch, each with its own optional fetcher.
 
+If every entry is a simple read (`{ key }` only), `CacheStack` will use layer-level `getMany()` fast paths when the layer implements one.
+
 ```ts
 const [user1, user2] = await cache.mget([
   { key: 'user:1', fetch: () => db.findUser(1) },
@@ -159,8 +175,47 @@ const [user1, user2] = await cache.mget([
 ### `cache.getMetrics(): CacheMetricsSnapshot`
 
 ```ts
-const { hits, misses, fetches, backfills } = cache.getMetrics()
+const { hits, misses, fetches, staleHits, refreshes, writeFailures } = cache.getMetrics()
 ```
+
+---
+
+## Negative + stale caching
+
+`negativeCache` stores fetcher misses for a short TTL, which is useful for "user not found" or "feature flag absent" style lookups.
+
+```ts
+const user = await cache.get(`user:${id}`, () => db.findUser(id), {
+  negativeCache: true,
+  negativeTtl: 15
+})
+```
+
+`staleWhileRevalidate` returns the last cached value immediately after expiry and refreshes it in the background. `staleIfError` keeps serving the stale value if the refresh fails.
+
+```ts
+await cache.set('config', currentConfig, {
+  ttl: 60,
+  staleWhileRevalidate: 30,
+  staleIfError: 300
+})
+```
+
+---
+
+## Write failure policy
+
+Default writes are strict: if any layer write fails, the operation throws.
+
+If you prefer "at least one layer succeeds", enable best-effort mode:
+
+```ts
+const cache = new CacheStack([...], {
+  writePolicy: 'best-effort'
+})
+```
+
+`best-effort` logs the failed layers, increments `writeFailures`, and only throws if *every* layer failed.
 
 ---
 
@@ -189,6 +244,28 @@ new CacheStack([...], { stampedePrevention: false })
 ---
 
 ## Distributed deployments
+
+### Distributed single-flight
+
+Local stampede prevention only deduplicates requests inside one Node.js process. To dedupe cross-instance misses, configure a shared coordinator.
+
+```ts
+import { RedisSingleFlightCoordinator } from 'layercache'
+
+const coordinator = new RedisSingleFlightCoordinator({ client: redis })
+
+const cache = new CacheStack(
+  [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })],
+  {
+    singleFlightCoordinator: coordinator,
+    singleFlightLeaseMs: 30_000,
+    singleFlightTimeoutMs: 5_000,
+    singleFlightPollMs: 50
+  }
+)
+```
+
+When another instance already owns the miss, the current process waits for the value to appear in the shared layer instead of running the fetcher again.
 
 ### Cross-server L1 invalidation
 
@@ -316,6 +393,8 @@ class MemcachedLayer implements CacheLayer {
   readonly isLocal = false
 
   async get<T>(key: string): Promise<T | null> { /* … */ }
+  async getEntry?(key: string): Promise<unknown | null> { /* optional raw access */ }
+  async getMany?(keys: string[]): Promise<Array<unknown | null>> { /* optional bulk read */ }
   async set(key: string, value: unknown, ttl?: number): Promise<void> { /* … */ }
   async delete(key: string): Promise<void> { /* … */ }
   async clear(): Promise<void> { /* … */ }

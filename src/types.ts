@@ -7,6 +7,11 @@ export interface LayerTtlMap {
 export interface CacheWriteOptions {
   tags?: string[]
   ttl?: number | LayerTtlMap
+  negativeCache?: boolean
+  negativeTtl?: number | LayerTtlMap
+  staleWhileRevalidate?: number | LayerTtlMap
+  staleIfError?: number | LayerTtlMap
+  ttlJitter?: number | LayerTtlMap
 }
 
 export interface CacheGetOptions extends CacheWriteOptions {}
@@ -28,6 +33,8 @@ export interface CacheLayer {
   readonly defaultTtl?: number
   readonly isLocal?: boolean
   get<T>(key: string): Promise<T | null>
+  getEntry?<T = unknown>(key: string): Promise<T | null>
+  getMany?<T>(keys: string[]): Promise<Array<T | null>>
   set(key: string, value: unknown, ttl?: number): Promise<void>
   delete(key: string): Promise<void>
   clear(): Promise<void>
@@ -48,6 +55,11 @@ export interface CacheMetricsSnapshot {
   deletes: number
   backfills: number
   invalidations: number
+  staleHits: number
+  refreshes: number
+  refreshErrors: number
+  writeFailures: number
+  singleFlightWaits: number
 }
 
 export interface CacheLogger {
@@ -75,6 +87,21 @@ export interface InvalidationBus {
   publish(message: InvalidationMessage): Promise<void>
 }
 
+export interface CacheSingleFlightExecutionOptions {
+  leaseMs: number
+  waitTimeoutMs: number
+  pollIntervalMs: number
+}
+
+export interface CacheSingleFlightCoordinator {
+  execute<T>(
+    key: string,
+    options: CacheSingleFlightExecutionOptions,
+    worker: () => Promise<T>,
+    waiter: () => Promise<T>
+  ): Promise<T>
+}
+
 export interface CacheStackOptions {
   logger?: CacheLogger | boolean
   metrics?: boolean
@@ -82,4 +109,14 @@ export interface CacheStackOptions {
   invalidationBus?: InvalidationBus
   tagIndex?: CacheTagIndex
   publishSetInvalidation?: boolean
+  negativeCaching?: boolean
+  negativeTtl?: number | LayerTtlMap
+  staleWhileRevalidate?: number | LayerTtlMap
+  staleIfError?: number | LayerTtlMap
+  ttlJitter?: number | LayerTtlMap
+  writePolicy?: 'strict' | 'best-effort'
+  singleFlightCoordinator?: CacheSingleFlightCoordinator
+  singleFlightLeaseMs?: number
+  singleFlightTimeoutMs?: number
+  singleFlightPollMs?: number
 }

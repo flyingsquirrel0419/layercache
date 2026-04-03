@@ -1,4 +1,5 @@
 import type { CacheLayer } from '../types'
+import { unwrapStoredValue } from '../internal/StoredValue'
 
 interface MemoryLayerOptions {
   ttl?: number
@@ -26,6 +27,11 @@ export class MemoryLayer implements CacheLayer {
   }
 
   async get<T>(key: string): Promise<T | null> {
+    const value = await this.getEntry(key)
+    return unwrapStoredValue<T>(value)
+  }
+
+  async getEntry<T = unknown>(key: string): Promise<T | null> {
     const entry = this.entries.get(key)
     if (!entry) {
       return null
@@ -39,6 +45,14 @@ export class MemoryLayer implements CacheLayer {
     this.entries.delete(key)
     this.entries.set(key, entry)
     return entry.value as T
+  }
+
+  async getMany<T>(keys: string[]): Promise<Array<T | null>> {
+    const values: Array<T | null> = []
+    for (const key of keys) {
+      values.push(await this.getEntry<T>(key))
+    }
+    return values
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
