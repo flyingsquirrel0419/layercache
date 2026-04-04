@@ -6,6 +6,8 @@ import { RedisLayer } from '../../src/layers/RedisLayer'
 import { RedisSingleFlightCoordinator } from '../../src/singleflight/RedisSingleFlightCoordinator'
 import type {
   CacheLayer,
+  InvalidationBus,
+  InvalidationMessage,
   CacheSingleFlightCoordinator,
   CacheSingleFlightExecutionOptions
 } from '../../src/types'
@@ -77,6 +79,21 @@ class SharedCoordinator implements CacheSingleFlightCoordinator {
 
     this.active.set(key, task)
     return task
+  }
+}
+
+class InMemoryInvalidationBus implements InvalidationBus {
+  private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
+
+  async subscribe(handler: (message: InvalidationMessage) => Promise<void> | void): Promise<() => void> {
+    this.handlers.add(handler)
+    return () => {
+      this.handlers.delete(handler)
+    }
+  }
+
+  async publish(message: InvalidationMessage): Promise<void> {
+    await Promise.all([...this.handlers].map((handler) => handler(message)))
   }
 }
 
@@ -197,15 +214,97 @@ describe('operational features', () => {
     expect(layer.getManyCalls).toBe(1)
   })
 
+  it('deduplicates duplicate keys during simple mget calls', async () => {
+    const layer = new BulkLayer()
+    layer.values.set('a', 1)
+    layer.values.set('b', 2)
+    const cache = new CacheStack([layer])
+
+    await expect(cache.mget([{ key: 'a' }, { key: 'a' }, { key: 'b' }])).resolves.toEqual([1, 1, 2])
+    expect(layer.getManyCalls).toBe(1)
+  })
+
+  it('rejects conflicting duplicate mget entries', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(cache.mget([
+      { key: 'user:1', options: { ttl: 5 } },
+      { key: 'user:1', options: { ttl: 10 } }
+    ])).rejects.toThrow(/conflicting entries/i)
+  })
+
+  it('does not schedule stale refreshes after disconnect begins', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    let refreshes = 0
+    const disconnectPromise = cache.disconnect()
+
+    await expect(
+      cache.get('user:1', async () => {
+        refreshes += 1
+        return { version: 2 }
+      })
+    ).resolves.toEqual({ version: 1 })
+
+    await disconnectPromise
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    expect(refreshes).toBe(0)
+  })
+
+  it('validates cache keys and runtime ttl options', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(cache.get('')).rejects.toThrow(/must not be empty/i)
+    await expect(cache.set('user:1', { id: 1 }, { negativeTtl: -1 })).rejects.toThrow(/non-negative finite/i)
+  })
+
+  it('validates conflicting constructor options eagerly', () => {
+    const coordinator = new SharedCoordinator()
+
+    expect(() => new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      stampedePrevention: false,
+      singleFlightCoordinator: coordinator
+    })).toThrow(/requires stampedePrevention/i)
+
+    expect(() => new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      negativeTtl: -1
+    })).toThrow(/non-negative finite/i)
+  })
+
+  it('supports broadcastL1Invalidation as an alias for write-triggered invalidation', async () => {
+    const redis = new Redis()
+    const memoryB = new MemoryLayer({ ttl: 60 })
+    const invalidationBus = new InMemoryInvalidationBus()
+    const cacheA = new CacheStack(
+      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })],
+      { invalidationBus, broadcastL1Invalidation: false }
+    )
+    const cacheB = new CacheStack(
+      [memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })],
+      { invalidationBus }
+    )
+
+    await cacheA.set('user:1', { id: 1, version: 1 })
+    await cacheB.get('user:1')
+    await cacheA.set('user:1', { id: 1, version: 2 })
+
+    await expect(memoryB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
+
+    await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
+  })
+
   it('deduplicates fetches across cache instances when a shared coordinator is configured', async () => {
     const redis = new Redis()
     const coordinator = new SharedCoordinator()
     const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 60, prefix: 'cache:' })],
+      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 60, prefix: 'cache:coordinator:' })],
       { singleFlightCoordinator: coordinator }
     )
     const cacheB = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 60, prefix: 'cache:' })],
+      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 60, prefix: 'cache:coordinator:' })],
       { singleFlightCoordinator: coordinator }
     )
 

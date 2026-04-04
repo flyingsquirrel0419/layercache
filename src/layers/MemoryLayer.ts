@@ -1,6 +1,12 @@
 import type { CacheLayer } from '../types'
 import { unwrapStoredValue } from '../internal/StoredValue'
 
+export interface MemoryLayerSnapshotEntry {
+  key: string
+  value: unknown
+  expiresAt: number | null
+}
+
 interface MemoryLayerOptions {
   ttl?: number
   maxSize?: number
@@ -88,6 +94,36 @@ export class MemoryLayer implements CacheLayer {
   async keys(): Promise<string[]> {
     this.pruneExpired()
     return [...this.entries.keys()]
+  }
+
+  exportState(): MemoryLayerSnapshotEntry[] {
+    this.pruneExpired()
+    return [...this.entries.entries()].map(([key, entry]) => ({
+      key,
+      value: entry.value,
+      expiresAt: entry.expiresAt
+    }))
+  }
+
+  importState(entries: MemoryLayerSnapshotEntry[]): void {
+    for (const entry of entries) {
+      if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
+        continue
+      }
+
+      this.entries.set(entry.key, {
+        value: entry.value,
+        expiresAt: entry.expiresAt
+      })
+    }
+
+    while (this.entries.size > this.maxSize) {
+      const oldestKey = this.entries.keys().next().value
+      if (!oldestKey) {
+        break
+      }
+      this.entries.delete(oldestKey)
+    }
   }
 
   private pruneExpired(): void {

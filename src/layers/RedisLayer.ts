@@ -1,7 +1,10 @@
+import { brotliCompressSync, brotliDecompressSync, gzipSync, gunzipSync } from 'node:zlib'
 import type Redis from 'ioredis'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheSerializer } from '../types'
+
+type CompressionAlgorithm = 'gzip' | 'brotli'
 
 interface RedisLayerOptions {
   client: Redis
@@ -11,6 +14,8 @@ interface RedisLayerOptions {
   prefix?: string
   allowUnprefixedClear?: boolean
   scanCount?: number
+  compression?: CompressionAlgorithm
+  compressionThreshold?: number
 }
 
 export class RedisLayer implements CacheLayer {
@@ -23,6 +28,8 @@ export class RedisLayer implements CacheLayer {
   private readonly prefix: string
   private readonly allowUnprefixedClear: boolean
   private readonly scanCount: number
+  private readonly compression?: CompressionAlgorithm
+  private readonly compressionThreshold: number
 
   constructor(options: RedisLayerOptions) {
     this.client = options.client
@@ -32,6 +39,8 @@ export class RedisLayer implements CacheLayer {
     this.prefix = options.prefix ?? ''
     this.allowUnprefixedClear = options.allowUnprefixedClear ?? false
     this.scanCount = options.scanCount ?? 100
+    this.compression = options.compression
+    this.compressionThreshold = options.compressionThreshold ?? 1_024
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -44,7 +53,8 @@ export class RedisLayer implements CacheLayer {
     if (payload === null) {
       return null
     }
-    return this.serializer.deserialize<T>(payload)
+
+    return this.deserializeOrDelete(key, payload)
   }
 
   async getMany<T>(keys: string[]): Promise<Array<T | null>> {
@@ -62,17 +72,20 @@ export class RedisLayer implements CacheLayer {
       return keys.map(() => null)
     }
 
-    return results.map((result) => {
-      const [, payload] = result
-      if (payload === null) {
-        return null
-      }
-      return this.serializer.deserialize<T>(payload as Buffer)
-    })
+    return Promise.all(
+      results.map(async (result, index) => {
+        const [error, payload] = result
+        if (error || payload === null || !this.isSerializablePayload(payload)) {
+          return null
+        }
+
+        return this.deserializeOrDelete<T>(keys[index], payload)
+      })
+    )
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
-    const payload = this.serializer.serialize(value)
+    const payload = this.encodePayload(this.serializer.serialize(value))
     const normalizedKey = this.withPrefix(key)
 
     if (ttl && ttl > 0) {
@@ -129,5 +142,52 @@ export class RedisLayer implements CacheLayer {
 
   private withPrefix(key: string): string {
     return `${this.prefix}${key}`
+  }
+
+  private async deserializeOrDelete<T>(key: string, payload: string | Buffer): Promise<T | null> {
+    try {
+      return this.serializer.deserialize<T>(this.decodePayload(payload))
+    } catch {
+      await this.client.del(this.withPrefix(key)).catch(() => undefined)
+      return null
+    }
+  }
+
+  private isSerializablePayload(payload: unknown): payload is string | Buffer {
+    return typeof payload === 'string' || Buffer.isBuffer(payload)
+  }
+
+  private encodePayload(payload: string | Buffer): string | Buffer {
+    if (!this.compression) {
+      return payload
+    }
+
+    const source = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+    if (source.byteLength < this.compressionThreshold) {
+      return payload
+    }
+
+    const header = Buffer.from(`LCZ1:${this.compression}:`)
+    const compressed = this.compression === 'gzip'
+      ? gzipSync(source)
+      : brotliCompressSync(source)
+
+    return Buffer.concat([header, compressed])
+  }
+
+  private decodePayload(payload: string | Buffer): string | Buffer {
+    if (!Buffer.isBuffer(payload)) {
+      return payload
+    }
+
+    if (payload.subarray(0, 10).toString() === 'LCZ1:gzip:') {
+      return gunzipSync(payload.subarray(10))
+    }
+
+    if (payload.subarray(0, 12).toString() === 'LCZ1:brotli:') {
+      return brotliDecompressSync(payload.subarray(12))
+    }
+
+    return payload
   }
 }

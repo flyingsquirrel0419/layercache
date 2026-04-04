@@ -5,6 +5,9 @@ export interface StoredValueEnvelope {
   freshUntil: number | null
   staleUntil: number | null
   errorUntil: number | null
+  freshTtlSeconds?: number | null
+  staleWhileRevalidateSeconds?: number | null
+  staleIfErrorSeconds?: number | null
 }
 
 export type StoredValueState = 'fresh' | 'stale-while-revalidate' | 'stale-if-error' | 'expired'
@@ -53,7 +56,10 @@ export function createStoredValueEnvelope(options: {
     value: options.value,
     freshUntil,
     staleUntil,
-    errorUntil
+    errorUntil,
+    freshTtlSeconds: freshTtlSeconds ?? null,
+    staleWhileRevalidateSeconds: staleWhileRevalidateSeconds ?? null,
+    staleIfErrorSeconds: staleIfErrorSeconds ?? null
   }
 }
 
@@ -105,6 +111,34 @@ export function remainingStoredTtlSeconds(stored: unknown, now = Date.now()): nu
   }
 
   return Math.max(1, Math.ceil(remainingMs / 1_000))
+}
+
+export function remainingFreshTtlSeconds(stored: unknown, now = Date.now()): number | undefined {
+  if (!isStoredValueEnvelope(stored) || stored.freshUntil === null) {
+    return undefined
+  }
+
+  const remainingMs = stored.freshUntil - now
+  if (remainingMs <= 0) {
+    return 0
+  }
+
+  return Math.max(1, Math.ceil(remainingMs / 1_000))
+}
+
+export function refreshStoredEnvelope(stored: unknown, now = Date.now()): unknown {
+  if (!isStoredValueEnvelope(stored)) {
+    return stored
+  }
+
+  return createStoredValueEnvelope({
+    kind: stored.kind,
+    value: stored.value,
+    freshTtlSeconds: stored.freshTtlSeconds ?? undefined,
+    staleWhileRevalidateSeconds: stored.staleWhileRevalidateSeconds ?? undefined,
+    staleIfErrorSeconds: stored.staleIfErrorSeconds ?? undefined,
+    now
+  })
 }
 
 function maxExpiry(stored: StoredValueEnvelope): number | null {

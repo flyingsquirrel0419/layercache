@@ -12,6 +12,10 @@ export interface CacheWriteOptions {
   staleWhileRevalidate?: number | LayerTtlMap
   staleIfError?: number | LayerTtlMap
   ttlJitter?: number | LayerTtlMap
+  slidingTtl?: boolean
+  refreshAhead?: number | LayerTtlMap
+  adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
+  circuitBreaker?: CacheCircuitBreakerOptions
 }
 
 export interface CacheGetOptions extends CacheWriteOptions {}
@@ -60,10 +64,18 @@ export interface CacheMetricsSnapshot {
   refreshErrors: number
   writeFailures: number
   singleFlightWaits: number
+  negativeCacheHits: number
+  circuitBreakerTrips: number
+  degradedOperations: number
+  hitsByLayer: Record<string, number>
+  missesByLayer: Record<string, number>
 }
 
 export interface CacheLogger {
-  debug(message: string, context?: Record<string, unknown>): void
+  debug?(message: string, context?: Record<string, unknown>): void
+  info?(message: string, context?: Record<string, unknown>): void
+  warn?(message: string, context?: Record<string, unknown>): void
+  error?(message: string, context?: Record<string, unknown>): void
 }
 
 export interface CacheTagIndex {
@@ -108,15 +120,67 @@ export interface CacheStackOptions {
   stampedePrevention?: boolean
   invalidationBus?: InvalidationBus
   tagIndex?: CacheTagIndex
+  broadcastL1Invalidation?: boolean
   publishSetInvalidation?: boolean
   negativeCaching?: boolean
   negativeTtl?: number | LayerTtlMap
   staleWhileRevalidate?: number | LayerTtlMap
   staleIfError?: number | LayerTtlMap
   ttlJitter?: number | LayerTtlMap
+  refreshAhead?: number | LayerTtlMap
+  adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
+  circuitBreaker?: CacheCircuitBreakerOptions
+  gracefulDegradation?: boolean | CacheDegradationOptions
   writePolicy?: 'strict' | 'best-effort'
   singleFlightCoordinator?: CacheSingleFlightCoordinator
   singleFlightLeaseMs?: number
   singleFlightTimeoutMs?: number
   singleFlightPollMs?: number
+}
+
+export interface CacheAdaptiveTtlOptions {
+  hotAfter?: number
+  step?: number | LayerTtlMap
+  maxTtl?: number | LayerTtlMap
+}
+
+export interface CacheCircuitBreakerOptions {
+  failureThreshold?: number
+  cooldownMs?: number
+}
+
+export interface CacheDegradationOptions {
+  retryAfterMs?: number
+}
+
+export interface CacheWarmEntry<T = unknown> {
+  key: string
+  fetcher: () => Promise<T>
+  options?: CacheGetOptions
+  priority?: number
+}
+
+export interface CacheWarmOptions {
+  concurrency?: number
+  continueOnError?: boolean
+}
+
+export interface CacheWrapOptions<TArgs extends unknown[] = unknown[]> extends CacheGetOptions {
+  keyResolver?: (...args: TArgs) => string
+}
+
+export interface CacheSnapshotEntry {
+  key: string
+  value: unknown
+  ttl?: number
+}
+
+export interface CacheStatsSnapshot {
+  metrics: CacheMetricsSnapshot
+  layers: Array<{
+    name: string
+    isLocal: boolean
+    degradedUntil: number | null
+  }>
+  backgroundRefreshes: number
 }
