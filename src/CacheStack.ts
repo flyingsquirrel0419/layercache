@@ -9,6 +9,9 @@ import {
   remainingStoredTtlSeconds,
   resolveStoredValue
 } from './internal/StoredValue'
+import { TtlResolver } from './internal/TtlResolver'
+import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
+import { MetricsCollector } from './internal/MetricsCollector'
 import { CacheNamespace } from './CacheNamespace'
 import { TagIndex } from './invalidation/TagIndex'
 import { StampedeGuard } from './stampede/StampedeGuard'
@@ -16,6 +19,7 @@ import type {
   CacheAdaptiveTtlOptions,
   CacheCircuitBreakerOptions,
   CacheGetOptions,
+  CacheHitRateSnapshot,
   CacheLayer,
   CacheLogger,
   CacheMGetEntry,
@@ -23,42 +27,24 @@ import type {
   CacheMSetEntry,
   CacheSingleFlightExecutionOptions,
   CacheSnapshotEntry,
+  CacheStackEvents,
   CacheStackOptions,
   CacheStatsSnapshot,
   CacheTagIndex,
   CacheWarmEntry,
   CacheWarmOptions,
+  CacheWarmProgress,
   CacheWrapOptions,
   CacheWriteOptions,
   InvalidationMessage,
   LayerTtlMap
 } from './types'
 
-const DEFAULT_NEGATIVE_TTL_SECONDS = 60
 const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
 const DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS = 5_000
 const DEFAULT_SINGLE_FLIGHT_POLL_MS = 50
 const MAX_CACHE_KEY_LENGTH = 1_024
-
-const EMPTY_METRICS = (): CacheMetricsSnapshot => ({
-  hits: 0,
-  misses: 0,
-  fetches: 0,
-  sets: 0,
-  deletes: 0,
-  backfills: 0,
-  invalidations: 0,
-  staleHits: 0,
-  refreshes: 0,
-  refreshErrors: 0,
-  writeFailures: 0,
-  singleFlightWaits: 0,
-  negativeCacheHits: 0,
-  circuitBreakerTrips: 0,
-  degradedOperations: 0,
-  hitsByLayer: {},
-  missesByLayer: {}
-})
+const DEFAULT_MAX_PROFILE_ENTRIES = 100_000
 
 type ReadMode = 'allow-stale' | 'fresh-only'
 type CacheWriteKind = 'value' | 'empty'
@@ -100,28 +86,26 @@ class DebugLogger implements CacheLogger {
   }
 }
 
-interface AccessProfile {
-  hits: number
-  lastAccessAt: number
-}
-
-interface CircuitBreakerState {
-  failures: number
-  openUntil: number | null
+/** Typed overloads for EventEmitter so callers get autocomplete on event names. */
+export interface CacheStack {
+  on<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  once<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  off<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  emit<K extends keyof CacheStackEvents>(event: K, data: CacheStackEvents[K]): boolean
 }
 
 export class CacheStack extends EventEmitter {
   private readonly stampedeGuard = new StampedeGuard()
-  private readonly metrics = EMPTY_METRICS()
+  private readonly metricsCollector = new MetricsCollector()
   private readonly instanceId = randomUUID()
   private readonly startup: Promise<void>
   private unsubscribeInvalidation?: () => Promise<void> | void
   private readonly logger: CacheLogger
   private readonly tagIndex: CacheTagIndex
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
-  private readonly accessProfiles = new Map<string, AccessProfile>()
   private readonly layerDegradedUntil = new Map<string, number>()
-  private readonly circuitBreakers = new Map<string, CircuitBreakerState>()
+  private readonly ttlResolver: TtlResolver
+  private readonly circuitBreakerManager: CircuitBreakerManager
   private isDisconnecting = false
   private disconnectPromise?: Promise<void>
 
@@ -137,12 +121,29 @@ export class CacheStack extends EventEmitter {
 
     this.validateConfiguration()
 
-    const debugEnv = process.env.DEBUG?.split(',').includes('layercache:debug') ?? false
+    const maxProfileEntries = options.maxProfileEntries ?? DEFAULT_MAX_PROFILE_ENTRIES
+    this.ttlResolver = new TtlResolver({ maxProfileEntries })
+    this.circuitBreakerManager = new CircuitBreakerManager({ maxEntries: maxProfileEntries })
+
+    if (options.publishSetInvalidation !== undefined) {
+      console.warn(
+        '[layercache] CacheStackOptions.publishSetInvalidation is deprecated. ' +
+        'Use broadcastL1Invalidation instead.'
+      )
+    }
+
+    const debugEnv = process.env['DEBUG']?.split(',').includes('layercache:debug') ?? false
     this.logger = typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
     this.startup = this.initialize()
   }
 
+  /**
+   * Read-through cache get.
+   * Returns the cached value if present and fresh, or invokes `fetcher` on a miss
+   * and stores the result across all layers. Returns `null` if the key is not found
+   * and no `fetcher` is provided.
+   */
   async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
     const normalizedKey = this.validateCacheKey(key)
     this.validateWriteOptions(options)
@@ -150,20 +151,20 @@ export class CacheStack extends EventEmitter {
 
     const hit = await this.readFromLayers<T>(normalizedKey, options, 'allow-stale')
     if (hit.found) {
-      this.recordAccess(normalizedKey)
+      this.ttlResolver.recordAccess(normalizedKey)
       if (this.isNegativeStoredValue(hit.stored)) {
-        this.metrics.negativeCacheHits += 1
+        this.metricsCollector.increment('negativeCacheHits')
       }
 
       if (hit.state === 'fresh') {
-        this.metrics.hits += 1
+        this.metricsCollector.increment('hits')
         await this.applyFreshReadPolicies(normalizedKey, hit, options, fetcher)
         return hit.value
       }
 
       if (hit.state === 'stale-while-revalidate') {
-        this.metrics.hits += 1
-        this.metrics.staleHits += 1
+        this.metricsCollector.increment('hits')
+        this.metricsCollector.increment('staleHits')
         this.emit('stale-serve', { key: normalizedKey, state: hit.state, layer: hit.layerName })
         if (fetcher) {
           this.scheduleBackgroundRefresh(normalizedKey, fetcher, options)
@@ -172,8 +173,8 @@ export class CacheStack extends EventEmitter {
       }
 
       if (!fetcher) {
-        this.metrics.hits += 1
-        this.metrics.staleHits += 1
+        this.metricsCollector.increment('hits')
+        this.metricsCollector.increment('staleHits')
         this.emit('stale-serve', { key: normalizedKey, state: hit.state, layer: hit.layerName })
         return hit.value
       }
@@ -181,14 +182,14 @@ export class CacheStack extends EventEmitter {
       try {
         return await this.fetchWithGuards(normalizedKey, fetcher, options)
       } catch (error) {
-        this.metrics.staleHits += 1
-        this.metrics.refreshErrors += 1
+        this.metricsCollector.increment('staleHits')
+        this.metricsCollector.increment('refreshErrors')
         this.logger.debug?.('stale-if-error', { key: normalizedKey, error: this.formatError(error) })
         return hit.value
       }
     }
 
-    this.metrics.misses += 1
+    this.metricsCollector.increment('misses')
     if (!fetcher) {
       return null
     }
@@ -196,6 +197,78 @@ export class CacheStack extends EventEmitter {
     return this.fetchWithGuards(normalizedKey, fetcher, options)
   }
 
+  /**
+   * Alias for `get(key, fetcher, options)` — explicit get-or-set pattern.
+   * Fetches and caches the value if not already present.
+   */
+  async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+    return this.get(key, fetcher, options)
+  }
+
+  /**
+   * Returns true if the given key exists and is not expired in any layer.
+   */
+  async has(key: string): Promise<boolean> {
+    const normalizedKey = this.validateCacheKey(key)
+    await this.startup
+
+    for (const layer of this.layers) {
+      if (this.shouldSkipLayer(layer)) {
+        continue
+      }
+      if (layer.has) {
+        try {
+          const exists = await layer.has(normalizedKey)
+          if (exists) {
+            return true
+          }
+          continue
+        } catch {
+          // fall through to next layer
+        }
+      } else {
+        try {
+          const value = await layer.get(normalizedKey)
+          if (value !== null) {
+            return true
+          }
+        } catch {
+          // fall through
+        }
+      }
+    }
+    return false
+  }
+
+  /**
+   * Returns the remaining TTL in seconds for the key in the fastest layer
+   * that has it, or null if the key is not found / has no TTL.
+   */
+  async ttl(key: string): Promise<number | null> {
+    const normalizedKey = this.validateCacheKey(key)
+    await this.startup
+
+    for (const layer of this.layers) {
+      if (this.shouldSkipLayer(layer)) {
+        continue
+      }
+      if (layer.ttl) {
+        try {
+          const remaining = await layer.ttl(normalizedKey)
+          if (remaining !== null) {
+            return remaining
+          }
+        } catch {
+          // fall through
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Stores a value in all cache layers. Overwrites any existing value.
+   */
   async set<T>(key: string, value: T, options?: CacheWriteOptions): Promise<void> {
     const normalizedKey = this.validateCacheKey(key)
     this.validateWriteOptions(options)
@@ -203,6 +276,9 @@ export class CacheStack extends EventEmitter {
     await this.storeEntry(normalizedKey, 'value', value, options)
   }
 
+  /**
+   * Deletes the key from all layers and publishes an invalidation message.
+   */
   async delete(key: string): Promise<void> {
     const normalizedKey = this.validateCacheKey(key)
     await this.startup
@@ -214,10 +290,24 @@ export class CacheStack extends EventEmitter {
     await this.startup
     await Promise.all(this.layers.map((layer) => layer.clear()))
     await this.tagIndex.clear()
-    this.accessProfiles.clear()
-    this.metrics.invalidations += 1
+    this.ttlResolver.clearProfiles()
+    this.circuitBreakerManager.clear()
+    this.metricsCollector.increment('invalidations')
     this.logger.debug?.('clear')
     await this.publishInvalidation({ scope: 'clear', sourceId: this.instanceId, operation: 'clear' })
+  }
+
+  /**
+   * Deletes multiple keys at once. More efficient than calling `delete()` in a loop.
+   */
+  async mdelete(keys: string[]): Promise<void> {
+    if (keys.length === 0) {
+      return
+    }
+    await this.startup
+    const normalizedKeys = keys.map((k) => this.validateCacheKey(k))
+    await this.deleteKeys(normalizedKeys)
+    await this.publishInvalidation({ scope: 'keys', keys: normalizedKeys, sourceId: this.instanceId, operation: 'delete' })
   }
 
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
@@ -302,14 +392,14 @@ export class CacheStack extends EventEmitter {
         await this.backfill(key, stored, layerIndex - 1)
         resultsByKey.set(key, resolved.value)
         pending.delete(key)
-        this.metrics.hits += indexesByKey.get(key)?.length ?? 1
+        this.metricsCollector.increment('hits', indexesByKey.get(key)?.length ?? 1)
       }
     }
 
     if (pending.size > 0) {
       for (const key of pending) {
         await this.tagIndex.remove(key)
-        this.metrics.misses += indexesByKey.get(key)?.length ?? 1
+        this.metricsCollector.increment('misses', indexesByKey.get(key)?.length ?? 1)
       }
     }
 
@@ -328,22 +418,30 @@ export class CacheStack extends EventEmitter {
 
   async warm(entries: CacheWarmEntry[], options: CacheWarmOptions = {}): Promise<void> {
     const concurrency = Math.max(1, options.concurrency ?? 4)
+    const total = entries.length
+    let completed = 0
     const queue = [...entries].sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0))
-    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    const workers = Array.from({ length: Math.min(concurrency, queue.length || 1) }, async () => {
       while (queue.length > 0) {
         const entry = queue.shift()
         if (!entry) {
           return
         }
 
+        let success = false
         try {
           await this.get(entry.key, entry.fetcher, entry.options)
           this.emit('warm', { key: entry.key })
+          success = true
         } catch (error) {
           this.emitError('warm', { key: entry.key, error: this.formatError(error) })
           if (!options.continueOnError) {
             throw error
           }
+        } finally {
+          completed += 1
+          const progress: CacheWarmProgress = { completed, total, key: entry.key, success }
+          options.onProgress?.(progress)
         }
       }
     })
@@ -351,6 +449,10 @@ export class CacheStack extends EventEmitter {
     await Promise.all(workers)
   }
 
+  /**
+   * Returns a cached version of `fetcher`. The cache key is derived from
+   * `prefix` plus the serialized arguments unless a `keyResolver` is provided.
+   */
   wrap<TArgs extends unknown[], TResult>(
     prefix: string,
     fetcher: (...args: TArgs) => Promise<TResult>,
@@ -365,6 +467,10 @@ export class CacheStack extends EventEmitter {
     }
   }
 
+  /**
+   * Creates a `CacheNamespace` that automatically prefixes all keys with
+   * `prefix:`. Useful for multi-tenant or module-level isolation.
+   */
   namespace(prefix: string): CacheNamespace {
     return new CacheNamespace(this, prefix)
   }
@@ -384,7 +490,7 @@ export class CacheStack extends EventEmitter {
   }
 
   getMetrics(): CacheMetricsSnapshot {
-    return { ...this.metrics }
+    return this.metricsCollector.snapshot
   }
 
   getStats(): CacheStatsSnapshot {
@@ -400,7 +506,14 @@ export class CacheStack extends EventEmitter {
   }
 
   resetMetrics(): void {
-    Object.assign(this.metrics, EMPTY_METRICS())
+    this.metricsCollector.reset()
+  }
+
+  /**
+   * Returns computed hit-rate statistics (overall and per-layer).
+   */
+  getHitRate(): CacheHitRateSnapshot {
+    return this.metricsCollector.hitRate()
   }
 
   async exportState(): Promise<CacheSnapshotEntry[]> {
@@ -449,11 +562,22 @@ export class CacheStack extends EventEmitter {
 
   async restoreFromFile(filePath: string): Promise<void> {
     const raw = await fs.readFile(filePath, 'utf8')
-    const snapshot = JSON.parse(raw)
-    if (!this.isCacheSnapshotEntries(snapshot)) {
-      throw new Error('Invalid snapshot file: expected CacheSnapshotEntry[]')
+    let parsed: unknown
+    try {
+      // Use Object.create(null) as reviver base to prevent __proto__ pollution
+      parsed = JSON.parse(raw, (_key, value: unknown) => {
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+          return Object.assign(Object.create(null) as Record<string, unknown>, value)
+        }
+        return value
+      })
+    } catch (cause) {
+      throw new Error(`Invalid snapshot file: could not parse JSON (${this.formatError(cause)})`)
     }
-    await this.importState(snapshot)
+    if (!this.isCacheSnapshotEntries(parsed)) {
+      throw new Error('Invalid snapshot file: expected an array of { key: string, value, ttl? } entries')
+    }
+    await this.importState(parsed)
   }
 
   async disconnect(): Promise<void> {
@@ -483,7 +607,7 @@ export class CacheStack extends EventEmitter {
     const fetchTask = async (): Promise<T | null> => {
       const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
       if (secondHit.found) {
-        this.metrics.hits += 1
+        this.metricsCollector.increment('hits')
         return secondHit.value
       }
 
@@ -515,13 +639,13 @@ export class CacheStack extends EventEmitter {
     const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
     const deadline = Date.now() + timeoutMs
 
-    this.metrics.singleFlightWaits += 1
+    this.metricsCollector.increment('singleFlightWaits')
     this.emit('stampede-dedupe', { key })
 
     while (Date.now() < deadline) {
       const hit = await this.readFromLayers<T>(key, options, 'fresh-only')
       if (hit.found) {
-        this.metrics.hits += 1
+        this.metricsCollector.increment('hits')
         return hit.value
       }
       await this.sleep(pollIntervalMs)
@@ -531,13 +655,15 @@ export class CacheStack extends EventEmitter {
   }
 
   private async fetchAndPopulate<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
-    this.assertCircuitClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
-    this.metrics.fetches += 1
+    this.circuitBreakerManager.assertClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
+    this.metricsCollector.increment('fetches')
+    const fetchStart = Date.now()
     let fetched: T
 
     try {
       fetched = await fetcher()
-      this.resetCircuitBreaker(key)
+      this.circuitBreakerManager.recordSuccess(key)
+      this.logger.debug?.('fetch', { key, durationMs: Date.now() - fetchStart })
     } catch (error) {
       this.recordCircuitFailure(key, options?.circuitBreaker ?? this.options.circuitBreaker, error)
       throw error
@@ -564,9 +690,9 @@ export class CacheStack extends EventEmitter {
       await this.tagIndex.touch(key)
     }
 
-    this.metrics.sets += 1
+    this.metricsCollector.increment('sets')
     this.logger.debug?.('set', { key, kind, tags: options?.tags })
-    this.emit('set', { key, kind, tags: options?.tags })
+    this.emit('set', { key, kind: kind as string, tags: options?.tags })
     if (this.shouldBroadcastL1Invalidation()) {
       await this.publishInvalidation({ scope: 'key', keys: [key], sourceId: this.instanceId, operation: 'write' })
     }
@@ -579,7 +705,7 @@ export class CacheStack extends EventEmitter {
       const layer = this.layers[index]
       const stored = await this.readLayerEntry(layer, key)
       if (stored === null) {
-        this.incrementMetricMap(this.metrics.missesByLayer, layer.name)
+        this.metricsCollector.incrementLayer('missesByLayer', layer.name)
         continue
       }
 
@@ -597,9 +723,9 @@ export class CacheStack extends EventEmitter {
 
       await this.tagIndex.touch(key)
       await this.backfill(key, stored, index - 1, options)
-      this.incrementMetricMap(this.metrics.hitsByLayer, layer.name)
+      this.metricsCollector.incrementLayer('hitsByLayer', layer.name)
       this.logger.debug?.('hit', { key, layer: layer.name, state: resolved.state })
-      this.emit('hit', { key, layer: layer.name, state: resolved.state })
+      this.emit('hit', { key, layer: layer.name, state: resolved.state as CacheStackEvents['hit']['state'] })
       return { found: true, value: resolved.value, stored, state: resolved.state, layerIndex: index, layerName: layer.name }
     }
 
@@ -650,7 +776,7 @@ export class CacheStack extends EventEmitter {
         await this.handleLayerFailure(layer, 'backfill', error)
         continue
       }
-      this.metrics.backfills += 1
+      this.metricsCollector.increment('backfills')
       this.logger.debug?.('backfill', { key, layer: layer.name })
       this.emit('backfill', { key, layer: layer.name })
     }
@@ -713,7 +839,7 @@ export class CacheStack extends EventEmitter {
       return
     }
 
-    this.metrics.writeFailures += failures.length
+    this.metricsCollector.increment('writeFailures', failures.length)
     this.logger.debug?.('write-failure', {
       ...context,
       failures: failures.map((failure) => this.formatError(failure.reason))
@@ -734,23 +860,14 @@ export class CacheStack extends EventEmitter {
     options: CacheWriteOptions | undefined,
     fallbackTtl: number | undefined
   ): number | undefined {
-    const baseTtl = kind === 'empty'
-      ? this.resolveLayerSeconds(
-          layerName,
-          options?.negativeTtl,
-          this.options.negativeTtl,
-          this.resolveLayerSeconds(layerName, options?.ttl, undefined, fallbackTtl) ?? DEFAULT_NEGATIVE_TTL_SECONDS
-        )
-      : this.resolveLayerSeconds(layerName, options?.ttl, undefined, fallbackTtl)
-
-    const adaptiveTtl = this.applyAdaptiveTtl(
+    return this.ttlResolver.resolveFreshTtl(
       key,
       layerName,
-      baseTtl,
-      options?.adaptiveTtl ?? this.options.adaptiveTtl
+      kind,
+      options,
+      fallbackTtl,
+      this.options.negativeTtl
     )
-    const jitter = this.resolveLayerSeconds(layerName, options?.ttlJitter, this.options.ttlJitter)
-    return this.applyJitter(adaptiveTtl, jitter)
   }
 
   private resolveLayerSeconds(
@@ -759,32 +876,7 @@ export class CacheStack extends EventEmitter {
     globalDefault?: number | LayerTtlMap,
     fallback?: number
   ): number | undefined {
-    if (override !== undefined) {
-      return this.readLayerNumber(layerName, override) ?? fallback
-    }
-
-    if (globalDefault !== undefined) {
-      return this.readLayerNumber(layerName, globalDefault) ?? fallback
-    }
-
-    return fallback
-  }
-
-  private readLayerNumber(layerName: string, value: number | LayerTtlMap): number | undefined {
-    if (typeof value === 'number') {
-      return value
-    }
-
-    return value[layerName]
-  }
-
-  private applyJitter(ttl: number | undefined, jitter: number | undefined): number | undefined {
-    if (!ttl || ttl <= 0 || !jitter || jitter <= 0) {
-      return ttl
-    }
-
-    const delta = (Math.random() * 2 - 1) * jitter
-    return Math.max(1, Math.round(ttl + delta))
+    return this.ttlResolver.resolveLayerSeconds(layerName, override, globalDefault, fallback)
   }
 
   private shouldNegativeCache(options?: CacheGetOptions): boolean {
@@ -797,11 +889,11 @@ export class CacheStack extends EventEmitter {
     }
 
     const refresh = (async () => {
-      this.metrics.refreshes += 1
+      this.metricsCollector.increment('refreshes')
       try {
         await this.fetchWithGuards(key, fetcher, options)
       } catch (error) {
-        this.metrics.refreshErrors += 1
+        this.metricsCollector.increment('refreshErrors')
         this.logger.debug?.('refresh-error', { key, error: this.formatError(error) })
       } finally {
         this.backgroundRefreshes.delete(key)
@@ -828,11 +920,12 @@ export class CacheStack extends EventEmitter {
 
     for (const key of keys) {
       await this.tagIndex.remove(key)
-      this.accessProfiles.delete(key)
+      this.ttlResolver.deleteProfile(key)
+      this.circuitBreakerManager.delete(key)
     }
 
-    this.metrics.deletes += keys.length
-    this.metrics.invalidations += 1
+    this.metricsCollector.increment('deletes', keys.length)
+    this.metricsCollector.increment('invalidations')
     this.logger.debug?.('delete', { keys })
     this.emit('delete', { keys })
   }
@@ -858,7 +951,7 @@ export class CacheStack extends EventEmitter {
     if (message.scope === 'clear') {
       await Promise.all(localLayers.map((layer) => layer.clear()))
       await this.tagIndex.clear()
-      this.accessProfiles.clear()
+      this.ttlResolver.clearProfiles()
       return
     }
 
@@ -868,7 +961,7 @@ export class CacheStack extends EventEmitter {
     if (message.operation !== 'write') {
       for (const key of keys) {
         await this.tagIndex.remove(key)
-        this.accessProfiles.delete(key)
+        this.ttlResolver.deleteProfile(key)
       }
     }
   }
@@ -1061,44 +1154,6 @@ export class CacheStack extends EventEmitter {
     }
   }
 
-  private applyAdaptiveTtl(
-    key: string,
-    layerName: string,
-    ttl: number | undefined,
-    adaptiveTtl: boolean | CacheAdaptiveTtlOptions | undefined
-  ): number | undefined {
-    if (!ttl || !adaptiveTtl) {
-      return ttl
-    }
-
-    const profile = this.accessProfiles.get(key)
-    if (!profile) {
-      return ttl
-    }
-
-    const config = adaptiveTtl === true ? {} : adaptiveTtl
-    const hotAfter = config.hotAfter ?? 3
-    if (profile.hits < hotAfter) {
-      return ttl
-    }
-
-    const step = this.resolveLayerSeconds(layerName, config.step, undefined, Math.max(1, Math.round(ttl / 2))) ?? 0
-    const maxTtl = this.resolveLayerSeconds(layerName, config.maxTtl, undefined, ttl + step * 4) ?? ttl
-    const multiplier = Math.floor(profile.hits / hotAfter)
-    return Math.min(maxTtl, ttl + step * multiplier)
-  }
-
-  private recordAccess(key: string): void {
-    const profile = this.accessProfiles.get(key) ?? { hits: 0, lastAccessAt: Date.now() }
-    profile.hits += 1
-    profile.lastAccessAt = Date.now()
-    this.accessProfiles.set(key, profile)
-  }
-
-  private incrementMetricMap(target: Record<string, number>, key: string): void {
-    target[key] = (target[key] ?? 0) + 1
-  }
-
   private shouldSkipLayer(layer: CacheLayer): boolean {
     const degradedUntil = this.layerDegradedUntil.get(layer.name)
     return degradedUntil !== undefined && degradedUntil > Date.now()
@@ -1114,7 +1169,7 @@ export class CacheStack extends EventEmitter {
       : 10_000
 
     this.layerDegradedUntil.set(layer.name, Date.now() + retryAfterMs)
-    this.metrics.degradedOperations += 1
+    this.metricsCollector.increment('degradedOperations')
     this.logger.warn?.('layer-degraded', { layer: layer.name, operation, error: this.formatError(error) })
     this.emitError(operation, { layer: layer.name, degraded: true, error: this.formatError(error) })
     return null
@@ -1124,44 +1179,16 @@ export class CacheStack extends EventEmitter {
     return Boolean(this.options.gracefulDegradation)
   }
 
-  private assertCircuitClosed(key: string, options: CacheCircuitBreakerOptions | undefined): void {
-    const state = this.circuitBreakers.get(key)
-    if (!state?.openUntil) {
-      return
-    }
-
-    if (state.openUntil <= Date.now()) {
-      state.openUntil = null
-      state.failures = 0
-      this.circuitBreakers.set(key, state)
-      return
-    }
-
-    this.emitError('circuit-breaker-open', { key, openUntil: state.openUntil })
-    throw new Error(`Circuit breaker is open for key "${key}".`)
-  }
-
   private recordCircuitFailure(key: string, options: CacheCircuitBreakerOptions | undefined, error: unknown): void {
     if (!options) {
       return
     }
 
-    const failureThreshold = options.failureThreshold ?? 3
-    const cooldownMs = options.cooldownMs ?? 30_000
-    const state = this.circuitBreakers.get(key) ?? { failures: 0, openUntil: null }
-    state.failures += 1
-
-    if (state.failures >= failureThreshold) {
-      state.openUntil = Date.now() + cooldownMs
-      this.metrics.circuitBreakerTrips += 1
+    this.circuitBreakerManager.recordFailure(key, options)
+    if (this.circuitBreakerManager.isOpen(key)) {
+      this.metricsCollector.increment('circuitBreakerTrips')
     }
-
-    this.circuitBreakers.set(key, state)
-    this.emitError('fetch', { key, error: this.formatError(error), failures: state.failures })
-  }
-
-  private resetCircuitBreaker(key: string): void {
-    this.circuitBreakers.delete(key)
+    this.emitError('fetch', { key, error: this.formatError(error) })
   }
 
   private isNegativeStoredValue(stored: unknown): boolean {

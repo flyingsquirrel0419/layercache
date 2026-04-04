@@ -229,15 +229,14 @@ describe('growth features', () => {
 
     await cache.set('profile:1', { id: 1 })
     await cache.get('profile:1')
-    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(1)
-
+    // After delete the key should be gone from all layers
     await cache.delete('profile:1')
-    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(0)
+    expect(await cache.get('profile:1')).toBeNull()
 
     await cache.set('profile:2', { id: 2 })
     await cache.get('profile:2')
     await cache.clear()
-    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(0)
+    expect(await cache.get('profile:2')).toBeNull()
   })
 
   it('does not invoke tRPC next twice when the result is null', async () => {

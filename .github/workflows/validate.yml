@@ -9,25 +9,41 @@ on:
 
 jobs:
   validate:
+    name: Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
         id: install
         run: npm ci
 
-      - name: Run tests
+      - name: Lint (Biome)
+        id: lint
+        run: npx @biomejs/biome check --reporter=github .
+
+      - name: Run tests with coverage
         id: tests
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == 20
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: false
 
       - name: Build packages
         id: build
@@ -42,8 +58,10 @@ jobs:
             echo ""
             echo "- event: \`${{ github.event_name }}\`"
             echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- node: \`${{ matrix.node-version }}\`"
             echo "- package: \`$(node -p "require('./package.json').name")\`"
             echo "- install: \`${{ steps.install.outcome || 'skipped' }}\`"
+            echo "- lint: \`${{ steps.lint.outcome || 'skipped' }}\`"
             echo "- tests: \`${{ steps.tests.outcome || 'skipped' }}\`"
             echo "- build: \`${{ steps.build.outcome || 'skipped' }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

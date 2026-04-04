@@ -3,6 +3,7 @@ import type {
   CacheMGetEntry,
   CacheMSetEntry,
   CacheMetricsSnapshot,
+  CacheHitRateSnapshot,
   CacheWarmEntry,
   CacheWarmOptions,
   CacheWrapOptions,
@@ -20,12 +21,28 @@ export class CacheNamespace {
     return this.cache.get(this.qualify(key), fetcher, options)
   }
 
+  async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+    return this.cache.getOrSet(this.qualify(key), fetcher, options)
+  }
+
+  async has(key: string): Promise<boolean> {
+    return this.cache.has(this.qualify(key))
+  }
+
+  async ttl(key: string): Promise<number | null> {
+    return this.cache.ttl(this.qualify(key))
+  }
+
   async set<T>(key: string, value: T, options?: CacheWriteOptions): Promise<void> {
     await this.cache.set(this.qualify(key), value, options)
   }
 
   async delete(key: string): Promise<void> {
     await this.cache.delete(this.qualify(key))
+  }
+
+  async mdelete(keys: string[]): Promise<void> {
+    await this.cache.mdelete(keys.map((k) => this.qualify(k)))
   }
 
   async clear(): Promise<void> {
@@ -71,6 +88,10 @@ export class CacheNamespace {
 
   getMetrics(): CacheMetricsSnapshot {
     return this.cache.getMetrics()
+  }
+
+  getHitRate(): CacheHitRateSnapshot {
+    return this.cache.getHitRate()
   }
 
   qualify(key: string): string {

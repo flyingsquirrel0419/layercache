@@ -10,22 +10,30 @@ export { createFastifyLayercachePlugin } from './integrations/fastify'
 export { cacheGraphqlResolver } from './integrations/graphql'
 export { createTrpcCacheMiddleware } from './integrations/trpc'
 export { MemoryLayer } from './layers/MemoryLayer'
+export type { EvictionPolicy, MemoryLayerSnapshotEntry } from './layers/MemoryLayer'
 export { RedisLayer } from './layers/RedisLayer'
+export { DiskLayer } from './layers/DiskLayer'
+export { MemcachedLayer } from './layers/MemcachedLayer'
+export type { MemcachedClient } from './layers/MemcachedLayer'
 export { JsonSerializer } from './serialization/JsonSerializer'
 export { MsgpackSerializer } from './serialization/MsgpackSerializer'
 export { RedisSingleFlightCoordinator } from './singleflight/RedisSingleFlightCoordinator'
 export { StampedeGuard } from './stampede/StampedeGuard'
+export { createPrometheusMetricsExporter } from './metrics/PrometheusExporter'
 export type {
   CacheSingleFlightCoordinator,
   CacheSingleFlightExecutionOptions,
   CacheAdaptiveTtlOptions,
   CacheCircuitBreakerOptions,
   CacheDegradationOptions,
+  CacheHitRateSnapshot,
+  CacheStackEvents,
   CacheStackOptions,
   CacheStatsSnapshot,
   CacheSnapshotEntry,
   CacheWarmEntry,
   CacheWarmOptions,
+  CacheWarmProgress,
   CacheWrapOptions,
   CacheGetOptions,
   CacheLayer,
