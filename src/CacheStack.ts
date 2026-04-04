@@ -214,6 +214,7 @@ export class CacheStack extends EventEmitter {
     await this.startup
     await Promise.all(this.layers.map((layer) => layer.clear()))
     await this.tagIndex.clear()
+    this.accessProfiles.clear()
     this.metrics.invalidations += 1
     this.logger.debug?.('clear')
     await this.publishInvalidation({ scope: 'clear', sourceId: this.instanceId, operation: 'clear' })
@@ -448,7 +449,10 @@ export class CacheStack extends EventEmitter {
 
   async restoreFromFile(filePath: string): Promise<void> {
     const raw = await fs.readFile(filePath, 'utf8')
-    const snapshot = JSON.parse(raw) as CacheSnapshotEntry[]
+    const snapshot = JSON.parse(raw)
+    if (!this.isCacheSnapshotEntries(snapshot)) {
+      throw new Error('Invalid snapshot file: expected CacheSnapshotEntry[]')
+    }
     await this.importState(snapshot)
   }
 
@@ -824,6 +828,7 @@ export class CacheStack extends EventEmitter {
 
     for (const key of keys) {
       await this.tagIndex.remove(key)
+      this.accessProfiles.delete(key)
     }
 
     this.metrics.deletes += keys.length
@@ -853,6 +858,7 @@ export class CacheStack extends EventEmitter {
     if (message.scope === 'clear') {
       await Promise.all(localLayers.map((layer) => layer.clear()))
       await this.tagIndex.clear()
+      this.accessProfiles.clear()
       return
     }
 
@@ -862,6 +868,7 @@ export class CacheStack extends EventEmitter {
     if (message.operation !== 'write') {
       for (const key of keys) {
         await this.tagIndex.remove(key)
+        this.accessProfiles.delete(key)
       }
     }
   }
@@ -1035,7 +1042,18 @@ export class CacheStack extends EventEmitter {
     if ((options?.slidingTtl ?? false) && isStoredValueEnvelope(hit.stored)) {
       const refreshed = refreshStoredEnvelope(hit.stored)
       const ttl = remainingStoredTtlSeconds(refreshed)
-      await this.layers[hit.layerIndex].set(key, refreshed, ttl)
+      for (let index = 0; index <= hit.layerIndex; index += 1) {
+        const layer = this.layers[index]
+        if (this.shouldSkipLayer(layer)) {
+          continue
+        }
+
+        try {
+          await layer.set(key, refreshed, ttl)
+        } catch (error) {
+          await this.handleLayerFailure(layer, 'sliding-ttl', error)
+        }
+      }
     }
 
     if (fetcher && refreshAhead > 0 && remainingFreshTtl > 0 && remainingFreshTtl <= refreshAhead) {
@@ -1163,6 +1181,17 @@ export class CacheStack extends EventEmitter {
     }
 
     return JSON.stringify(this.normalizeForSerialization(value))
+  }
+
+  private isCacheSnapshotEntries(value: unknown): value is CacheSnapshotEntry[] {
+    return Array.isArray(value) && value.every((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return false
+      }
+
+      const candidate = entry as Partial<CacheSnapshotEntry>
+      return typeof candidate.key === 'string'
+    })
   }
 
   private normalizeForSerialization(value: unknown): unknown {

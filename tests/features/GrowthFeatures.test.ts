@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import Redis from 'ioredis-mock'
@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import { createCachedMethodDecorator } from '../../src/decorators/createCachedMethodDecorator'
 import { createCacheStatsHandler } from '../../src/http/createCacheStatsHandler'
+import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import type { CacheLayer } from '../../src/types'
@@ -81,6 +82,21 @@ describe('growth features', () => {
     }
   })
 
+  it('rejects invalid snapshot files before import', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-invalid-'))
+    const filePath = join(dir, 'snapshot.json')
+
+    try {
+      await cache.persistToFile(filePath)
+      await expect(readFile(filePath, 'utf8')).resolves.toContain('[')
+      await writeFile(filePath, '{"bad":true}', 'utf8')
+      await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/Invalid snapshot file/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('supports sliding ttl and adaptive ttl', async () => {
     const layer = new MemoryLayer({ ttl: 60 })
     const cache = new CacheStack([layer])
@@ -106,6 +122,22 @@ describe('growth features', () => {
       const ttlSeconds = Math.round((((stored as { freshUntil: number }).freshUntil) - Date.now()) / 1_000)
       expect(ttlSeconds).toBeGreaterThanOrEqual(14)
     }
+  })
+
+  it('refreshes sliding ttl across backfilled upper layers', async () => {
+    const redis = new Redis()
+    const memory = new MemoryLayer({ ttl: 60 })
+    const redisLayer = new RedisLayer({ client: redis, ttl: 60, prefix: 'sliding:' })
+    const cache = new CacheStack([memory, redisLayer])
+
+    await cache.set('sliding:remote', { ok: true }, { ttl: 1 })
+    await memory.delete('sliding:remote')
+    await new Promise((resolve) => setTimeout(resolve, 700))
+
+    await expect(cache.get('sliding:remote', undefined, { slidingTtl: true })).resolves.toEqual({ ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 700))
+
+    await expect(memory.get('sliding:remote')).resolves.toEqual({ ok: true })
   })
 
   it('degrades unhealthy layers and opens circuit breakers for failing fetchers', async () => {
@@ -163,6 +195,7 @@ describe('growth features', () => {
   it('creates cache-backed method decorators', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     let executions = 0
+    const wrapSpy = vi.spyOn(cache, 'wrap')
 
     class Service {
       readonly cache = cache
@@ -188,5 +221,37 @@ describe('growth features', () => {
     await expect(service.loadUser(1)).resolves.toEqual({ id: 1 })
     await expect(service.loadUser(1)).resolves.toEqual({ id: 1 })
     expect(executions).toBe(1)
+    expect(wrapSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans access profiles on delete and clear', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await cache.set('profile:1', { id: 1 })
+    await cache.get('profile:1')
+    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(1)
+
+    await cache.delete('profile:1')
+    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(0)
+
+    await cache.set('profile:2', { id: 2 })
+    await cache.get('profile:2')
+    await cache.clear()
+    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(0)
+  })
+
+  it('does not invoke tRPC next twice when the result is null', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const middleware = createTrpcCacheMiddleware(cache, 'trpc')
+    const next = vi.fn(async () => null as unknown as { ok: boolean; data?: null })
+
+    await expect(middleware({
+      path: 'user.get',
+      type: 'query',
+      rawInput: { id: 1 },
+      next
+    })).resolves.toBeNull()
+
+    expect(next).toHaveBeenCalledTimes(1)
   })
 })

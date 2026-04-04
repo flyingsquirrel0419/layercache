@@ -22,12 +22,26 @@ export function createTrpcCacheMiddleware<TInput = unknown, TResult = unknown>(
       ? `${prefix}:${options.keyResolver(context.rawInput as TInput, context.path, context.type)}`
       : `${prefix}:${context.path ?? 'procedure'}:${JSON.stringify(context.rawInput ?? null)}`
 
+    let didFetch = false
+    let fetchedResult: { ok: boolean; data?: TResult } | null = null
     const cached = await cache.get<{ ok: boolean; data?: TResult }>(
       key,
-      () => context.next(),
+      async () => {
+        didFetch = true
+        fetchedResult = await context.next()
+        return fetchedResult
+      },
       options
     )
 
-    return cached ?? context.next()
+    if (cached !== null) {
+      return cached
+    }
+
+    if (didFetch) {
+      return fetchedResult
+    }
+
+    return context.next()
   }
 }
