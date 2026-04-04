@@ -1,13 +1,14 @@
 # Layercache Codebase Review & Growth Plan
 
 > Original review: 2026-04-04 | Version 1.0.1  
-> Updated after commit `3280581`: 2026-04-04 | All 45 tests passing ✅
+> Updated after commit `3280581`: 2026-04-04 | All 45 tests passing  
+> Final update after commit `2894ceb`: 2026-04-04 | All 49 tests passing ✅
 
 ---
 
 ## Validation Summary
 
-The `Implement growth roadmap features` commit addressed **every item** from the original review and added a large set of growth features on top. Test coverage grew from 6 files / ~622 lines to 8 files / 45 tests, all passing.
+The `Implement growth roadmap features` commit addressed **every item** from the original review. The follow-up `Fix remaining review bugs` commit resolved all 5 newly discovered issues. Test coverage is now 8 files / 49 tests, all passing.
 
 ---
 
@@ -70,11 +71,11 @@ The `Implement growth roadmap features` commit addressed **every item** from the
 - `refreshAhead: N` — triggers background refresh when remaining TTL ≤ N seconds
 
 **E. Comprehensive Test Suite**
-- `GrowthFeatures.test.ts` — wrap/warm/namespace, snapshots, sliding/adaptive TTL, circuit breaker/degradation, compression, stats handler, method decorator (6 tests)
+- `GrowthFeatures.test.ts` — wrap/warm/namespace, snapshots, sliding/adaptive TTL, circuit breaker/degradation, compression, stats handler, method decorator, tRPC null safety, accessProfiles cleanup, slidingTtl cross-layer, snapshot validation (10 tests)
 - `RedisInvalidationBus.test.ts` — malformed payload skipping, handler error recovery, duplicate subscription prevention (3 tests)
 - Expanded `OperationalFeatures.test.ts` — up from 11 to 14 tests
 - Expanded `StampedeGuard.test.ts` — reference counting cleanup (2 tests)
-- **Total: 45 tests, 8 files, all passing**
+- **Total: 49 tests, 8 files, all passing**
 
 ### Tier 2 — All Implemented ✅
 
@@ -132,117 +133,17 @@ The `Implement growth roadmap features` commit addressed **every item** from the
 
 ---
 
-## Part 3: New Issues Found in This Commit
+## Part 3: Follow-Up Bug Fixes (commit `2894ceb`) — All Resolved ✅
 
-The following issues were **not in the original review** and were introduced or uncovered during this implementation.
+Five issues were discovered during the second review and all have been fixed with corresponding tests.
 
-### P1 — Fix Recommended
-
-#### 1. tRPC middleware calls `context.next()` twice on null result
-**File:** `src/integrations/trpc.ts:29-31`
-
-```ts
-const cached = await cache.get<{ ok: boolean; data?: TResult }>(
-  key,
-  () => context.next(),   // ① called as fetcher on cache miss
-  options
-)
-
-return cached ?? context.next()  // ② called again if result is null
-```
-
-If the tRPC procedure returns `null`/`undefined` (or if negative caching causes `get()` to return `null`), the procedure is invoked a second time. This causes duplicate side effects (database reads, logging, etc.).
-
-**Fix:**
-```ts
-let result: { ok: boolean; data?: TResult } | null = null
-const cached = await cache.get<{ ok: boolean; data?: TResult }>(
-  key,
-  async () => {
-    result = await context.next()
-    return result
-  },
-  options
-)
-
-return cached ?? result ?? context.next()
-```
-
-#### 2. `accessProfiles` Map grows without bound
-**File:** `src/CacheStack.ts` — `recordAccess()` / `accessProfiles`
-
-`accessProfiles` is populated on every cache hit (`recordAccess(key)`) but is **never pruned**. Keys deleted via `delete()`, `invalidateByTag()`, `invalidateByPattern()`, or `clear()` leave orphaned entries in the map. In workloads with many short-lived keys this will cause unbounded memory growth.
-
-**Fix:** Clear the profile in `deleteKeys()`:
-```ts
-private async deleteKeys(keys: string[]): Promise<void> {
-  ...
-  for (const key of keys) {
-    await this.tagIndex.remove(key)
-    this.accessProfiles.delete(key)   // add this
-  }
-}
-```
-Also call `this.accessProfiles.clear()` in `clear()`.
-
-### P2 — Consider Fixing
-
-#### 3. `slidingTtl` only refreshes the layer where the hit occurred
-**File:** `src/CacheStack.ts:1035-1039`
-
-```ts
-if ((options?.slidingTtl ?? false) && isStoredValueEnvelope(hit.stored)) {
-  const refreshed = refreshStoredEnvelope(hit.stored)
-  const ttl = remainingStoredTtlSeconds(refreshed)
-  await this.layers[hit.layerIndex].set(key, refreshed, ttl)  // only hit layer
-}
-```
-
-If the value is found in L2 (Redis) and backfilled to L1 (memory), the sliding TTL reset is applied only to the L2 copy. The L1 copy retains the original TTL from the backfill. On the next read L1 will be hit, but with a non-refreshed TTL.
-
-**Fix:** Apply `slidingTtl` to all layers up to and including the hit layer, or apply it during `backfill()`.
-
-#### 4. `createCachedMethodDecorator` creates a new `wrap` closure on every invocation
-**File:** `src/decorators/createCachedMethodDecorator.ts:18-26`
-
-```ts
-descriptor.value = async function (...args: unknown[]) {
-  const cache = options.cache(this)
-  const wrapped = cache.wrap(...)   // new closure every call
-  return wrapped(...args)
-}
-```
-
-`cache.wrap()` creates and returns a new function on every call. This is harmless functionally but allocates a new closure on every method invocation.
-
-**Fix:** Cache the wrapped function per instance:
-```ts
-const wrapCache = new WeakMap<object, (...args: unknown[]) => unknown>()
-descriptor.value = async function (...args: unknown[]) {
-  if (!wrapCache.has(this)) {
-    wrapCache.set(this, options.cache(this).wrap(prefix, original.bind(this), options))
-  }
-  return wrapCache.get(this)!(...args)
-}
-```
-
-#### 5. `restoreFromFile` does not validate parsed JSON shape
-**File:** `src/CacheStack.ts:450-453`
-
-```ts
-const raw = await fs.readFile(filePath, 'utf8')
-const snapshot = JSON.parse(raw) as CacheSnapshotEntry[]
-await this.importState(snapshot)
-```
-
-A corrupted or tampered snapshot file will produce a confusing error inside `importState()`. The same issue existed in `RedisInvalidationBus` (now fixed), but was not addressed here.
-
-**Fix:** Add a minimal shape check before calling `importState`:
-```ts
-if (!Array.isArray(snapshot) || !snapshot.every((e) => typeof e?.key === 'string')) {
-  throw new Error('Invalid snapshot file: expected CacheSnapshotEntry[]')
-}
-```
+| # | Issue | Status | How | Test |
+|---|-------|--------|-----|------|
+| 1 | tRPC middleware calls `context.next()` twice on null | **FIXED** | `didFetch` flag tracks whether fetcher ran; reuses `fetchedResult` instead of re-calling `next()` | `does not invoke tRPC next twice when the result is null` |
+| 2 | `accessProfiles` Map grows without bound | **FIXED** | `accessProfiles.delete(key)` in `deleteKeys()`; `.clear()` in `clear()` and `handleInvalidationMessage(scope: 'clear')` | `cleans access profiles on delete and clear` |
+| 3 | `slidingTtl` only refreshes hit layer | **FIXED** | Loop `for (index = 0; index <= hit.layerIndex)` applies refreshed envelope to all layers; errors handled via `handleLayerFailure()` | `refreshes sliding ttl across backfilled upper layers` |
+| 4 | `createCachedMethodDecorator` creates new closure per call | **FIXED** | `WeakMap<object, wrapped>` caches the `wrap()` result per instance; GC-safe | `wrapSpy` asserts `cache.wrap` called exactly once |
+| 5 | `restoreFromFile` does not validate JSON shape | **FIXED** | `isCacheSnapshotEntries()` type guard validates `Array.isArray` + `typeof key === 'string'` before `importState()` | `rejects invalid snapshot files before import` |
 
 ---
 
@@ -274,27 +175,24 @@ Layercache now has a **clear competitive advantage** across every major dimensio
 
 ## Part 5: Remaining Roadmap
 
-The following items from the original plan were not implemented (lower priority, still worth doing):
+All bugs are resolved. The remaining items are enhancement opportunities:
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| Fix tRPC double-call bug | **P1** | New finding; fix before promoting integration |
-| Fix `accessProfiles` memory leak | **P1** | New finding; prune on delete/clear |
-| Fix `slidingTtl` multi-layer | P2 | Minor correctness issue |
-| Fix `createCachedMethodDecorator` closure | P2 | Performance, not correctness |
-| Validate `restoreFromFile` JSON | P2 | Defensive programming |
-| OpenTelemetry integration | P3 | For enterprise observability |
+| OpenTelemetry integration | P3 | For enterprise observability (trace spans, histogram metrics) |
 | Test coverage badge | P3 | Signals maturity on npm/GitHub |
 | README update to reflect new features | P3 | Many new features not yet documented in README |
-| CLI: per-layer stats breakdown | P3 | Current `stats` command is minimal |
+| CLI: per-layer stats breakdown | P3 | Current `stats` command only reports total key count |
 | Interactive playground / demo | P3 | User acquisition via discoverability |
 
 ---
 
 ## Summary
 
-**All 13 original issues (4 P0 + 5 P1 + 4 P2) are fully resolved.** All 14 planned growth features across Tiers 1–3 are implemented and tested. The library has gone from a solid-but-incomplete v1.0.1 to a feature-complete, production-ready caching solution.
+**All 18 issues across 3 review cycles are fully resolved:**
+- 13 original issues (4 P0 + 5 P1 + 4 P2) from the initial review
+- 5 follow-up issues (2 P1 + 3 P2) discovered during validation
 
-**3 new issues were found** in this commit: a functional bug in the tRPC middleware (double procedure call), an `accessProfiles` memory leak, and a minor `slidingTtl` scope limitation. All are fixable in < 1 day total.
+**All 14 planned growth features** across Tiers 1–3 are implemented and tested. The test suite has grown from 6 files / ~622 lines to **8 files / 49 tests, all passing**.
 
-The codebase is now in excellent shape for public promotion and community adoption.
+**No open bugs remain.** The codebase is production-ready and feature-complete for public promotion and community adoption.
