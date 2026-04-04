@@ -1,26 +1,34 @@
 import { Mutex } from 'async-mutex'
 
+interface MutexEntry {
+  mutex: Mutex
+  references: number
+}
+
 export class StampedeGuard {
-  private readonly mutexes = new Map<string, Mutex>()
+  private readonly mutexes = new Map<string, MutexEntry>()
 
   async execute<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const mutex = this.getMutex(key)
+    const entry = this.getMutexEntry(key)
 
     try {
-      return await mutex.runExclusive(task)
+      return await entry.mutex.runExclusive(task)
     } finally {
-      if (!mutex.isLocked()) {
+      entry.references -= 1
+      if (entry.references === 0 && !entry.mutex.isLocked()) {
         this.mutexes.delete(key)
       }
     }
   }
 
-  private getMutex(key: string): Mutex {
-    let mutex = this.mutexes.get(key)
-    if (!mutex) {
-      mutex = new Mutex()
-      this.mutexes.set(key, mutex)
+  private getMutexEntry(key: string): MutexEntry {
+    let entry = this.mutexes.get(key)
+    if (!entry) {
+      entry = { mutex: new Mutex(), references: 0 }
+      this.mutexes.set(key, entry)
     }
-    return mutex
+
+    entry.references += 1
+    return entry
   }
 }

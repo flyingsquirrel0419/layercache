@@ -22,6 +22,28 @@ describe('RedisLayer', () => {
     await expect(layer.get('numbers')).resolves.toEqual([1, 2, 3])
   })
 
+  it('treats deserialization failures as cache misses and removes the corrupted key', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client, serializer: new MsgpackSerializer() })
+
+    await client.set('broken', 'not-msgpack')
+
+    await expect(layer.get('broken')).resolves.toBeNull()
+    await expect(client.get('broken')).resolves.toBeNull()
+  })
+
+  it('treats pipeline command errors and corrupted payloads as cache misses in bulk reads', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client, serializer: new MsgpackSerializer() })
+
+    await layer.set('good', { ok: true })
+    await client.set('broken', 'not-msgpack')
+    await client.lpush('wrongtype', 'value')
+
+    await expect(layer.getMany(['good', 'broken', 'wrongtype'])).resolves.toEqual([{ ok: true }, null, null])
+    await expect(client.get('broken')).resolves.toBeNull()
+  })
+
   it('refuses to clear an unprefixed redis namespace unless explicitly allowed', async () => {
     const client = new Redis()
     const layer = new RedisLayer({ client })
