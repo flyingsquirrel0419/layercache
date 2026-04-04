@@ -6,6 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
 [![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
+[![test coverage](https://img.shields.io/badge/tests-49%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
 
 ```
 L1 hit  ~0.01 ms  ← served from memory, zero network
@@ -44,12 +45,24 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Negative caching** — cache known misses for a short TTL to protect the database
 - **Stale strategies** — `staleWhileRevalidate` and `staleIfError` as opt-in read behavior
 - **TTL jitter** — spread expirations to avoid synchronized stampedes
+- **Sliding & adaptive TTL** — extend TTL on every read or ramp it up for hot keys
+- **Refresh-ahead** — trigger background refresh when TTL drops below a threshold
 - **Best-effort writes** — tolerate partial layer write failures when desired
 - **Bulk reads** — `mget` uses layer-level `getMany()` when available
 - **Distributed tag index** — `RedisTagIndex` keeps tag state consistent across multiple servers
 - **Optional distributed single-flight** — plug in a coordinator to dedupe misses across instances
 - **Cross-server L1 invalidation** — Redis pub/sub bus flushes stale memory on other instances when you write or delete
-- **Metrics** — hit/miss/fetch/backfill counters built in
+- **`wrap()` decorator API** — turn any async function into a cached version with auto-generated keys
+- **Cache warming** — pre-populate layers with a prioritised list of entries at startup
+- **Namespaces** — scope a `CacheStack` to a key prefix for multi-tenant or module isolation
+- **Event hooks** — `EventEmitter`-based events for hits, misses, stale serves, errors, and more
+- **Graceful degradation** — skip a failing layer for a configurable retry window
+- **Circuit breaker** — per-key or global; opens after N failures, recovers after cooldown
+- **Compression** — transparent gzip/brotli in `RedisLayer` with a byte threshold
+- **Metrics & stats** — per-layer hit/miss counters, circuit-breaker trips, degraded operations; HTTP stats handler
+- **Persistence** — `exportState` / `importState` for in-process snapshots; `persistToFile` / `restoreFromFile` for disk
+- **Admin CLI** — `layercache stats | keys | invalidate` against any Redis URL
+- **Framework integrations** — Fastify plugin, tRPC middleware, GraphQL resolver wrapper
 - **MessagePack serializer** — drop-in replacement for lower Redis memory usage
 - **NestJS module** — `CacheStackModule.forRoot(...)` with `@InjectCacheStack()`
 - **Custom layers** — implement the 5-method `CacheLayer` interface to plug in Memcached, DynamoDB, or anything else
@@ -176,6 +189,67 @@ const [user1, user2] = await cache.mget([
 
 ```ts
 const { hits, misses, fetches, staleHits, refreshes, writeFailures } = cache.getMetrics()
+```
+
+### `cache.resetMetrics(): void`
+
+Resets all counters to zero — useful for per-interval reporting.
+
+```ts
+cache.resetMetrics()
+```
+
+### `cache.getStats(): CacheStatsSnapshot`
+
+Returns metrics, per-layer degradation state, and the number of in-flight background refreshes.
+
+```ts
+const { metrics, layers, backgroundRefreshes } = cache.getStats()
+// layers: [{ name, isLocal, degradedUntil }]
+```
+
+### `cache.wrap(prefix, fetcher, options?)`
+
+Wraps an async function so every call is transparently cached. The key is derived from the function arguments unless you supply a `keyResolver`.
+
+```ts
+const getUser = cache.wrap('user', (id: number) => db.findUser(id))
+
+const user = await getUser(123) // key → "user:123"
+
+// Custom key resolver
+const getUser = cache.wrap(
+  'user',
+  (id: number) => db.findUser(id),
+  { keyResolver: (id) => String(id), ttl: 300 }
+)
+```
+
+### `cache.warm(entries, options?)`
+
+Pre-populate layers at startup from a prioritised list. Higher `priority` values run first.
+
+```ts
+await cache.warm(
+  [
+    { key: 'config',     fetcher: () => db.getConfig(),     priority: 10 },
+    { key: 'user:1',     fetcher: () => db.findUser(1),     priority: 5  },
+    { key: 'user:2',     fetcher: () => db.findUser(2),     priority: 5  },
+  ],
+  { concurrency: 4, continueOnError: true }
+)
+```
+
+### `cache.namespace(prefix): CacheNamespace`
+
+Returns a scoped view with the same full API (`get`, `set`, `delete`, `clear`, `mget`, `wrap`, `warm`, `invalidateByTag`, `invalidateByPattern`, `getMetrics`). `clear()` only touches `prefix:*` keys.
+
+```ts
+const users = cache.namespace('users')
+const posts = cache.namespace('posts')
+
+await users.set('123', userData)          // stored as "users:123"
+await users.clear()                       // only deletes "users:*"
 ```
 
 ---
@@ -364,6 +438,200 @@ await cache.set('key', value, { ttl: { local: 15, shared: 600 } })
 
 ---
 
+## Sliding & adaptive TTL
+
+**Sliding TTL** resets the TTL on every read so frequently-accessed keys never expire.
+
+```ts
+const value = await cache.get('session:abc', fetchSession, { slidingTtl: true })
+```
+
+**Adaptive TTL** automatically increases the TTL of hot keys up to a ceiling.
+
+```ts
+await cache.get('popular-post', fetchPost, {
+  adaptiveTtl: {
+    hotAfter: 5,      // ramp up after 5 hits
+    step: 60,         // add 60s per hit
+    maxTtl: 3600      // cap at 1h
+  }
+})
+```
+
+**Refresh-ahead** triggers a background refresh when the remaining TTL drops below a threshold, so callers never see a miss.
+
+```ts
+await cache.get('leaderboard', fetchLeaderboard, {
+  ttl: 120,
+  refreshAhead: 30  // start refreshing when ≤30s remain
+})
+```
+
+---
+
+## Graceful degradation & circuit breaker
+
+**Graceful degradation** marks a layer as degraded on failure and skips it for a retry window, keeping the cache available even if Redis is briefly unreachable.
+
+```ts
+new CacheStack([...], {
+  gracefulDegradation: { retryAfterMs: 10_000 }
+})
+```
+
+**Circuit breaker** opens after repeated fetcher failures for a key, returning `null` instead of hammering a broken downstream.
+
+```ts
+new CacheStack([...], {
+  circuitBreaker: {
+    failureThreshold: 5,  // open after 5 consecutive failures
+    cooldownMs: 30_000    // retry after 30s
+  }
+})
+
+// Or per-operation
+await cache.get('fragile-key', fetch, {
+  circuitBreaker: { failureThreshold: 3, cooldownMs: 10_000 }
+})
+```
+
+---
+
+## Compression
+
+`RedisLayer` can transparently compress values before writing. Values smaller than `compressionThreshold` are stored as-is.
+
+```ts
+new RedisLayer({
+  client: redis,
+  ttl: 300,
+  compression: 'gzip',           // or 'brotli'
+  compressionThreshold: 1_024    // bytes — skip compression for small values
+})
+```
+
+---
+
+## Stats & HTTP endpoint
+
+`cache.getStats()` returns a full snapshot suitable for dashboards or health checks.
+
+```ts
+const stats = cache.getStats()
+// {
+//   metrics: { hits, misses, fetches, circuitBreakerTrips, ... },
+//   layers:  [{ name, isLocal, degradedUntil }],
+//   backgroundRefreshes: 2
+// }
+```
+
+Mount a JSON endpoint with the built-in HTTP handler (works with Express, Fastify, Next.js):
+
+```ts
+import { createCacheStatsHandler } from 'layercache'
+import http from 'node:http'
+
+const statsHandler = createCacheStatsHandler(cache)
+http.createServer(statsHandler).listen(9090)
+// GET / → JSON stats
+```
+
+Or use the Fastify plugin:
+
+```ts
+import { createFastifyLayercachePlugin } from 'layercache/integrations/fastify'
+
+await fastify.register(createFastifyLayercachePlugin(cache, {
+  statsPath: '/cache/stats'   // default; set exposeStatsRoute: false to disable
+}))
+// fastify.cache is now available in all handlers
+```
+
+---
+
+## Persistence & snapshots
+
+Transfer cache state between `CacheStack` instances or survive a restart.
+
+```ts
+// In-memory snapshot
+const snapshot = await cache.exportState()
+await anotherCache.importState(snapshot)
+
+// Disk snapshot
+await cache.persistToFile('./cache-snapshot.json')
+await cache.restoreFromFile('./cache-snapshot.json')
+```
+
+---
+
+## Event hooks
+
+`CacheStack` extends `EventEmitter`. Subscribe to events for monitoring or custom side-effects.
+
+| Event | Payload |
+|-------|---------|
+| `hit` | `{ key, layer }` |
+| `miss` | `{ key }` |
+| `set` | `{ key }` |
+| `delete` | `{ key }` |
+| `stale-serve` | `{ key, state, layer }` |
+| `stampede-dedupe` | `{ key }` |
+| `backfill` | `{ key, fromLayer, toLayer }` |
+| `warm` | `{ key }` |
+| `error` | `{ event, context }` |
+
+```ts
+cache.on('hit',   ({ key, layer }) => metrics.inc('cache.hit',  { layer }))
+cache.on('miss',  ({ key })        => metrics.inc('cache.miss'))
+cache.on('error', ({ event, context }) => logger.error(event, context))
+```
+
+---
+
+## Framework integrations
+
+### tRPC
+
+```ts
+import { createTrpcCacheMiddleware } from 'layercache/integrations/trpc'
+
+const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60 })
+
+export const cachedProcedure = t.procedure.use(cacheMiddleware)
+```
+
+### GraphQL
+
+```ts
+import { cacheGraphqlResolver } from 'layercache/integrations/graphql'
+
+const resolvers = {
+  Query: {
+    user: cacheGraphqlResolver(cache, 'user', (_root, { id }) => db.findUser(id), {
+      keyResolver: (_root, { id }) => id,
+      ttl: 300
+    })
+  }
+}
+```
+
+---
+
+## Admin CLI
+
+Inspect and manage a Redis-backed cache without writing code.
+
+```bash
+# Requires ioredis
+npx layercache stats     --redis redis://localhost:6379
+npx layercache keys      --redis redis://localhost:6379 --pattern "user:*"
+npx layercache invalidate --redis redis://localhost:6379 --tag user:123
+npx layercache invalidate --redis redis://localhost:6379 --pattern "session:*"
+```
+
+---
+
 ## MessagePack serialization
 
 Reduces Redis memory usage and speeds up serialization for large values:
@@ -512,17 +780,28 @@ Example output from a local run:
 
 ## Comparison
 
-| | node-cache | ioredis | cache-manager | **layercache** |
+| | node-cache-manager | keyv | cacheable | **layercache** |
 |---|:---:|:---:|:---:|:---:|
-| Multi-layer | ❌ | ❌ | △ | ✅ |
+| Multi-layer | △ | Plugin | ❌ | ✅ |
 | Auto backfill | ❌ | ❌ | ❌ | ✅ |
 | Stampede prevention | ❌ | ❌ | ❌ | ✅ |
-| Tag invalidation | ❌ | ❌ | ❌ | ✅ |
+| Tag invalidation | ❌ | ❌ | ✅ | ✅ |
 | Distributed tags | ❌ | ❌ | ❌ | ✅ |
 | Cross-server L1 flush | ❌ | ❌ | ❌ | ✅ |
-| TypeScript-first | ❌ | ✅ | △ | ✅ |
-| NestJS module | ❌ | ❌ | ✅ | ✅ |
-| Custom layers | ❌ | — | △ | ✅ |
+| TypeScript-first | △ | ✅ | ✅ | ✅ |
+| Wrap / decorator API | ✅ | ❌ | ❌ | ✅ |
+| Cache warming | ❌ | ❌ | ❌ | ✅ |
+| Namespaces | ❌ | ✅ | ✅ | ✅ |
+| Sliding / adaptive TTL | ❌ | ❌ | ❌ | ✅ |
+| Event hooks | ✅ | ✅ | ✅ | ✅ |
+| Circuit breaker | ❌ | ❌ | ❌ | ✅ |
+| Graceful degradation | ❌ | ❌ | ❌ | ✅ |
+| Compression | ❌ | ❌ | ✅ | ✅ |
+| Persistence / snapshots | ❌ | ❌ | ❌ | ✅ |
+| Admin CLI | ❌ | ❌ | ❌ | ✅ |
+| Pluggable logger | ❌ | ❌ | ✅ | ✅ |
+| NestJS module | ❌ | ❌ | ❌ | ✅ |
+| Custom layers | △ | ❌ | ❌ | ✅ |
 
 ---
 
