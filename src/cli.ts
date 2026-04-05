@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import Redis from 'ioredis'
-import { RedisTagIndex } from './invalidation/RedisTagIndex'
 import { isStoredValueEnvelope, resolveStoredValue } from './internal/StoredValue'
+import { RedisTagIndex } from './invalidation/RedisTagIndex'
 
 const CONNECT_TIMEOUT_MS = 5_000
 

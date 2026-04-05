@@ -563,10 +563,7 @@ export class CacheStack extends EventEmitter {
     await this.startup
     this.assertActive('invalidateByTags')
     const keysByTag = await Promise.all(tags.map((tag) => this.tagIndex.keysForTag(tag)))
-    const keys =
-      mode === 'all'
-        ? this.intersectKeys(keysByTag)
-        : [...new Set(keysByTag.flatMap((entries) => entries))]
+    const keys = mode === 'all' ? this.intersectKeys(keysByTag) : [...new Set(keysByTag.flat())]
 
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
@@ -885,7 +882,10 @@ export class CacheStack extends EventEmitter {
     let fetched: T
 
     try {
-      fetched = await this.fetchRateLimiter.schedule(options?.fetcherRateLimit ?? this.options.fetcherRateLimit, fetcher)
+      fetched = await this.fetchRateLimiter.schedule(
+        options?.fetcherRateLimit ?? this.options.fetcherRateLimit,
+        fetcher
+      )
       this.circuitBreakerManager.recordSuccess(key)
       this.logger.debug?.('fetch', { key, durationMs: Date.now() - fetchStart })
     } catch (error) {
@@ -932,7 +932,9 @@ export class CacheStack extends EventEmitter {
     }
   }
 
-  private async writeBatch(entries: Array<{ key: string; value: unknown; options?: CacheWriteOptions }>): Promise<void> {
+  private async writeBatch(
+    entries: Array<{ key: string; value: unknown; options?: CacheWriteOptions }>
+  ): Promise<void> {
     const now = Date.now()
     const entriesByLayer = new Map<CacheLayer, CacheLayerSetManyEntry[]>()
     const immediateOperations: Array<() => Promise<void>> = []

@@ -62,22 +62,22 @@ export class CacheNamespace {
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
     return this.trackMetrics(() =>
       this.cache.mget(
-      entries.map((entry) => ({
-        ...entry,
-        key: this.qualify(entry.key)
-      }))
-    )
+        entries.map((entry) => ({
+          ...entry,
+          key: this.qualify(entry.key)
+        }))
+      )
     )
   }
 
   async mset<T>(entries: CacheMSetEntry<T>[]): Promise<void> {
     await this.trackMetrics(() =>
       this.cache.mset(
-      entries.map((entry) => ({
-        ...entry,
-        key: this.qualify(entry.key)
-      }))
-    )
+        entries.map((entry) => ({
+          ...entry,
+          key: this.qualify(entry.key)
+        }))
+      )
     )
   }
 
@@ -194,7 +194,9 @@ function cloneMetrics(metrics: CacheMetricsSnapshot): CacheMetricsSnapshot {
     ...metrics,
     hitsByLayer: { ...metrics.hitsByLayer },
     missesByLayer: { ...metrics.missesByLayer },
-    latencyByLayer: Object.fromEntries(Object.entries(metrics.latencyByLayer).map(([key, value]) => [key, { ...value }]))
+    latencyByLayer: Object.fromEntries(
+      Object.entries(metrics.latencyByLayer).map(([key, value]) => [key, { ...value }])
+    )
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { createStoredValueEnvelope } from '../../src/internal/StoredValue'
+import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 describe('MemoryLayer', () => {
   it('stores and retrieves values', async () => {
