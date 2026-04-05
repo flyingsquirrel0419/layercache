@@ -6,10 +6,10 @@ import { RedisLayer } from '../../src/layers/RedisLayer'
 import { RedisSingleFlightCoordinator } from '../../src/singleflight/RedisSingleFlightCoordinator'
 import type {
   CacheLayer,
-  InvalidationBus,
-  InvalidationMessage,
   CacheSingleFlightCoordinator,
-  CacheSingleFlightExecutionOptions
+  CacheSingleFlightExecutionOptions,
+  InvalidationBus,
+  InvalidationMessage
 } from '../../src/types'
 
 class FailingSetLayer implements CacheLayer {
@@ -109,26 +109,38 @@ describe('operational features', () => {
     let fetches = 0
 
     await expect(
-      cache.get('user:404', async () => {
-        fetches += 1
-        return null
-      }, { negativeTtl: 1 })
+      cache.get(
+        'user:404',
+        async () => {
+          fetches += 1
+          return null
+        },
+        { negativeTtl: 1 }
+      )
     ).resolves.toBeNull()
 
     await expect(
-      cache.get('user:404', async () => {
-        fetches += 1
-        return { id: 404 }
-      }, { negativeTtl: 1 })
+      cache.get(
+        'user:404',
+        async () => {
+          fetches += 1
+          return { id: 404 }
+        },
+        { negativeTtl: 1 }
+      )
     ).resolves.toBeNull()
 
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     await expect(
-      cache.get('user:404', async () => {
-        fetches += 1
-        return { id: 404 }
-      }, { negativeTtl: 1 })
+      cache.get(
+        'user:404',
+        async () => {
+          fetches += 1
+          return { id: 404 }
+        },
+        { negativeTtl: 1 }
+      )
     ).resolves.toEqual({ id: 404 })
 
     expect(fetches).toBe(2)
@@ -194,10 +206,7 @@ describe('operational features', () => {
   })
 
   it('can tolerate partial write failures in best-effort mode', async () => {
-    const cache = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new FailingSetLayer()],
-      { writePolicy: 'best-effort' }
-    )
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), new FailingSetLayer()], { writePolicy: 'best-effort' })
 
     await expect(cache.set('user:1', { id: 1 })).resolves.toBeUndefined()
     await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
@@ -227,10 +236,12 @@ describe('operational features', () => {
   it('rejects conflicting duplicate mget entries', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
-    await expect(cache.mget([
-      { key: 'user:1', options: { ttl: 5 } },
-      { key: 'user:1', options: { ttl: 10 } }
-    ])).rejects.toThrow(/conflicting entries/i)
+    await expect(
+      cache.mget([
+        { key: 'user:1', options: { ttl: 5 } },
+        { key: 'user:1', options: { ttl: 10 } }
+      ])
+    ).rejects.toThrow(/conflicting entries/i)
   })
 
   it('does not schedule stale refreshes after disconnect begins', async () => {
@@ -264,14 +275,20 @@ describe('operational features', () => {
   it('validates conflicting constructor options eagerly', () => {
     const coordinator = new SharedCoordinator()
 
-    expect(() => new CacheStack([new MemoryLayer({ ttl: 60 })], {
-      stampedePrevention: false,
-      singleFlightCoordinator: coordinator
-    })).toThrow(/requires stampedePrevention/i)
+    expect(
+      () =>
+        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+          stampedePrevention: false,
+          singleFlightCoordinator: coordinator
+        })
+    ).toThrow(/requires stampedePrevention/i)
 
-    expect(() => new CacheStack([new MemoryLayer({ ttl: 60 })], {
-      negativeTtl: -1
-    })).toThrow(/non-negative finite/i)
+    expect(
+      () =>
+        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+          negativeTtl: -1
+        })
+    ).toThrow(/non-negative finite/i)
   })
 
   it('supports broadcastL1Invalidation as an alias for write-triggered invalidation', async () => {
@@ -282,10 +299,9 @@ describe('operational features', () => {
       [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })],
       { invalidationBus, broadcastL1Invalidation: false }
     )
-    const cacheB = new CacheStack(
-      [memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })],
-      { invalidationBus }
-    )
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })], {
+      invalidationBus
+    })
 
     await cacheA.set('user:1', { id: 1, version: 1 })
     await cacheB.get('user:1')
@@ -315,12 +331,10 @@ describe('operational features', () => {
       return { id: 1 }
     }
 
-    await expect(
-      Promise.all([
-        cacheA.get('user:1', fetchUser),
-        cacheB.get('user:1', fetchUser)
-      ])
-    ).resolves.toEqual([{ id: 1 }, { id: 1 }])
+    await expect(Promise.all([cacheA.get('user:1', fetchUser), cacheB.get('user:1', fetchUser)])).resolves.toEqual([
+      { id: 1 },
+      { id: 1 }
+    ])
 
     expect(fetches).toBe(1)
     expect(cacheB.getMetrics().singleFlightWaits).toBe(1)

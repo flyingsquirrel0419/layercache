@@ -17,12 +17,15 @@ describe('RedisInvalidationBus', () => {
     const unsubscribe = await bus.subscribe(handler)
 
     await publisher.publish('layercache:test:invalid-payload', '{bad-json')
-    await publisher.publish('layercache:test:invalid-payload', JSON.stringify({
-      scope: 'key',
-      sourceId: 'instance-a',
-      keys: ['user:1'],
-      operation: 'delete'
-    }))
+    await publisher.publish(
+      'layercache:test:invalid-payload',
+      JSON.stringify({
+        scope: 'key',
+        sourceId: 'instance-a',
+        keys: ['user:1'],
+        operation: 'delete'
+      })
+    )
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 
@@ -47,17 +50,23 @@ describe('RedisInvalidationBus', () => {
 
     const unsubscribe = await bus.subscribe(handler)
 
-    await publisher.publish('layercache:test:handler-error', JSON.stringify({
-      scope: 'key',
-      sourceId: 'instance-a',
-      keys: ['user:1'],
-      operation: 'delete'
-    }))
-    await publisher.publish('layercache:test:handler-error', JSON.stringify({
-      scope: 'clear',
-      sourceId: 'instance-b',
-      operation: 'clear'
-    }))
+    await publisher.publish(
+      'layercache:test:handler-error',
+      JSON.stringify({
+        scope: 'key',
+        sourceId: 'instance-a',
+        keys: ['user:1'],
+        operation: 'delete'
+      })
+    )
+    await publisher.publish(
+      'layercache:test:handler-error',
+      JSON.stringify({
+        scope: 'clear',
+        sourceId: 'instance-b',
+        operation: 'clear'
+      })
+    )
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 

@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "Node",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,

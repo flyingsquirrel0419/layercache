@@ -1,5 +1,5 @@
-import Redis from 'ioredis-mock'
 import { performance } from 'node:perf_hooks'
+import Redis from 'ioredis-mock'
 import { CacheStack, MemoryLayer, RedisLayer } from '../src'
 
 async function main(): Promise<void> {

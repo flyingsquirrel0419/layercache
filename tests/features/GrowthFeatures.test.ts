@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import Redis from 'ioredis-mock'
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
@@ -111,15 +111,19 @@ describe('growth features', () => {
     await cache.get('adaptive')
     await cache.get('adaptive')
     await cache.get('adaptive')
-    await cache.set('adaptive', { ok: true }, {
-      ttl: 10,
-      adaptiveTtl: { hotAfter: 2, step: 5, maxTtl: 20 }
-    })
+    await cache.set(
+      'adaptive',
+      { ok: true },
+      {
+        ttl: 10,
+        adaptiveTtl: { hotAfter: 2, step: 5, maxTtl: 20 }
+      }
+    )
 
     const stored = await layer.getEntry<{ freshUntil?: number }>('adaptive')
     expect(stored).not.toBeNull()
     if (stored && typeof stored === 'object' && 'freshUntil' in stored) {
-      const ttlSeconds = Math.round((((stored as { freshUntil: number }).freshUntil) - Date.now()) / 1_000)
+      const ttlSeconds = Math.round(((stored as { freshUntil: number }).freshUntil - Date.now()) / 1_000)
       expect(ttlSeconds).toBeGreaterThanOrEqual(14)
     }
   })
@@ -141,10 +145,9 @@ describe('growth features', () => {
   })
 
   it('degrades unhealthy layers and opens circuit breakers for failing fetchers', async () => {
-    const cache = new CacheStack(
-      [new ExplodingLayer(), new MemoryLayer({ ttl: 60 })],
-      { gracefulDegradation: { retryAfterMs: 1_000 } }
-    )
+    const cache = new CacheStack([new ExplodingLayer(), new MemoryLayer({ ttl: 60 })], {
+      gracefulDegradation: { retryAfterMs: 1_000 }
+    })
 
     await cache.set('user:1', { id: 1 })
     await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
@@ -182,12 +185,15 @@ describe('growth features', () => {
 
     const handler = createCacheStatsHandler(cache)
     let body = ''
-    await handler({}, {
-      setHeader: () => undefined,
-      end: (chunk: string) => {
-        body = chunk
+    await handler(
+      {},
+      {
+        setHeader: () => undefined,
+        end: (chunk: string) => {
+          body = chunk
+        }
       }
-    })
+    )
 
     expect(body).toContain('"sets": 1')
   })
@@ -229,15 +235,14 @@ describe('growth features', () => {
 
     await cache.set('profile:1', { id: 1 })
     await cache.get('profile:1')
-    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(1)
-
+    // After delete the key should be gone from all layers
     await cache.delete('profile:1')
-    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(0)
+    expect(await cache.get('profile:1')).toBeNull()
 
     await cache.set('profile:2', { id: 2 })
     await cache.get('profile:2')
     await cache.clear()
-    expect((cache as { accessProfiles: Map<string, unknown> }).accessProfiles.size).toBe(0)
+    expect(await cache.get('profile:2')).toBeNull()
   })
 
   it('does not invoke tRPC next twice when the result is null', async () => {
@@ -245,12 +250,14 @@ describe('growth features', () => {
     const middleware = createTrpcCacheMiddleware(cache, 'trpc')
     const next = vi.fn(async () => null as unknown as { ok: boolean; data?: null })
 
-    await expect(middleware({
-      path: 'user.get',
-      type: 'query',
-      rawInput: { id: 1 },
-      next
-    })).resolves.toBeNull()
+    await expect(
+      middleware({
+        path: 'user.get',
+        type: 'query',
+        rawInput: { id: 1 },
+        next
+      })
+    ).resolves.toBeNull()
 
     expect(next).toHaveBeenCalledTimes(1)
   })

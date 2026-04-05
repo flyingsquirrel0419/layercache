@@ -1,5 +1,5 @@
-import type { CacheWrapOptions } from '../types'
 import type { CacheStack } from '../CacheStack'
+import type { CacheWrapOptions } from '../types'
 
 interface CachedMethodDecoratorOptions<TArgs extends unknown[]> extends CacheWrapOptions<TArgs> {
   cache: (instance: unknown) => CacheStack

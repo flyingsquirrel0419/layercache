@@ -1,10 +1,12 @@
-import { brotliCompressSync, brotliDecompressSync, gzipSync, gunzipSync } from 'node:zlib'
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib'
 import type Redis from 'ioredis'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheSerializer } from '../types'
 
 type CompressionAlgorithm = 'gzip' | 'brotli'
+
+const BATCH_DELETE_SIZE = 500
 
 interface RedisLayerOptions {
   client: Redis
@@ -79,7 +81,7 @@ export class RedisLayer implements CacheLayer {
           return null
         }
 
-        return this.deserializeOrDelete<T>(keys[index], payload)
+        return this.deserializeOrDelete<T>(keys[index] ?? '', payload)
       })
     )
   }
@@ -107,15 +109,53 @@ export class RedisLayer implements CacheLayer {
     await this.client.del(...keys.map((key) => this.withPrefix(key)))
   }
 
+  async has(key: string): Promise<boolean> {
+    const exists = await this.client.exists(this.withPrefix(key))
+    return exists > 0
+  }
+
+  async ttl(key: string): Promise<number | null> {
+    const remaining = await this.client.ttl(this.withPrefix(key))
+    // -2 = key does not exist, -1 = key exists but no TTL
+    if (remaining < 0) {
+      return null
+    }
+    return remaining
+  }
+
+  async size(): Promise<number> {
+    const keys = await this.keys()
+    return keys.length
+  }
+
+  /**
+   * Deletes all keys matching the layer's prefix in batches to avoid
+   * loading millions of keys into memory at once.
+   */
   async clear(): Promise<void> {
     if (!this.prefix && !this.allowUnprefixedClear) {
-      throw new Error('RedisLayer.clear() requires a prefix or allowUnprefixedClear=true to avoid deleting unrelated keys.')
+      throw new Error(
+        'RedisLayer.clear() requires a prefix or allowUnprefixedClear=true to avoid deleting unrelated keys.'
+      )
     }
 
-    const keys = await this.keys()
-    if (keys.length > 0) {
-      await this.deleteMany(keys)
-    }
+    const pattern = `${this.prefix}*`
+    let cursor = '0'
+
+    do {
+      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      cursor = nextCursor
+
+      if (keys.length === 0) {
+        continue
+      }
+
+      // Delete in batches to avoid blocking Redis with huge DEL commands
+      for (let i = 0; i < keys.length; i += BATCH_DELETE_SIZE) {
+        const batch = keys.slice(i, i + BATCH_DELETE_SIZE)
+        await this.client.del(...batch)
+      }
+    } while (cursor !== '0')
   }
 
   async keys(): Promise<string[]> {
@@ -168,9 +208,7 @@ export class RedisLayer implements CacheLayer {
     }
 
     const header = Buffer.from(`LCZ1:${this.compression}:`)
-    const compressed = this.compression === 'gzip'
-      ? gzipSync(source)
-      : brotliCompressSync(source)
+    const compressed = this.compression === 'gzip' ? gzipSync(source) : brotliCompressSync(source)
 
     return Buffer.concat([header, compressed])
   }

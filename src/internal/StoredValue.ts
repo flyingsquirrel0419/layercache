@@ -43,12 +43,8 @@ export function createStoredValueEnvelope(options: {
   const staleIfErrorSeconds = normalizePositiveSeconds(options.staleIfErrorSeconds)
 
   const freshUntil = freshTtlSeconds ? now + freshTtlSeconds * 1_000 : null
-  const staleUntil = freshUntil && staleWhileRevalidateSeconds
-    ? freshUntil + staleWhileRevalidateSeconds * 1_000
-    : null
-  const errorUntil = freshUntil && staleIfErrorSeconds
-    ? freshUntil + staleIfErrorSeconds * 1_000
-    : null
+  const staleUntil = freshUntil && staleWhileRevalidateSeconds ? freshUntil + staleWhileRevalidateSeconds * 1_000 : null
+  const errorUntil = freshUntil && staleIfErrorSeconds ? freshUntil + staleIfErrorSeconds * 1_000 : null
 
   return {
     __layercache: 1,

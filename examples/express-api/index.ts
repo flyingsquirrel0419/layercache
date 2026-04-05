@@ -11,15 +11,19 @@ const cache = new CacheStack([
 const app = express()
 
 app.get('/users/:id', async (req, res) => {
-  const user = await cache.get(`user:${req.params.id}`, async () => {
-    return {
-      id: Number(req.params.id),
-      name: `User ${req.params.id}`,
-      source: 'db'
+  const user = await cache.get(
+    `user:${req.params.id}`,
+    async () => {
+      return {
+        id: Number(req.params.id),
+        name: `User ${req.params.id}`,
+        source: 'db'
+      }
+    },
+    {
+      tags: ['user', `user:${req.params.id}`]
     }
-  }, {
-    tags: ['user', `user:${req.params.id}`]
-  })
+  )
 
   res.json(user)
 })

@@ -10,10 +10,7 @@ interface FastifyLayercachePluginOptions {
   statsPath?: string
 }
 
-export function createFastifyLayercachePlugin(
-  cache: CacheStack,
-  options: FastifyLayercachePluginOptions = {}
-) {
+export function createFastifyLayercachePlugin(cache: CacheStack, options: FastifyLayercachePluginOptions = {}) {
   return async (fastify: FastifyLike): Promise<void> => {
     fastify.decorate('cache', cache)
 

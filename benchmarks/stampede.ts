@@ -3,10 +3,7 @@ import { CacheStack, MemoryLayer, RedisLayer } from '../src'
 
 async function main(): Promise<void> {
   const redis = new Redis()
-  const cache = new CacheStack([
-    new MemoryLayer({ ttl: 60 }),
-    new RedisLayer({ client: redis, ttl: 300 })
-  ])
+  const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })])
 
   let executions = 0
 
