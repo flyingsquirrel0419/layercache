@@ -299,7 +299,7 @@ await cache.warm(
 
 ### `cache.namespace(prefix): CacheNamespace`
 
-Returns a scoped view with the same full API (`get`, `set`, `delete`, `clear`, `mget`, `wrap`, `warm`, `invalidateByTag`, `invalidateByPattern`, `getMetrics`). `clear()` only touches `prefix:*` keys.
+Returns a scoped view with the same full API (`get`, `set`, `delete`, `clear`, `mget`, `wrap`, `warm`, `invalidateByTag`, `invalidateByPattern`, `getMetrics`). `clear()` only touches `prefix:*` keys, and namespace metrics are serialized per `CacheStack` instance so unrelated caches do not block each other while metrics are collected.
 
 ```ts
 const users = cache.namespace('users')

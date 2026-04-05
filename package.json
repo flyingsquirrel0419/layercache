@@ -1,6 +1,6 @@
 {
   "name": "layercache",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Unified multi-layer caching for Node.js with memory, Redis, stampede prevention, and invalidation helpers.",
   "license": "MIT",
   "repository": {
