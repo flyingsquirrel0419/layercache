@@ -1,19 +1,39 @@
 import type { CacheRateLimitOptions } from '../types'
 
 interface QueueItem<T> {
-  options: CacheRateLimitOptions
+  bucketKey: string
+  options: NormalizedRateLimitOptions
   task: () => Promise<T>
   resolve: (value: T) => void
   reject: (error: unknown) => void
 }
 
+interface BucketState {
+  active: number
+  startedAt: number[]
+}
+
+interface ScheduleContext {
+  key: string
+  fetcher: (...args: never[]) => unknown
+}
+
+interface NormalizedRateLimitOptions extends CacheRateLimitOptions {
+  scope: 'global' | 'key' | 'fetcher'
+}
+
 export class FetchRateLimiter {
-  private active = 0
   private readonly queue: Array<QueueItem<unknown>> = []
-  private readonly startedAt: number[] = []
+  private readonly buckets = new Map<string, BucketState>()
+  private readonly fetcherBuckets = new WeakMap<(...args: never[]) => unknown, string>()
+  private nextFetcherBucketId = 0
   private drainTimer?: ReturnType<typeof setTimeout>
 
-  async schedule<T>(options: CacheRateLimitOptions | undefined, task: () => Promise<T>): Promise<T> {
+  async schedule<T>(
+    options: CacheRateLimitOptions | undefined,
+    context: ScheduleContext,
+    task: () => Promise<T>
+  ): Promise<T> {
     if (!options) {
       return task()
     }
@@ -24,12 +44,18 @@ export class FetchRateLimiter {
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({ options: normalized, task, resolve, reject })
+      this.queue.push({
+        bucketKey: this.resolveBucketKey(normalized, context),
+        options: normalized,
+        task,
+        resolve,
+        reject
+      })
       this.drain()
     })
   }
 
-  private normalize(options: CacheRateLimitOptions): CacheRateLimitOptions | undefined {
+  private normalize(options: CacheRateLimitOptions): NormalizedRateLimitOptions | undefined {
     const maxConcurrent = options.maxConcurrent
     const intervalMs = options.intervalMs
     const maxPerInterval = options.maxPerInterval
@@ -41,8 +67,34 @@ export class FetchRateLimiter {
     return {
       maxConcurrent,
       intervalMs,
-      maxPerInterval
+      maxPerInterval,
+      scope: options.scope ?? 'global',
+      bucketKey: options.bucketKey
     }
+  }
+
+  private resolveBucketKey(options: NormalizedRateLimitOptions, context: ScheduleContext): string {
+    if (options.bucketKey) {
+      return `custom:${options.bucketKey}`
+    }
+
+    if (options.scope === 'key') {
+      return `key:${context.key}`
+    }
+
+    if (options.scope === 'fetcher') {
+      const existing = this.fetcherBuckets.get(context.fetcher)
+      if (existing) {
+        return existing
+      }
+
+      const bucket = `fetcher:${this.nextFetcherBucketId}`
+      this.nextFetcherBucketId += 1
+      this.fetcherBuckets.set(context.fetcher, bucket)
+      return bucket
+    }
+
+    return 'global'
   }
 
   private drain(): void {
@@ -52,38 +104,59 @@ export class FetchRateLimiter {
     }
 
     while (this.queue.length > 0) {
-      const next = this.queue[0]
+      let nextIndex = -1
+      let nextWaitMs = Number.POSITIVE_INFINITY
+
+      for (let index = 0; index < this.queue.length; index += 1) {
+        const next = this.queue[index]
+        if (!next) {
+          continue
+        }
+
+        const waitMs = this.waitTime(next.bucketKey, next.options)
+        if (waitMs <= 0) {
+          nextIndex = index
+          break
+        }
+
+        nextWaitMs = Math.min(nextWaitMs, waitMs)
+      }
+
+      if (nextIndex < 0) {
+        if (Number.isFinite(nextWaitMs)) {
+          this.drainTimer = setTimeout(() => {
+            this.drainTimer = undefined
+            this.drain()
+          }, nextWaitMs)
+          this.drainTimer.unref?.()
+        }
+        return
+      }
+
+      const next = this.queue.splice(nextIndex, 1)[0]
       if (!next) {
         return
       }
 
-      const waitMs = this.waitTime(next.options)
-      if (waitMs > 0) {
-        this.drainTimer = setTimeout(() => {
-          this.drainTimer = undefined
-          this.drain()
-        }, waitMs)
-        this.drainTimer.unref?.()
-        return
-      }
-
-      this.queue.shift()
-      this.active += 1
-      this.startedAt.push(Date.now())
+      const bucket = this.bucketState(next.bucketKey)
+      bucket.active += 1
+      bucket.startedAt.push(Date.now())
 
       void next
         .task()
         .then(next.resolve, next.reject)
         .finally(() => {
-          this.active -= 1
+          bucket.active -= 1
           this.drain()
         })
     }
   }
 
-  private waitTime(options: CacheRateLimitOptions): number {
+  private waitTime(bucketKey: string, options: NormalizedRateLimitOptions): number {
+    const bucket = this.bucketState(bucketKey)
     const now = Date.now()
-    if (options.maxConcurrent && this.active >= options.maxConcurrent) {
+
+    if (options.maxConcurrent && bucket.active >= options.maxConcurrent) {
       return 1
     }
 
@@ -91,12 +164,12 @@ export class FetchRateLimiter {
       return 0
     }
 
-    this.prune(now, options.intervalMs)
-    if (this.startedAt.length < options.maxPerInterval) {
+    this.prune(bucket, now, options.intervalMs)
+    if (bucket.startedAt.length < options.maxPerInterval) {
       return 0
     }
 
-    const oldest = this.startedAt[0]
+    const oldest = bucket.startedAt[0]
     if (!oldest) {
       return 0
     }
@@ -104,13 +177,24 @@ export class FetchRateLimiter {
     return Math.max(1, options.intervalMs - (now - oldest))
   }
 
-  private prune(now: number, intervalMs: number): void {
-    while (this.startedAt.length > 0) {
-      const startedAt = this.startedAt[0]
+  private prune(bucket: BucketState, now: number, intervalMs: number): void {
+    while (bucket.startedAt.length > 0) {
+      const startedAt = bucket.startedAt[0]
       if (startedAt === undefined || now - startedAt < intervalMs) {
         break
       }
-      this.startedAt.shift()
+      bucket.startedAt.shift()
     }
+  }
+
+  private bucketState(bucketKey: string): BucketState {
+    const existing = this.buckets.get(bucketKey)
+    if (existing) {
+      return existing
+    }
+
+    const bucket: BucketState = { active: 0, startedAt: [] }
+    this.buckets.set(bucketKey, bucket)
+    return bucket
   }
 }

@@ -6,21 +6,24 @@ interface RedisTagIndexOptions {
   client: Redis
   prefix?: string
   scanCount?: number
+  knownKeysShards?: number
 }
 
 export class RedisTagIndex implements CacheTagIndex {
   private readonly client: Redis
   private readonly prefix: string
   private readonly scanCount: number
+  private readonly knownKeysShards: number
 
   constructor(options: RedisTagIndexOptions) {
     this.client = options.client
     this.prefix = options.prefix ?? 'layercache:tag-index'
     this.scanCount = options.scanCount ?? 100
+    this.knownKeysShards = normalizeKnownKeysShards(options.knownKeysShards)
   }
 
   async touch(key: string): Promise<void> {
-    await this.client.sadd(this.knownKeysKey(), key)
+    await this.client.sadd(this.knownKeysKeyFor(key), key)
   }
 
   async track(key: string, tags: string[]): Promise<void> {
@@ -28,7 +31,7 @@ export class RedisTagIndex implements CacheTagIndex {
     const existingTags = await this.client.smembers(keyTagsKey)
     const pipeline = this.client.pipeline()
 
-    pipeline.sadd(this.knownKeysKey(), key)
+    pipeline.sadd(this.knownKeysKeyFor(key), key)
 
     for (const tag of existingTags) {
       pipeline.srem(this.tagKeysKey(tag), key)
@@ -51,7 +54,7 @@ export class RedisTagIndex implements CacheTagIndex {
     const existingTags = await this.client.smembers(keyTagsKey)
     const pipeline = this.client.pipeline()
 
-    pipeline.srem(this.knownKeysKey(), key)
+    pipeline.srem(this.knownKeysKeyFor(key), key)
     pipeline.del(keyTagsKey)
 
     for (const tag of existingTags) {
@@ -67,13 +70,15 @@ export class RedisTagIndex implements CacheTagIndex {
 
   async keysForPrefix(prefix: string): Promise<string[]> {
     const matches: string[] = []
-    let cursor = '0'
+    for (const knownKeysKey of this.knownKeysKeys()) {
+      let cursor = '0'
 
-    do {
-      const [nextCursor, keys] = await this.client.sscan(this.knownKeysKey(), cursor, 'COUNT', this.scanCount)
-      cursor = nextCursor
-      matches.push(...keys.filter((key) => key.startsWith(prefix)))
-    } while (cursor !== '0')
+      do {
+        const [nextCursor, keys] = await this.client.sscan(knownKeysKey, cursor, 'COUNT', this.scanCount)
+        cursor = nextCursor
+        matches.push(...keys.filter((key) => key.startsWith(prefix)))
+      } while (cursor !== '0')
+    }
 
     return matches
   }
@@ -84,20 +89,22 @@ export class RedisTagIndex implements CacheTagIndex {
 
   async matchPattern(pattern: string): Promise<string[]> {
     const matches: string[] = []
-    let cursor = '0'
+    for (const knownKeysKey of this.knownKeysKeys()) {
+      let cursor = '0'
 
-    do {
-      const [nextCursor, keys] = await this.client.sscan(
-        this.knownKeysKey(),
-        cursor,
-        'MATCH',
-        pattern,
-        'COUNT',
-        this.scanCount
-      )
-      cursor = nextCursor
-      matches.push(...keys.filter((key) => PatternMatcher.matches(pattern, key)))
-    } while (cursor !== '0')
+      do {
+        const [nextCursor, keys] = await this.client.sscan(
+          knownKeysKey,
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          this.scanCount
+        )
+        cursor = nextCursor
+        matches.push(...keys.filter((key) => PatternMatcher.matches(pattern, key)))
+      } while (cursor !== '0')
+    }
 
     return matches
   }
@@ -125,8 +132,20 @@ export class RedisTagIndex implements CacheTagIndex {
     return matches
   }
 
-  private knownKeysKey(): string {
-    return `${this.prefix}:keys`
+  private knownKeysKeyFor(key: string): string {
+    if (this.knownKeysShards === 1) {
+      return `${this.prefix}:keys`
+    }
+
+    return `${this.prefix}:keys:${simpleHash(key) % this.knownKeysShards}`
+  }
+
+  private knownKeysKeys(): string[] {
+    if (this.knownKeysShards === 1) {
+      return [`${this.prefix}:keys`]
+    }
+
+    return Array.from({ length: this.knownKeysShards }, (_, index) => `${this.prefix}:keys:${index}`)
   }
 
   private keyTagsKey(key: string): string {
@@ -136,4 +155,24 @@ export class RedisTagIndex implements CacheTagIndex {
   private tagKeysKey(tag: string): string {
     return `${this.prefix}:tag:${encodeURIComponent(tag)}`
   }
+}
+
+function normalizeKnownKeysShards(value: number | undefined): number {
+  if (value === undefined) {
+    return 1
+  }
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('RedisTagIndex.knownKeysShards must be a positive integer.')
+  }
+
+  return value
+}
+
+function simpleHash(value: string): number {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0
+  }
+  return hash
 }

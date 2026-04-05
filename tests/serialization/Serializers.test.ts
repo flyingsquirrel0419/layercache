@@ -31,6 +31,12 @@ describe('JsonSerializer', () => {
     circular.self = circular
     expect(() => serializer.serialize(circular)).toThrow()
   })
+
+  it('strips prototype-pollution keys during deserialize', () => {
+    const parsed = serializer.deserialize<Record<string, unknown>>('{"safe":1,"__proto__":{"polluted":true}}')
+    expect(parsed).toEqual({ safe: 1 })
+    expect({}.polluted).toBeUndefined()
+  })
 })
 
 describe('MsgpackSerializer', () => {

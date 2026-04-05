@@ -330,6 +330,30 @@ describe('operational features', () => {
     expect(maxConcurrent).toBe(1)
   })
 
+  it('can rate-limit fetchers per cache key instead of globally', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    let concurrent = 0
+    let maxConcurrent = 0
+
+    await Promise.all(
+      ['a', 'b', 'c'].map((key) =>
+        cache.get(
+          key,
+          async () => {
+            concurrent += 1
+            maxConcurrent = Math.max(maxConcurrent, concurrent)
+            await new Promise((resolve) => setTimeout(resolve, 25))
+            concurrent -= 1
+            return key
+          },
+          { fetcherRateLimit: { maxConcurrent: 1, scope: 'key' } }
+        )
+      )
+    )
+
+    expect(maxConcurrent).toBeGreaterThan(1)
+  })
+
   it('validates cache keys and runtime ttl options', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -440,6 +464,41 @@ describe('operational features', () => {
 
     expect(first).toBe('value')
     expect(second).toBe('value')
+    expect(fetches).toBe(1)
+  })
+
+  it('renews redis single-flight leases for long-running workers', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:renew' })
+    let fetches = 0
+
+    const first = coordinator.execute(
+      'user:renew',
+      { leaseMs: 40, renewIntervalMs: 10, waitTimeoutMs: 200, pollIntervalMs: 10 },
+      async () => {
+        fetches += 1
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        return 'value'
+      },
+      async () => 'waited'
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    const second = coordinator.execute(
+      'user:renew',
+      { leaseMs: 40, renewIntervalMs: 10, waitTimeoutMs: 200, pollIntervalMs: 10 },
+      async () => {
+        fetches += 1
+        return 'duplicate'
+      },
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 70))
+        return 'value'
+      }
+    )
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['value', 'value'])
     expect(fetches).toBe(1)
   })
 })

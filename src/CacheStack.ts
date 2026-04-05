@@ -854,6 +854,7 @@ export class CacheStack extends EventEmitter {
     try {
       fetched = await this.fetchRateLimiter.schedule(
         options?.fetcherRateLimit ?? this.options.fetcherRateLimit,
+        { key, fetcher },
         fetcher
       )
       this.circuitBreakerManager.recordSuccess(key)
@@ -1191,7 +1192,8 @@ export class CacheStack extends EventEmitter {
     return {
       leaseMs: this.options.singleFlightLeaseMs ?? DEFAULT_SINGLE_FLIGHT_LEASE_MS,
       waitTimeoutMs: this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS,
-      pollIntervalMs: this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
+      pollIntervalMs: this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS,
+      renewIntervalMs: this.options.singleFlightRenewIntervalMs
     }
   }
 
@@ -1449,6 +1451,8 @@ export class CacheStack extends EventEmitter {
     this.validatePositiveNumber('singleFlightLeaseMs', this.options.singleFlightLeaseMs)
     this.validatePositiveNumber('singleFlightTimeoutMs', this.options.singleFlightTimeoutMs)
     this.validatePositiveNumber('singleFlightPollMs', this.options.singleFlightPollMs)
+    this.validatePositiveNumber('singleFlightRenewIntervalMs', this.options.singleFlightRenewIntervalMs)
+    this.validateRateLimitOptions('fetcherRateLimit', this.options.fetcherRateLimit)
     this.validateAdaptiveTtlOptions(this.options.adaptiveTtl)
     this.validateCircuitBreakerOptions(this.options.circuitBreaker)
     if (this.options.generation !== undefined) {
@@ -1470,6 +1474,7 @@ export class CacheStack extends EventEmitter {
     this.validateTtlPolicy('options.ttlPolicy', options.ttlPolicy)
     this.validateAdaptiveTtlOptions(options.adaptiveTtl)
     this.validateCircuitBreakerOptions(options.circuitBreaker)
+    this.validateRateLimitOptions('options.fetcherRateLimit', options.fetcherRateLimit)
   }
 
   private validateLayerNumberOption(name: string, value: number | LayerTtlMap | undefined): void {
@@ -1498,6 +1503,24 @@ export class CacheStack extends EventEmitter {
 
     if (!Number.isFinite(value) || value <= 0) {
       throw new Error(`${name} must be a positive finite number.`)
+    }
+  }
+
+  private validateRateLimitOptions(name: string, options: CacheGetOptions['fetcherRateLimit']): void {
+    if (!options) {
+      return
+    }
+
+    this.validatePositiveNumber(`${name}.maxConcurrent`, options.maxConcurrent)
+    this.validatePositiveNumber(`${name}.intervalMs`, options.intervalMs)
+    this.validatePositiveNumber(`${name}.maxPerInterval`, options.maxPerInterval)
+
+    if (options.scope && !['global', 'key', 'fetcher'].includes(options.scope)) {
+      throw new Error(`${name}.scope must be one of "global", "key", or "fetcher".`)
+    }
+
+    if (options.bucketKey !== undefined && options.bucketKey.length === 0) {
+      throw new Error(`${name}.bucketKey must not be empty.`)
     }
   }
 

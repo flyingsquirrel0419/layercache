@@ -23,4 +23,15 @@ describe('RedisTagIndex', () => {
 
     await expect(index.keysForPrefix('user[1]:')).resolves.toEqual(['user[1]:a'])
   })
+
+  it('supports sharding the known-keys set for larger indexes', async () => {
+    const redis = new Redis()
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:sharded', knownKeysShards: 4 })
+
+    await index.touch('user:1')
+    await index.touch('user:2')
+    await index.touch('post:1')
+
+    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+  })
 })

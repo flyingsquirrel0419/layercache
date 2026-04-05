@@ -150,4 +150,19 @@ describe('DiskLayer', () => {
 
     await expect(layer.getMany(['a', 'b', 'missing'])).resolves.toEqual([1, 2, null])
   })
+
+  it('rejects invalid directory values early', () => {
+    expect(() => new DiskLayer({ directory: '' })).toThrow(/non-empty path/i)
+    expect(() => new DiskLayer({ directory: 'bad\u0000path' })).toThrow(/null bytes/i)
+  })
+
+  it('treats malformed disk entries as cache misses and removes them', async () => {
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const hash = createHash('sha256').update('weird-key').digest('hex')
+    await fs.writeFile(join(dir, `${hash}.lc`), JSON.stringify({ value: 'oops', expiresAt: null }))
+
+    await expect(layer.get('weird-key')).resolves.toBeNull()
+    await expect(fs.stat(join(dir, `${hash}.lc`))).rejects.toThrow()
+  })
 })

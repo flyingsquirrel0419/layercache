@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [1.2.2] — 2026-04-06
+
+### Added
+- **Scoped fetcher rate limiting** — `CacheRateLimitOptions` now supports `scope: 'global' | 'key' | 'fetcher'` plus `bucketKey` for custom throttling buckets.
+- **Redis single-flight lease renewal** — `singleFlightRenewIntervalMs` keeps long-running distributed fetches from dropping their Redis lease mid-flight.
+- **Sharded Redis tag indexes** — `RedisTagIndex` now supports `knownKeysShards` to spread `knownKeys` scans across multiple Redis sets in larger deployments.
+- **Additional security and resilience coverage** for serializer hardening, DiskLayer validation, scoped throttling, Redis tag sharding, and lease renewal; the suite now passes with **164 tests**.
+
+### Changed
+- **README** now documents Redis safety practices, DiskLayer directory guidance, scoped rate limiting, distributed single-flight lease renewal, and the production-focused positioning of the library.
+
+### Fixed
+- **DiskLayer input hardening**: `directory` is normalized and validated, malformed disk entries are deleted, and invalid `maxFiles` values are rejected early.
+- **JSON deserialization hardening**: `JsonSerializer` now strips dangerous prototype-pollution keys during deserialize, which also protects DiskLayer and JSON-backed Redis payloads.
+- **Distributed single-flight duplicate work window**: Redis-backed locks can now be renewed while long-running workers are still in flight.
+
 ## [1.2.1] — 2026-04-05
 
 ### Added

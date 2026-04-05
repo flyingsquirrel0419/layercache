@@ -185,6 +185,7 @@ export interface CacheSingleFlightExecutionOptions {
   leaseMs: number
   waitTimeoutMs: number
   pollIntervalMs: number
+  renewIntervalMs?: number
 }
 
 export interface CacheSingleFlightCoordinator {
@@ -225,6 +226,7 @@ export interface CacheStackOptions {
   singleFlightLeaseMs?: number
   singleFlightTimeoutMs?: number
   singleFlightPollMs?: number
+  singleFlightRenewIntervalMs?: number
   /**
    * Maximum number of entries in `accessProfiles` and `circuitBreakers` maps
    * before the oldest entries are pruned. Prevents unbounded memory growth.
@@ -263,6 +265,8 @@ export interface CacheRateLimitOptions {
   maxConcurrent?: number
   intervalMs?: number
   maxPerInterval?: number
+  scope?: 'global' | 'key' | 'fetcher'
+  bucketKey?: string
 }
 
 export interface CacheWriteBehindOptions {

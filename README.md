@@ -1,12 +1,12 @@
 # layercache
 
-**Multi-layer caching for Node.js — memory → Redis → your DB, unified in one API.**
+**Production-ready multi-layer caching for Node.js — memory, Redis, persistence, invalidation, and resilience in one API.**
 
 [![npm version](https://img.shields.io/npm/v/layercache)](https://www.npmjs.com/package/layercache)
 [![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
 [![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
-[![test coverage](https://img.shields.io/badge/tests-158%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
+[![test coverage](https://img.shields.io/badge/tests-164%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
 
 ```
 L1 hit  ~0.01 ms  ← served from memory, zero network
@@ -25,6 +25,8 @@ Most Node.js services end up with the same problem:
 - **Hand-rolled layers** → works, but you rewrite stampede prevention, backfill logic, and tag invalidation in every project
 
 layercache solves all three. You declare your layers once and call `get`. Everything else is handled.
+
+It is designed for production services that need predictable cache behavior under load: stampede prevention, cross-instance invalidation, layered TTL control, operational metrics, and safer persistence defaults.
 
 ```ts
 const user = await cache.get('user:123', () => db.findUser(123))
@@ -452,13 +454,14 @@ const cache = new CacheStack(
   {
     singleFlightCoordinator: coordinator,
     singleFlightLeaseMs: 30_000,
+    singleFlightRenewIntervalMs: 10_000,
     singleFlightTimeoutMs: 5_000,
     singleFlightPollMs: 50
   }
 )
 ```
 
-When another instance already owns the miss, the current process waits for the value to appear in the shared layer instead of running the fetcher again.
+When another instance already owns the miss, the current process waits for the value to appear in the shared layer instead of running the fetcher again. `RedisSingleFlightCoordinator` also renews its Redis lease while the worker is still running, so long fetches are less likely to expire their lock mid-flight. Keep `singleFlightLeaseMs` comfortably above your expected fetch latency, and use `singleFlightRenewIntervalMs` if you need tighter control over renewal cadence.
 
 ### Cross-server L1 invalidation
 
@@ -494,7 +497,8 @@ import { RedisTagIndex } from 'layercache'
 
 const sharedTagIndex = new RedisTagIndex({
   client: redis,
-  prefix: 'myapp:tag-index' // namespaced so it doesn't collide with other data
+  prefix: 'myapp:tag-index', // namespaced so it doesn't collide with other data
+  knownKeysShards: 8
 })
 
 // Every CacheStack instance should use the same Redis-backed tag index config
@@ -527,6 +531,38 @@ new RedisLayer({
   allowUnprefixedClear: true
 })
 ```
+
+For production Redis, also set an explicit `prefix`, enforce Redis authentication/network isolation, and configure Redis `maxmemory` / eviction policy so cache growth cannot starve unrelated workloads.
+
+### DiskLayer safety
+
+`DiskLayer` is best used with an application-controlled directory and an explicit `maxFiles` bound.
+
+```ts
+import { resolve } from 'node:path'
+
+const disk = new DiskLayer({
+  directory: resolve('./var/cache/layercache'),
+  maxFiles: 10_000
+})
+```
+
+The library hashes cache keys before turning them into filenames, validates the configured directory, uses atomic temp-file writes, and removes malformed on-disk entries. You should still keep the directory outside any user-controlled path and set filesystem permissions so only your app can read or write it.
+
+### Scoped fetcher rate limiting
+
+Rate limits are global by default, but you can scope them per cache key or per fetcher function when different backends should not throttle each other.
+
+```ts
+await cache.get('user:123', fetchUser, {
+  fetcherRateLimit: {
+    maxConcurrent: 1,
+    scope: 'key'
+  }
+})
+```
+
+Use `scope: 'fetcher'` to share a bucket across calls using the same fetcher function reference, or `bucketKey: 'billing-api'` for a custom named bucket.
 
 ---
 

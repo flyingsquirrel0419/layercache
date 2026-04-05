@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
@@ -47,11 +47,11 @@ export class DiskLayer implements CacheLayer {
   private writeQueue = Promise.resolve()
 
   constructor(options: DiskLayerOptions) {
-    this.directory = options.directory
+    this.directory = this.resolveDirectory(options.directory)
     this.defaultTtl = options.ttl
     this.name = options.name ?? 'disk'
     this.serializer = options.serializer ?? new JsonSerializer()
-    this.maxFiles = options.maxFiles
+    this.maxFiles = this.normalizeMaxFiles(options.maxFiles)
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -69,7 +69,7 @@ export class DiskLayer implements CacheLayer {
 
     let entry: DiskEntry
     try {
-      entry = this.serializer.deserialize<DiskEntry>(raw)
+      entry = this.deserializeEntry(raw)
     } catch {
       await this.safeDelete(filePath)
       return null
@@ -129,8 +129,9 @@ export class DiskLayer implements CacheLayer {
 
     let entry: DiskEntry
     try {
-      entry = this.serializer.deserialize<DiskEntry>(raw)
+      entry = this.deserializeEntry(raw)
     } catch {
+      await this.safeDelete(filePath)
       return null
     }
 
@@ -197,7 +198,7 @@ export class DiskLayer implements CacheLayer {
 
         let entry: DiskEntry
         try {
-          entry = this.serializer.deserialize<DiskEntry>(raw)
+          entry = this.deserializeEntry(raw)
         } catch {
           await this.safeDelete(filePath)
           return
@@ -235,6 +236,39 @@ export class DiskLayer implements CacheLayer {
     // Hash the key to produce a safe filename
     const hash = createHash('sha256').update(key).digest('hex')
     return join(this.directory, `${hash}.lc`)
+  }
+
+  private resolveDirectory(directory: string): string {
+    if (typeof directory !== 'string' || directory.trim().length === 0) {
+      throw new Error('DiskLayer.directory must be a non-empty path.')
+    }
+
+    if (directory.includes('\u0000')) {
+      throw new Error('DiskLayer.directory must not contain null bytes.')
+    }
+
+    return resolve(directory)
+  }
+
+  private normalizeMaxFiles(maxFiles: number | undefined): number | undefined {
+    if (maxFiles === undefined) {
+      return undefined
+    }
+
+    if (!Number.isInteger(maxFiles) || maxFiles <= 0) {
+      throw new Error('DiskLayer.maxFiles must be a positive integer.')
+    }
+
+    return maxFiles
+  }
+
+  private deserializeEntry(raw: Buffer): DiskEntry {
+    const entry = this.serializer.deserialize<unknown>(raw)
+    if (!isDiskEntry(entry)) {
+      throw new Error('Invalid disk cache entry.')
+    }
+
+    return entry
   }
 
   private async safeDelete(filePath: string): Promise<void> {
@@ -288,4 +322,15 @@ export class DiskLayer implements CacheLayer {
     const toEvict = withStats.slice(0, lcFiles.length - this.maxFiles)
     await Promise.all(toEvict.map(({ filePath }) => this.safeDelete(filePath)))
   }
+}
+
+function isDiskEntry(value: unknown): value is DiskEntry {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<DiskEntry>
+  const validExpiry = candidate.expiresAt === null || typeof candidate.expiresAt === 'number'
+
+  return typeof candidate.key === 'string' && validExpiry && 'value' in candidate
 }
