@@ -14,7 +14,7 @@ import type {
 } from './types'
 
 export class CacheNamespace {
-  private static readonly metricsMutex = new Mutex()
+  private static readonly metricsMutexes = new WeakMap<CacheStack, Mutex>()
   private metrics: CacheMetricsSnapshot = emptyMetrics()
 
   constructor(
@@ -159,13 +159,24 @@ export class CacheNamespace {
   }
 
   private async trackMetrics<T>(operation: () => Promise<T>): Promise<T> {
-    return CacheNamespace.metricsMutex.runExclusive(async () => {
+    return this.getMetricsMutex().runExclusive(async () => {
       const before = this.cache.getMetrics()
       const result = await operation()
       const after = this.cache.getMetrics()
       this.metrics = addMetrics(this.metrics, diffMetrics(before, after))
       return result
     })
+  }
+
+  private getMetricsMutex(): Mutex {
+    const existing = CacheNamespace.metricsMutexes.get(this.cache)
+    if (existing) {
+      return existing
+    }
+
+    const mutex = new Mutex()
+    CacheNamespace.metricsMutexes.set(this.cache, mutex)
+    return mutex
   }
 }
 

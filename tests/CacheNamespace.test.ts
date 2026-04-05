@@ -112,6 +112,35 @@ describe('CacheNamespace', () => {
     expect(ns.getMetrics().hits).toBeGreaterThanOrEqual(1)
   })
 
+  it('does not serialize namespace metrics across different cache stacks', async () => {
+    const nsA = makeCache().namespace('a')
+    const nsB = makeCache().namespace('b')
+
+    let releaseFetch!: () => void
+    const fetchBlocked = new Promise<void>((resolve) => {
+      releaseFetch = resolve
+    })
+
+    const first = nsA.getOrSet('key', async () => {
+      await fetchBlocked
+      return 1
+    })
+
+    await Promise.resolve()
+
+    let secondCompleted = false
+    const second = nsB.set('key', 2).then(() => {
+      secondCompleted = true
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(secondCompleted).toBe(true)
+
+    releaseFetch()
+    await first
+    await second
+  })
+
   it('getMetrics proxies to the underlying stack', () => {
     const ns = makeCache().namespace('x')
     expect(ns.getMetrics()).toHaveProperty('hits')

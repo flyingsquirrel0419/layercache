@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`invalidateByTags(tags, mode)`** — batch tag invalidation with `any` / `all` semantics for multi-tag cache clearing.
 - **`invalidateByPrefix(prefix)`** and generation helpers — efficient hierarchical invalidation and generation-based cache rotation for bulk refresh scenarios.
 - **`healthCheck()`**, **OpenTelemetry integration**, **Hono middleware**, **write-behind controls**, and richer admin/inspection support for operational debugging.
-- **Additional test coverage** for namespaces, integrations, Redis tag indexing, lifecycle safety, and queue behavior; the suite now passes with **157 tests**.
+- **Additional test coverage** for namespaces, integrations, Redis tag indexing, lifecycle safety, and queue behavior; the suite now passes with **158 tests**.
 
 ### Changed
 - **`CacheStack` startup/disconnect flow** now uses a shared active-state guard helper, and write-behind queuing has safer default batching and queue limits.
@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Namespace metrics consistency**: `CacheNamespace.getOrSet()` and `getOrThrow()` now participate in namespace-scoped metrics, and `clear()` uses the prefix invalidation path consistently.
 - **Namespace metrics race**: metric diff collection is now serialized so concurrent namespace operations do not overcount each other.
+- **Namespace metrics lock scope**: metrics serialization now happens per `CacheStack` instance instead of through a single global mutex, avoiding unnecessary blocking between unrelated caches.
 - **Tag intersection performance**: `CacheStack` now intersects multi-tag invalidation candidates with `Set` lookups instead of repeated `Array.includes()` scans.
 - **Write-behind queue growth**: deferred writes now flush under bounded defaults instead of growing unbounded until the next interval tick.
 - **Redis prefix invalidation correctness**: literal prefixes are now filtered safely after `SSCAN`.
