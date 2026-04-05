@@ -1,5 +1,5 @@
 import { unwrapStoredValue } from '../internal/StoredValue'
-import type { CacheLayer } from '../types'
+import type { CacheLayer, CacheLayerSetManyEntry } from '../types'
 
 export interface MemoryLayerSnapshotEntry {
   key: string
@@ -15,11 +15,13 @@ export interface MemoryLayerSnapshotEntry {
  */
 export type EvictionPolicy = 'lru' | 'lfu' | 'fifo'
 
-interface MemoryLayerOptions {
+export interface MemoryLayerOptions {
   ttl?: number
   maxSize?: number
   name?: string
   evictionPolicy?: EvictionPolicy
+  cleanupIntervalMs?: number
+  onEvict?: (key: string, value: unknown) => void
 }
 
 interface MemoryEntry {
@@ -38,13 +40,23 @@ export class MemoryLayer implements CacheLayer {
 
   private readonly maxSize: number
   private readonly evictionPolicy: EvictionPolicy
+  private readonly onEvict?: (key: string, value: unknown) => void
   private readonly entries = new Map<string, MemoryEntry>()
+  private cleanupTimer?: ReturnType<typeof setInterval>
 
   constructor(options: MemoryLayerOptions = {}) {
     this.name = options.name ?? 'memory'
     this.defaultTtl = options.ttl
     this.maxSize = options.maxSize ?? 1_000
     this.evictionPolicy = options.evictionPolicy ?? 'lru'
+    this.onEvict = options.onEvict
+
+    if (options.cleanupIntervalMs && options.cleanupIntervalMs > 0) {
+      this.cleanupTimer = setInterval(() => {
+        this.pruneExpired()
+      }, options.cleanupIntervalMs)
+      this.cleanupTimer.unref?.()
+    }
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -83,6 +95,12 @@ export class MemoryLayer implements CacheLayer {
       values.push(await this.getEntry<T>(key))
     }
     return values
+  }
+
+  async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
+    for (const entry of entries) {
+      await this.set(entry.key, entry.value, entry.ttl)
+    }
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
@@ -145,6 +163,17 @@ export class MemoryLayer implements CacheLayer {
     this.entries.clear()
   }
 
+  async ping(): Promise<boolean> {
+    return true
+  }
+
+  async dispose(): Promise<void> {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer)
+      this.cleanupTimer = undefined
+    }
+  }
+
   async keys(): Promise<string[]> {
     this.pruneExpired()
     return [...this.entries.keys()]
@@ -183,7 +212,11 @@ export class MemoryLayer implements CacheLayer {
       // Map insertion order = oldest for both LRU (re-inserts on access) and FIFO
       const oldestKey = this.entries.keys().next().value
       if (oldestKey !== undefined) {
+        const entry = this.entries.get(oldestKey)
         this.entries.delete(oldestKey)
+        if (entry) {
+          this.onEvict?.(oldestKey, unwrapStoredValue(entry.value))
+        }
       }
       return
     }
@@ -200,7 +233,11 @@ export class MemoryLayer implements CacheLayer {
       }
     }
     if (victimKey !== undefined) {
+      const victim = this.entries.get(victimKey)
       this.entries.delete(victimKey)
+      if (victim) {
+        this.onEvict?.(victimKey, unwrapStoredValue(victim.value))
+      }
     }
   }
 

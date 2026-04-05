@@ -41,6 +41,13 @@ describe('PatternMatcher', () => {
     expect(PatternMatcher.matches(pattern, value)).toBe(true)
   })
 
+  it('handles long values without allocating quadratic state', () => {
+    const pattern = 'user:*:profile:?'
+    const value = `user:${'abc'.repeat(10_000)}:profile:1`
+
+    expect(PatternMatcher.matches(pattern, value)).toBe(true)
+  })
+
   it('escapes regex special characters in literal parts', () => {
     expect(PatternMatcher.matches('user.(123)', 'user.(123)')).toBe(true)
     expect(PatternMatcher.matches('user.(123)', 'user1123')).toBe(false)

@@ -3,7 +3,7 @@ import { brotliCompress, brotliDecompress, gunzip, gzip } from 'node:zlib'
 import type Redis from 'ioredis'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
-import type { CacheLayer, CacheSerializer } from '../types'
+import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
 
 type CompressionAlgorithm = 'gzip' | 'brotli'
 
@@ -18,12 +18,13 @@ interface RedisLayerOptions {
   client: Redis
   ttl?: number
   name?: string
-  serializer?: CacheSerializer
+  serializer?: CacheSerializer | CacheSerializer[]
   prefix?: string
   allowUnprefixedClear?: boolean
   scanCount?: number
   compression?: CompressionAlgorithm
   compressionThreshold?: number
+  disconnectOnDispose?: boolean
 }
 
 export class RedisLayer implements CacheLayer {
@@ -32,23 +33,27 @@ export class RedisLayer implements CacheLayer {
   readonly isLocal = false
 
   private readonly client: Redis
-  private readonly serializer: CacheSerializer
+  private readonly serializers: CacheSerializer[]
   private readonly prefix: string
   private readonly allowUnprefixedClear: boolean
   private readonly scanCount: number
   private readonly compression?: CompressionAlgorithm
   private readonly compressionThreshold: number
+  private readonly disconnectOnDispose: boolean
 
   constructor(options: RedisLayerOptions) {
     this.client = options.client
     this.defaultTtl = options.ttl
     this.name = options.name ?? 'redis'
-    this.serializer = options.serializer ?? new JsonSerializer()
+    this.serializers = Array.isArray(options.serializer)
+      ? options.serializer
+      : [options.serializer ?? new JsonSerializer()]
     this.prefix = options.prefix ?? ''
     this.allowUnprefixedClear = options.allowUnprefixedClear ?? false
     this.scanCount = options.scanCount ?? 100
     this.compression = options.compression
     this.compressionThreshold = options.compressionThreshold ?? 1_024
+    this.disconnectOnDispose = options.disconnectOnDispose ?? false
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -92,8 +97,28 @@ export class RedisLayer implements CacheLayer {
     )
   }
 
+  async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
+    if (entries.length === 0) {
+      return
+    }
+
+    const pipeline = this.client.pipeline()
+    for (const entry of entries) {
+      const serialized = this.primarySerializer().serialize(entry.value)
+      const payload = await this.encodePayload(serialized)
+      const normalizedKey = this.withPrefix(entry.key)
+      if (entry.ttl && entry.ttl > 0) {
+        pipeline.set(normalizedKey, payload as never, 'EX', entry.ttl)
+      } else {
+        pipeline.set(normalizedKey, payload as never)
+      }
+    }
+
+    await pipeline.exec()
+  }
+
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
-    const serialized = this.serializer.serialize(value)
+    const serialized = this.primarySerializer().serialize(value)
     const payload = await this.encodePayload(serialized)
     const normalizedKey = this.withPrefix(key)
 
@@ -133,6 +158,20 @@ export class RedisLayer implements CacheLayer {
   async size(): Promise<number> {
     const keys = await this.keys()
     return keys.length
+  }
+
+  async ping(): Promise<boolean> {
+    try {
+      return (await this.client.ping()) === 'PONG'
+    } catch {
+      return false
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disconnectOnDispose) {
+      this.client.disconnect()
+    }
   }
 
   /**
@@ -192,12 +231,46 @@ export class RedisLayer implements CacheLayer {
   }
 
   private async deserializeOrDelete<T>(key: string, payload: string | Buffer): Promise<T | null> {
-    try {
-      return this.serializer.deserialize<T>(await this.decodePayload(payload))
-    } catch {
-      await this.client.del(this.withPrefix(key)).catch(() => undefined)
-      return null
+    const decodedPayload = await this.decodePayload(payload)
+
+    for (const serializer of this.serializers) {
+      try {
+        const value = serializer.deserialize<T>(decodedPayload)
+        if (serializer !== this.primarySerializer()) {
+          await this.rewriteWithPrimarySerializer(key, value).catch(() => undefined)
+        }
+        return value
+      } catch {
+        // try next serializer
+      }
     }
+
+    try {
+      await this.client.del(this.withPrefix(key)).catch(() => undefined)
+    } catch {
+      // ignore delete failures after deserialization failure
+    }
+    return null
+  }
+
+  private async rewriteWithPrimarySerializer(key: string, value: unknown): Promise<void> {
+    const serialized = this.primarySerializer().serialize(value)
+    const payload = await this.encodePayload(serialized)
+    const ttl = await this.client.ttl(this.withPrefix(key))
+    if (ttl > 0) {
+      await this.client.set(this.withPrefix(key), payload as never, 'EX', ttl)
+      return
+    }
+
+    await this.client.set(this.withPrefix(key), payload as never)
+  }
+
+  private primarySerializer(): CacheSerializer {
+    const serializer = this.serializers[0]
+    if (!serializer) {
+      throw new Error('RedisLayer requires at least one serializer.')
+    }
+    return serializer
   }
 
   private isSerializablePayload(payload: unknown): payload is string | Buffer {

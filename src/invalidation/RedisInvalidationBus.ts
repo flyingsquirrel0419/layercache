@@ -1,10 +1,11 @@
 import type Redis from 'ioredis'
-import type { InvalidationBus, InvalidationMessage } from '../types'
+import type { CacheLogger, InvalidationBus, InvalidationMessage } from '../types'
 
 interface RedisInvalidationBusOptions {
   publisher: Redis
   subscriber?: Redis
   channel?: string
+  logger?: CacheLogger
 }
 
 /**
@@ -18,6 +19,7 @@ export class RedisInvalidationBus implements InvalidationBus {
   private readonly channel: string
   private readonly publisher: Redis
   private readonly subscriber: Redis
+  private readonly logger?: CacheLogger
   private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
   private sharedListener?: (_channel: string, payload: string) => void
 
@@ -25,6 +27,7 @@ export class RedisInvalidationBus implements InvalidationBus {
     this.publisher = options.publisher
     this.subscriber = options.subscriber ?? options.publisher.duplicate()
     this.channel = options.channel ?? 'layercache:invalidation'
+    this.logger = options.logger
   }
 
   async subscribe(handler: (message: InvalidationMessage) => Promise<void> | void): Promise<() => Promise<void>> {
@@ -108,6 +111,11 @@ export class RedisInvalidationBus implements InvalidationBus {
   }
 
   private reportError(message: string, error: unknown): void {
+    if (this.logger?.error) {
+      this.logger.error(message, { error })
+      return
+    }
+
     console.error(`[layercache] ${message}`, error)
   }
 }

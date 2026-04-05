@@ -9,9 +9,11 @@ export { createCachedMethodDecorator } from './decorators/createCachedMethodDeco
 export { createFastifyLayercachePlugin } from './integrations/fastify'
 export { createExpressCacheMiddleware } from './integrations/express'
 export { cacheGraphqlResolver } from './integrations/graphql'
+export { createHonoCacheMiddleware } from './integrations/hono'
+export { createOpenTelemetryPlugin } from './integrations/opentelemetry'
 export { createTrpcCacheMiddleware } from './integrations/trpc'
 export { MemoryLayer } from './layers/MemoryLayer'
-export type { EvictionPolicy, MemoryLayerSnapshotEntry } from './layers/MemoryLayer'
+export type { EvictionPolicy, MemoryLayerOptions, MemoryLayerSnapshotEntry } from './layers/MemoryLayer'
 export { RedisLayer } from './layers/RedisLayer'
 export { DiskLayer } from './layers/DiskLayer'
 export { MemcachedLayer } from './layers/MemcachedLayer'
@@ -40,13 +42,19 @@ export {
   type CacheWarmProgress,
   type CacheWrapOptions,
   type CacheGetOptions,
+  type CacheHealthCheckResult,
   type CacheLayer,
+  type CacheLayerSetManyEntry,
   type CacheLogger,
   type CacheMGetEntry,
   type CacheMetricsSnapshot,
   type CacheMSetEntry,
+  type CacheRateLimitOptions,
   type CacheTagIndex,
   type CacheSerializer,
+  type CacheTtlPolicy,
+  type CacheTtlPolicyContext,
+  type CacheWriteBehindOptions,
   type CacheWriteOptions,
   type InvalidationBus,
   type InvalidationMessage,

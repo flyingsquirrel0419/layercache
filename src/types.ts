@@ -21,6 +21,7 @@ export interface LayerTtlMap {
 export interface CacheWriteOptions {
   tags?: string[]
   ttl?: number | LayerTtlMap
+  ttlPolicy?: CacheTtlPolicy
   negativeCache?: boolean
   negativeTtl?: number | LayerTtlMap
   staleWhileRevalidate?: number | LayerTtlMap
@@ -30,6 +31,7 @@ export interface CacheWriteOptions {
   refreshAhead?: number | LayerTtlMap
   adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
   circuitBreaker?: CacheCircuitBreakerOptions
+  fetcherRateLimit?: CacheRateLimitOptions
   /**
    * Optional predicate called with the fetcher's return value before caching.
    * Return `false` to skip storing the value in the cache (but still return it
@@ -62,12 +64,20 @@ export interface CacheLayer {
   readonly isLocal?: boolean
   get<T>(key: string): Promise<T | null>
   getEntry?<T = unknown>(key: string): Promise<T | null>
+  /**
+   * Bulk read fast-path. Implementations should return raw stored entries using
+   * the same semantics as `getEntry()` so CacheStack can resolve envelopes,
+   * stale windows, and negative-cache markers consistently.
+   */
   getMany?<T>(keys: string[]): Promise<Array<T | null>>
+  setMany?(entries: CacheLayerSetManyEntry[]): Promise<void>
   set(key: string, value: unknown, ttl?: number): Promise<void>
   delete(key: string): Promise<void>
   clear(): Promise<void>
   deleteMany?(keys: string[]): Promise<void>
   keys?(): Promise<string[]>
+  ping?(): Promise<boolean>
+  dispose?(): Promise<void>
   /**
    * Returns true if the key exists and has not expired.
    * Implementations may omit this; CacheStack will fall back to `get()`.
@@ -146,10 +156,17 @@ export interface CacheTagIndex {
   track(key: string, tags: string[]): Promise<void>
   remove(key: string): Promise<void>
   keysForTag(tag: string): Promise<string[]>
+  keysForPrefix?(prefix: string): Promise<string[]>
   /** Returns the tags associated with a specific key, or an empty array. */
   tagsForKey?(key: string): Promise<string[]>
   matchPattern(pattern: string): Promise<string[]>
   clear(): Promise<void>
+}
+
+export interface CacheLayerSetManyEntry {
+  key: string
+  value: unknown
+  ttl?: number
 }
 
 export interface InvalidationMessage {
@@ -185,6 +202,7 @@ export interface CacheStackOptions {
   stampedePrevention?: boolean
   invalidationBus?: InvalidationBus
   tagIndex?: CacheTagIndex
+  generation?: number
   broadcastL1Invalidation?: boolean
   /**
    * @deprecated Use `broadcastL1Invalidation` instead.
@@ -200,6 +218,9 @@ export interface CacheStackOptions {
   circuitBreaker?: CacheCircuitBreakerOptions
   gracefulDegradation?: boolean | CacheDegradationOptions
   writePolicy?: 'strict' | 'best-effort'
+  writeStrategy?: 'write-through' | 'write-behind'
+  writeBehind?: CacheWriteBehindOptions
+  fetcherRateLimit?: CacheRateLimitOptions
   singleFlightCoordinator?: CacheSingleFlightCoordinator
   singleFlightLeaseMs?: number
   singleFlightTimeoutMs?: number
@@ -218,6 +239,17 @@ export interface CacheAdaptiveTtlOptions {
   maxTtl?: number | LayerTtlMap
 }
 
+export type CacheTtlPolicy =
+  | 'until-midnight'
+  | 'next-hour'
+  | { alignTo: number }
+  | ((context: CacheTtlPolicyContext) => number | undefined)
+
+export interface CacheTtlPolicyContext {
+  key: string
+  value: unknown
+}
+
 export interface CacheCircuitBreakerOptions {
   failureThreshold?: number
   cooldownMs?: number
@@ -225,6 +257,17 @@ export interface CacheCircuitBreakerOptions {
 
 export interface CacheDegradationOptions {
   retryAfterMs?: number
+}
+
+export interface CacheRateLimitOptions {
+  maxConcurrent?: number
+  intervalMs?: number
+  maxPerInterval?: number
+}
+
+export interface CacheWriteBehindOptions {
+  flushIntervalMs?: number
+  batchSize?: number
 }
 
 export interface CacheWarmEntry<T = unknown> {
@@ -268,6 +311,13 @@ export interface CacheStatsSnapshot {
     degradedUntil: number | null
   }>
   backgroundRefreshes: number
+}
+
+export interface CacheHealthCheckResult {
+  layer: string
+  healthy: boolean
+  latencyMs: number
+  error?: string
 }
 
 /** Detailed inspection result for a single cache key. */

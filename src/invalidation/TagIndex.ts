@@ -51,29 +51,15 @@ export class TagIndex implements CacheTagIndex {
   }
 
   async remove(key: string): Promise<void> {
-    this.knownKeys.delete(key)
-    const tags = this.keyToTags.get(key)
-    if (!tags) {
-      return
-    }
-
-    for (const tag of tags) {
-      const keys = this.tagToKeys.get(tag)
-      if (!keys) {
-        continue
-      }
-
-      keys.delete(key)
-      if (keys.size === 0) {
-        this.tagToKeys.delete(tag)
-      }
-    }
-
-    this.keyToTags.delete(key)
+    this.removeKey(key)
   }
 
   async keysForTag(tag: string): Promise<string[]> {
     return [...(this.tagToKeys.get(tag) ?? new Set<string>())]
+  }
+
+  async keysForPrefix(prefix: string): Promise<string[]> {
+    return [...this.knownKeys].filter((key) => key.startsWith(prefix))
   }
 
   async tagsForKey(key: string): Promise<string[]> {
@@ -102,9 +88,30 @@ export class TagIndex implements CacheTagIndex {
       if (removed >= toRemove) {
         break
       }
-      this.knownKeys.delete(key)
-      this.keyToTags.delete(key)
+      this.removeKey(key)
       removed += 1
     }
+  }
+
+  private removeKey(key: string): void {
+    this.knownKeys.delete(key)
+    const tags = this.keyToTags.get(key)
+    if (!tags) {
+      return
+    }
+
+    for (const tag of tags) {
+      const keys = this.tagToKeys.get(tag)
+      if (!keys) {
+        continue
+      }
+
+      keys.delete(key)
+      if (keys.size === 0) {
+        this.tagToKeys.delete(tag)
+      }
+    }
+
+    this.keyToTags.delete(key)
   }
 }

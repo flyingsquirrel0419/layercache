@@ -128,4 +128,26 @@ describe('DiskLayer', () => {
     const result = await layer.get('bad-key')
     expect(result).toBeNull()
   })
+
+  it('serializes concurrent writes and leaves no temp files behind', async () => {
+    const boundedLayer = new DiskLayer({ directory: dir, maxFiles: 2 })
+
+    await Promise.all([
+      boundedLayer.set('a', 1),
+      boundedLayer.set('b', 2),
+      boundedLayer.set('c', 3),
+      boundedLayer.set('d', 4)
+    ])
+
+    const entries = await fs.readdir(dir)
+    expect(entries.every((entry) => entry.endsWith('.lc'))).toBe(true)
+    expect(await boundedLayer.size()).toBeLessThanOrEqual(2)
+  })
+
+  it('supports getMany parallel reads', async () => {
+    await layer.set('a', 1)
+    await layer.set('b', 2)
+
+    await expect(layer.getMany(['a', 'b', 'missing'])).resolves.toEqual([1, 2, null])
+  })
 })

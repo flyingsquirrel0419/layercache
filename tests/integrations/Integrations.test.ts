@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import { createCacheStatsHandler } from '../../src/http/createCacheStatsHandler'
+import { createExpressCacheMiddleware } from '../../src/integrations/express'
 import { createFastifyLayercachePlugin } from '../../src/integrations/fastify'
 import { cacheGraphqlResolver } from '../../src/integrations/graphql'
 import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
@@ -146,5 +147,23 @@ describe('createTrpcCacheMiddleware', () => {
 
     const result = await middleware(ctx)
     expect(result).toEqual({ ok: true, data: 'pong' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Express middleware
+// ---------------------------------------------------------------------------
+describe('createExpressCacheMiddleware', () => {
+  it('passes cache errors to next(error)', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.disconnect()
+
+    const middleware = createExpressCacheMiddleware(cache)
+    const next = vi.fn()
+
+    await middleware({ method: 'GET', url: '/users' }, {}, next)
+
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(next.mock.calls[0]?.[0]).toBeInstanceOf(Error)
   })
 })

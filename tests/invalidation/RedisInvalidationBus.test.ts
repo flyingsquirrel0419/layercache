@@ -116,4 +116,35 @@ describe('RedisInvalidationBus', () => {
     publisher.disconnect()
     subscriber.disconnect()
   })
+
+  it('uses the provided logger instead of console.error', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { error: vi.fn() }
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bus = new RedisInvalidationBus({
+      publisher,
+      subscriber,
+      channel: 'layercache:test:logger',
+      logger
+    })
+
+    const unsubscribe = await bus.subscribe(async () => {
+      throw new Error('boom')
+    })
+
+    await publisher.publish(
+      'layercache:test:logger',
+      JSON.stringify({ scope: 'key', sourceId: 'inst', keys: ['k'], operation: 'delete' })
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(logger.error).toHaveBeenCalled()
+    expect(consoleSpy).not.toHaveBeenCalled()
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
 })

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import Redis from 'ioredis'
 import { RedisTagIndex } from './invalidation/RedisTagIndex'
+import { isStoredValueEnvelope, resolveStoredValue } from './internal/StoredValue'
 
 const CONNECT_TIMEOUT_MS = 5_000
 
@@ -9,6 +10,7 @@ interface ParsedArgs {
   redisUrl?: string
   pattern?: string
   tag?: string
+  key?: string
   tagIndexPrefix?: string
 }
 
@@ -74,6 +76,32 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return
     }
 
+    if (args.command === 'inspect') {
+      if (!args.key) {
+        throw new Error('inspect requires --key <key>.')
+      }
+
+      const payload = await redis.getBuffer(args.key)
+      const ttl = await redis.ttl(args.key)
+      const decoded = decodeInspectablePayload(payload)
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            key: args.key,
+            exists: payload !== null,
+            ttlSeconds: ttl >= 0 ? ttl : null,
+            sizeBytes: payload?.byteLength ?? 0,
+            isEnvelope: isStoredValueEnvelope(decoded),
+            state: payload === null ? null : resolveStoredValue(decoded).state,
+            preview: summarizeInspectableValue(decoded)
+          },
+          null,
+          2
+        )}\n`
+      )
+      return
+    }
+
     printUsage()
     process.exitCode = 1
   } catch (error: unknown) {
@@ -121,6 +149,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (token === '--tag') {
       parsed.tag = value
       index += 1
+    } else if (token === '--key') {
+      parsed.key = value
+      index += 1
     } else if (token === '--tag-index-prefix') {
       parsed.tagIndexPrefix = value
       index += 1
@@ -157,14 +188,43 @@ function printUsage(): void {
     'Usage:\n' +
       '  layercache stats --redis <url> [--pattern <glob>]\n' +
       '  layercache keys --redis <url> [--pattern <glob>]\n' +
+      '  layercache inspect --redis <url> --key <key>\n' +
       '  layercache invalidate --redis <url> [--pattern <glob> | --tag <tag>] [--tag-index-prefix <prefix>]\n' +
       '\n' +
       'Options:\n' +
       '  --redis <url>               Redis connection URL (e.g. redis://localhost:6379)\n' +
       '  --pattern <glob>            Glob pattern to filter keys (default: *)\n' +
+      '  --key <key>                 Exact cache key to inspect\n' +
       '  --tag <tag>                 Invalidate by tag name\n' +
       '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n'
   )
+}
+
+function decodeInspectablePayload(payload: Buffer | null): unknown {
+  if (payload === null) {
+    return null
+  }
+
+  const text = payload.toString('utf8')
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text.length > 256 ? `${text.slice(0, 256)}...` : text
+  }
+}
+
+function summarizeInspectableValue(value: unknown): unknown {
+  if (isStoredValueEnvelope(value)) {
+    return {
+      kind: value.kind,
+      value: value.value,
+      freshUntil: value.freshUntil,
+      staleUntil: value.staleUntil,
+      errorUntil: value.errorUntil
+    }
+  }
+
+  return value
 }
 
 if (process.argv[1]?.includes('cli.')) {

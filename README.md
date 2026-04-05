@@ -40,15 +40,22 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Layered reads & automatic backfill** — hits in slower layers propagate up
 - **Cache stampede prevention** — mutex-based deduplication per key
 - **Tag-based invalidation** — `set('user:123:posts', posts, { tags: ['user:123'] })` then `invalidateByTag('user:123')`
+- **Batch tag invalidation** — `invalidateByTags(['tenant:a', 'users'], 'all')` for OR/AND invalidation in one call
 - **Pattern invalidation** — `invalidateByPattern('user:*')`
+- **Prefix invalidation** — efficient `invalidateByPrefix('user:123:')` for hierarchical keys
+- **Generation-based invalidation** — `generation` prefixes keys with `vN:` and `bumpGeneration()` rotates the namespace instantly
 - **Per-layer TTL overrides** — different TTLs for memory vs. Redis in one call
+- **TTL policies** — align TTLs to time boundaries (`until-midnight`, `next-hour`, `{ alignTo }`, or a function)
 - **Negative caching** — cache known misses for a short TTL to protect the database
 - **Stale strategies** — `staleWhileRevalidate` and `staleIfError` as opt-in read behavior
 - **TTL jitter** — spread expirations to avoid synchronized stampedes
 - **Sliding & adaptive TTL** — extend TTL on every read or ramp it up for hot keys
 - **Refresh-ahead** — trigger background refresh when TTL drops below a threshold
+- **Fetcher rate limiting** — cap concurrent fetchers or requests per interval
 - **Best-effort writes** — tolerate partial layer write failures when desired
+- **Write-behind mode** — write local layers immediately and flush slower remote layers asynchronously
 - **Bulk reads** — `mget` uses layer-level `getMany()` when available
+- **Bulk writes** — `mset` uses layer-level `setMany()` when available
 - **Distributed tag index** — `RedisTagIndex` keeps tag state consistent across multiple servers
 - **Optional distributed single-flight** — plug in a coordinator to dedupe misses across instances
 - **Cross-server L1 invalidation** — Redis pub/sub bus flushes stale memory on other instances when you write or delete
@@ -59,17 +66,22 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Graceful degradation** — skip a failing layer for a configurable retry window
 - **Circuit breaker** — per-key or global; opens after N failures, recovers after cooldown
 - **Compression** — transparent async gzip/brotli in `RedisLayer` (non-blocking) with a byte threshold
+- **Serializer fallback chains** — transparently read legacy payloads (for example JSON) and rewrite them with the primary serializer
 - **Metrics & stats** — per-layer hit/miss counters, **per-layer latency tracking**, circuit-breaker trips, degraded operations; HTTP stats handler
+- **Health checks** — `cache.healthCheck()` returns per-layer health and latency
 - **Persistence** — `exportState` / `importState` for in-process snapshots; `persistToFile` / `restoreFromFile` for disk
-- **Admin CLI** — `layercache stats | keys | invalidate` against any Redis URL
-- **Framework integrations** — Express middleware, Fastify plugin, tRPC middleware, GraphQL resolver wrapper
+- **Admin CLI** — `layercache stats | keys | inspect | invalidate` against any Redis URL
+- **Framework integrations** — Express middleware, Fastify plugin, Hono middleware, tRPC middleware, GraphQL resolver wrapper
+- **OpenTelemetry plugin** — instrument `get` / `set` / invalidation flows with spans
 - **MessagePack serializer** — drop-in replacement for lower Redis memory usage
 - **NestJS module** — `CacheStackModule.forRoot(...)` and `forRootAsync(...)` with `@InjectCacheStack()`
 - **`getOrThrow()`** — throws `CacheMissError` instead of returning `null`, for strict use cases
 - **`inspect()`** — debug a key: see which layers hold it, remaining TTLs, tags, and staleness state
+- **MemoryLayer cleanup hooks** — periodic TTL cleanup and `onEvict` callbacks
 - **Conditional caching** — `shouldCache` predicate to skip caching specific fetcher results
-- **Nested namespaces** — `namespace('a').namespace('b')` for composable key prefixes
+- **Nested namespaces** — `namespace('a').namespace('b')` for composable key prefixes with namespace-scoped metrics
 - **Custom layers** — implement the 5-method `CacheLayer` interface to plug in Memcached, DynamoDB, or anything else
+- **Edge-safe entry point** — `layercache/edge` exports the non-Node helpers for Worker-style runtimes
 - **ESM + CJS** — works with both module systems, Node.js ≥ 18
 
 ---
@@ -168,12 +180,29 @@ await cache.set('user:123:posts', posts, { tags: ['user:123'] })
 await cache.invalidateByTag('user:123') // both keys gone
 ```
 
+### `cache.invalidateByTags(tags, mode?): Promise<void>`
+
+Delete keys that match any or all of a set of tags.
+
+```ts
+await cache.invalidateByTags(['tenant:a', 'users'], 'all') // keys tagged with both
+await cache.invalidateByTags(['users', 'posts'], 'any')    // keys tagged with either
+```
+
 ### `cache.invalidateByPattern(pattern): Promise<void>`
 
 Glob-style deletion against the tracked key set.
 
 ```ts
 await cache.invalidateByPattern('user:*') // deletes user:1, user:2, …
+```
+
+### `cache.invalidateByPrefix(prefix): Promise<void>`
+
+Prefer this over glob invalidation when your keys are hierarchical.
+
+```ts
+await cache.invalidateByPrefix('user:123:') // deletes user:123:profile, user:123:posts, ...
 ```
 
 ### `cache.mget<T>(entries): Promise<Array<T | null>>`
@@ -193,6 +222,13 @@ const [user1, user2] = await cache.mget([
 
 ```ts
 const { hits, misses, fetches, staleHits, refreshes, writeFailures } = cache.getMetrics()
+```
+
+### `cache.healthCheck(): Promise<CacheHealthCheckResult[]>`
+
+```ts
+const health = await cache.healthCheck()
+// [{ layer: 'memory', healthy: true, latencyMs: 0.03 }, ...]
 ```
 
 ### `cache.resetMetrics(): void`
@@ -227,6 +263,17 @@ const getUser = cache.wrap(
   (id: number) => db.findUser(id),
   { keyResolver: (id) => String(id), ttl: 300 }
 )
+```
+
+### Generation-based invalidation
+
+Add a generation prefix to every key and rotate it when you want to invalidate the whole cache namespace without scanning:
+
+```ts
+const cache = new CacheStack([...], { generation: 1 })
+
+await cache.set('user:123', user)
+cache.bumpGeneration() // now reads use v2:user:123
 ```
 
 ### `cache.warm(entries, options?)`
@@ -303,6 +350,19 @@ const data = await cache.get('api:response', fetchFromApi, {
   shouldCache: (value) => (value as any).status === 200
 })
 // If fetchFromApi returns { status: 500 }, the value is returned but NOT cached
+```
+
+### TTL policies
+
+Align expirations to calendar or boundary-based schedules:
+
+```ts
+await cache.set('daily-report', report, { ttlPolicy: 'until-midnight' })
+await cache.set('hourly-rollup', rollup, { ttlPolicy: 'next-hour' })
+await cache.set('aligned', value, { ttlPolicy: { alignTo: 300 } }) // next 5-minute boundary
+await cache.set('custom', value, {
+  ttlPolicy: ({ key, value }) => key.startsWith('hot:') ? 30 : 300
+})
 ```
 
 ---

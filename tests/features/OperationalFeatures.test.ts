@@ -32,6 +32,7 @@ class BulkLayer implements CacheLayer {
   readonly name = 'bulk'
   readonly values = new Map<string, unknown>()
   getManyCalls = 0
+  setManyCalls = 0
 
   async get<T>(key: string): Promise<T | null> {
     return (this.values.get(key) as T | undefined) ?? null
@@ -48,6 +49,13 @@ class BulkLayer implements CacheLayer {
 
   async set(key: string, value: unknown): Promise<void> {
     this.values.set(key, value)
+  }
+
+  async setMany(entries: Array<{ key: string; value: unknown }>): Promise<void> {
+    this.setManyCalls += 1
+    for (const entry of entries) {
+      this.values.set(entry.key, entry.value)
+    }
   }
 
   async delete(key: string): Promise<void> {
@@ -257,12 +265,69 @@ describe('operational features', () => {
         refreshes += 1
         return { version: 2 }
       })
-    ).resolves.toEqual({ version: 1 })
+    ).rejects.toThrow(/disconnecting/i)
 
     await disconnectPromise
     await new Promise((resolve) => setTimeout(resolve, 25))
 
     expect(refreshes).toBe(0)
+  })
+
+  it('uses layer bulk writes for mset when available', async () => {
+    const layer = new BulkLayer()
+    const cache = new CacheStack([layer])
+
+    await cache.mset([
+      { key: 'a', value: 1 },
+      { key: 'b', value: 2 }
+    ])
+
+    expect(layer.setManyCalls).toBe(1)
+    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual([1, 2])
+  })
+
+  it('supports write-behind for remote layers', async () => {
+    const memory = new MemoryLayer({ ttl: 60 })
+    const remote = new BulkLayer()
+    ;(remote as { isLocal?: boolean }).isLocal = false
+    const cache = new CacheStack([memory, remote], {
+      writeStrategy: 'write-behind',
+      writeBehind: { batchSize: 1 }
+    })
+
+    await cache.set('user:1', { id: 1 })
+
+    await expect(memory.get('user:1')).resolves.toEqual({ id: 1 })
+    await cache.disconnect()
+    await expect(remote.get('user:1')).resolves.toEqual(
+      expect.objectContaining({
+        __layercache: 1
+      })
+    )
+  })
+
+  it('rate-limits fetchers when configured', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    let concurrent = 0
+    let maxConcurrent = 0
+
+    await Promise.all(
+      ['a', 'b', 'c'].map((key) =>
+        cache.get(
+          key,
+          async () => {
+            concurrent += 1
+            maxConcurrent = Math.max(maxConcurrent, concurrent)
+            await new Promise((resolve) => setTimeout(resolve, 25))
+            concurrent -= 1
+            return key
+          },
+          { fetcherRateLimit: { maxConcurrent: 1 } }
+        )
+      )
+    )
+
+    expect(maxConcurrent).toBe(1)
   })
 
   it('validates cache keys and runtime ttl options', async () => {

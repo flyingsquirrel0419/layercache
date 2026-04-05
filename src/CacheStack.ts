@@ -1,8 +1,7 @@
-import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { promises as fs } from 'node:fs'
 import { CacheNamespace } from './CacheNamespace'
 import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
+import { FetchRateLimiter } from './internal/FetchRateLimiter'
 import { MetricsCollector } from './internal/MetricsCollector'
 import {
   createStoredValueEnvelope,
@@ -19,9 +18,11 @@ import {
   type CacheAdaptiveTtlOptions,
   type CacheCircuitBreakerOptions,
   type CacheGetOptions,
+  type CacheHealthCheckResult,
   type CacheHitRateSnapshot,
   type CacheInspectResult,
   type CacheLayer,
+  type CacheLayerSetManyEntry,
   type CacheLogger,
   type CacheMGetEntry,
   type CacheMSetEntry,
@@ -33,10 +34,12 @@ import {
   type CacheStackOptions,
   type CacheStatsSnapshot,
   type CacheTagIndex,
+  type CacheTtlPolicy,
   type CacheWarmEntry,
   type CacheWarmOptions,
   type CacheWarmProgress,
   type CacheWrapOptions,
+  type CacheWriteBehindOptions,
   type CacheWriteOptions,
   type InvalidationMessage,
   type LayerTtlMap
@@ -100,21 +103,29 @@ export interface CacheStack {
   on<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
   once<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
   off<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  removeAllListeners<K extends keyof CacheStackEvents>(event?: K): this
+  listeners<K extends keyof CacheStackEvents>(event: K): Array<(data: CacheStackEvents[K]) => void>
+  listenerCount<K extends keyof CacheStackEvents>(event: K): number
   emit<K extends keyof CacheStackEvents>(event: K, data: CacheStackEvents[K]): boolean
 }
 
 export class CacheStack extends EventEmitter {
   private readonly stampedeGuard = new StampedeGuard()
   private readonly metricsCollector = new MetricsCollector()
-  private readonly instanceId = randomUUID()
+  private readonly instanceId = createInstanceId()
   private readonly startup: Promise<void>
   private unsubscribeInvalidation?: () => Promise<void> | void
   private readonly logger: CacheLogger
   private readonly tagIndex: CacheTagIndex
+  private readonly fetchRateLimiter = new FetchRateLimiter()
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
   private readonly layerDegradedUntil = new Map<string, number>()
   private readonly ttlResolver: TtlResolver
   private readonly circuitBreakerManager: CircuitBreakerManager
+  private currentGeneration?: number
+  private readonly writeBehindQueue: Array<() => Promise<void>> = []
+  private writeBehindTimer?: ReturnType<typeof setInterval>
+  private writeBehindFlushPromise?: Promise<void>
   private isDisconnecting = false
   private disconnectPromise?: Promise<void>
 
@@ -133,6 +144,7 @@ export class CacheStack extends EventEmitter {
     const maxProfileEntries = options.maxProfileEntries ?? DEFAULT_MAX_PROFILE_ENTRIES
     this.ttlResolver = new TtlResolver({ maxProfileEntries })
     this.circuitBreakerManager = new CircuitBreakerManager({ maxEntries: maxProfileEntries })
+    this.currentGeneration = options.generation
 
     if (options.publishSetInvalidation !== undefined) {
       console.warn(
@@ -144,6 +156,7 @@ export class CacheStack extends EventEmitter {
     this.logger =
       typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
+    this.initializeWriteBehind(options.writeBehind)
     this.startup = this.initialize()
   }
 
@@ -154,9 +167,11 @@ export class CacheStack extends EventEmitter {
    * and no `fetcher` is provided.
    */
   async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
-    const normalizedKey = this.validateCacheKey(key)
+    this.assertActive('get')
+    const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     this.validateWriteOptions(options)
     await this.startup
+    this.assertActive('get')
 
     const hit = await this.readFromLayers<T>(normalizedKey, options, 'allow-stale')
     if (hit.found) {
@@ -231,8 +246,10 @@ export class CacheStack extends EventEmitter {
    * Returns true if the given key exists and is not expired in any layer.
    */
   async has(key: string): Promise<boolean> {
-    const normalizedKey = this.validateCacheKey(key)
+    this.assertActive('has')
+    const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     await this.startup
+    this.assertActive('has')
 
     for (const layer of this.layers) {
       if (this.shouldSkipLayer(layer)) {
@@ -266,8 +283,10 @@ export class CacheStack extends EventEmitter {
    * that has it, or null if the key is not found / has no TTL.
    */
   async ttl(key: string): Promise<number | null> {
-    const normalizedKey = this.validateCacheKey(key)
+    this.assertActive('ttl')
+    const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     await this.startup
+    this.assertActive('ttl')
 
     for (const layer of this.layers) {
       if (this.shouldSkipLayer(layer)) {
@@ -291,9 +310,11 @@ export class CacheStack extends EventEmitter {
    * Stores a value in all cache layers. Overwrites any existing value.
    */
   async set<T>(key: string, value: T, options?: CacheWriteOptions): Promise<void> {
-    const normalizedKey = this.validateCacheKey(key)
+    this.assertActive('set')
+    const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     this.validateWriteOptions(options)
     await this.startup
+    this.assertActive('set')
     await this.storeEntry(normalizedKey, 'value', value, options)
   }
 
@@ -301,8 +322,10 @@ export class CacheStack extends EventEmitter {
    * Deletes the key from all layers and publishes an invalidation message.
    */
   async delete(key: string): Promise<void> {
-    const normalizedKey = this.validateCacheKey(key)
+    this.assertActive('delete')
+    const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     await this.startup
+    this.assertActive('delete')
     await this.deleteKeys([normalizedKey])
     await this.publishInvalidation({
       scope: 'key',
@@ -313,7 +336,9 @@ export class CacheStack extends EventEmitter {
   }
 
   async clear(): Promise<void> {
+    this.assertActive('clear')
     await this.startup
+    this.assertActive('clear')
     await Promise.all(this.layers.map((layer) => layer.clear()))
     await this.tagIndex.clear()
     this.ttlResolver.clearProfiles()
@@ -327,28 +352,32 @@ export class CacheStack extends EventEmitter {
    * Deletes multiple keys at once. More efficient than calling `delete()` in a loop.
    */
   async mdelete(keys: string[]): Promise<void> {
+    this.assertActive('mdelete')
     if (keys.length === 0) {
       return
     }
     await this.startup
+    this.assertActive('mdelete')
     const normalizedKeys = keys.map((k) => this.validateCacheKey(k))
-    await this.deleteKeys(normalizedKeys)
+    const cacheKeys = normalizedKeys.map((key) => this.qualifyKey(key))
+    await this.deleteKeys(cacheKeys)
     await this.publishInvalidation({
       scope: 'keys',
-      keys: normalizedKeys,
+      keys: cacheKeys,
       sourceId: this.instanceId,
       operation: 'delete'
     })
   }
 
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
+    this.assertActive('mget')
     if (entries.length === 0) {
       return []
     }
 
     const normalizedEntries = entries.map((entry) => ({
       ...entry,
-      key: this.validateCacheKey(entry.key)
+      key: this.qualifyKey(this.validateCacheKey(entry.key))
     }))
     normalizedEntries.forEach((entry) => this.validateWriteOptions(entry.options))
     const canFastPath = normalizedEntries.every((entry) => entry.fetch === undefined && entry.options === undefined)
@@ -386,6 +415,7 @@ export class CacheStack extends EventEmitter {
     }
 
     await this.startup
+    this.assertActive('mget')
     const pending = new Set<string>()
     const indexesByKey = new Map<string, number[]>()
     const resultsByKey = new Map<string, T | null>()
@@ -444,16 +474,19 @@ export class CacheStack extends EventEmitter {
   }
 
   async mset<T>(entries: CacheMSetEntry<T>[]): Promise<void> {
+    this.assertActive('mset')
     const normalizedEntries = entries.map((entry) => ({
       ...entry,
-      key: this.validateCacheKey(entry.key)
+      key: this.qualifyKey(this.validateCacheKey(entry.key))
     }))
     normalizedEntries.forEach((entry) => this.validateWriteOptions(entry.options))
-
-    await Promise.all(normalizedEntries.map((entry) => this.set(entry.key, entry.value, entry.options)))
+    await this.startup
+    this.assertActive('mset')
+    await this.writeBatch(normalizedEntries)
   }
 
   async warm(entries: CacheWarmEntry[], options: CacheWarmOptions = {}): Promise<void> {
+    this.assertActive('warm')
     const concurrency = Math.max(1, options.concurrency ?? 4)
     const total = entries.length
     let completed = 0
@@ -513,15 +546,49 @@ export class CacheStack extends EventEmitter {
   }
 
   async invalidateByTag(tag: string): Promise<void> {
+    this.assertActive('invalidateByTag')
     await this.startup
+    this.assertActive('invalidateByTag')
     const keys = await this.tagIndex.keysForTag(tag)
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
 
-  async invalidateByPattern(pattern: string): Promise<void> {
+  async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
+    this.assertActive('invalidateByTags')
+    if (tags.length === 0) {
+      return
+    }
+
     await this.startup
-    const keys = await this.tagIndex.matchPattern(pattern)
+    this.assertActive('invalidateByTags')
+    const keysByTag = await Promise.all(tags.map((tag) => this.tagIndex.keysForTag(tag)))
+    const keys =
+      mode === 'all'
+        ? this.intersectKeys(keysByTag)
+        : [...new Set(keysByTag.flatMap((entries) => entries))]
+
+    await this.deleteKeys(keys)
+    await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
+  }
+
+  async invalidateByPattern(pattern: string): Promise<void> {
+    this.assertActive('invalidateByPattern')
+    await this.startup
+    this.assertActive('invalidateByPattern')
+    const keys = await this.tagIndex.matchPattern(this.qualifyPattern(pattern))
+    await this.deleteKeys(keys)
+    await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
+  }
+
+  async invalidateByPrefix(prefix: string): Promise<void> {
+    this.assertActive('invalidateByPrefix')
+    await this.startup
+    this.assertActive('invalidateByPrefix')
+    const qualifiedPrefix = this.qualifyKey(this.validateCacheKey(prefix))
+    const keys = this.tagIndex.keysForPrefix
+      ? await this.tagIndex.keysForPrefix(qualifiedPrefix)
+      : await this.tagIndex.matchPattern(`${qualifiedPrefix}*`)
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -553,14 +620,48 @@ export class CacheStack extends EventEmitter {
     return this.metricsCollector.hitRate()
   }
 
+  async healthCheck(): Promise<CacheHealthCheckResult[]> {
+    await this.startup
+
+    return Promise.all(
+      this.layers.map(async (layer) => {
+        const startedAt = performance.now()
+        try {
+          const healthy = layer.ping ? await layer.ping() : true
+          return {
+            layer: layer.name,
+            healthy,
+            latencyMs: performance.now() - startedAt
+          }
+        } catch (error) {
+          return {
+            layer: layer.name,
+            healthy: false,
+            latencyMs: performance.now() - startedAt,
+            error: this.formatError(error)
+          }
+        }
+      })
+    )
+  }
+
+  bumpGeneration(nextGeneration?: number): number {
+    const current = this.currentGeneration ?? 0
+    this.currentGeneration = nextGeneration ?? current + 1
+    return this.currentGeneration
+  }
+
   /**
    * Returns detailed metadata about a single cache key: which layers contain it,
    * remaining fresh/stale/error TTLs, and associated tags.
    * Returns `null` if the key does not exist in any layer.
    */
   async inspect(key: string): Promise<CacheInspectResult | null> {
-    const normalizedKey = this.validateCacheKey(key)
+    this.assertActive('inspect')
+    const userKey = this.validateCacheKey(key)
+    const normalizedKey = this.qualifyKey(userKey)
     await this.startup
+    this.assertActive('inspect')
 
     const foundInLayers: string[] = []
     let freshTtlSeconds: number | null = null
@@ -609,11 +710,13 @@ export class CacheStack extends EventEmitter {
 
     const tags = await this.getTagsForKey(normalizedKey)
 
-    return { key: normalizedKey, foundInLayers, freshTtlSeconds, staleTtlSeconds, errorTtlSeconds, isStale, tags }
+    return { key: userKey, foundInLayers, freshTtlSeconds, staleTtlSeconds, errorTtlSeconds, isStale, tags }
   }
 
   async exportState(): Promise<CacheSnapshotEntry[]> {
+    this.assertActive('exportState')
     await this.startup
+    this.assertActive('exportState')
     const exported = new Map<string, CacheSnapshotEntry>()
 
     for (const layer of this.layers) {
@@ -623,7 +726,8 @@ export class CacheStack extends EventEmitter {
 
       const keys = await layer.keys()
       for (const key of keys) {
-        if (exported.has(key)) {
+        const exportedKey = this.stripQualifiedKey(key)
+        if (exported.has(exportedKey)) {
           continue
         }
 
@@ -632,8 +736,8 @@ export class CacheStack extends EventEmitter {
           continue
         }
 
-        exported.set(key, {
-          key,
+        exported.set(exportedKey, {
+          key: exportedKey,
           value: stored,
           ttl: remainingStoredTtlSeconds(stored)
         })
@@ -644,21 +748,28 @@ export class CacheStack extends EventEmitter {
   }
 
   async importState(entries: CacheSnapshotEntry[]): Promise<void> {
+    this.assertActive('importState')
     await this.startup
+    this.assertActive('importState')
     await Promise.all(
       entries.map(async (entry) => {
-        await Promise.all(this.layers.map((layer) => layer.set(entry.key, entry.value, entry.ttl)))
-        await this.tagIndex.touch(entry.key)
+        const qualifiedKey = this.qualifyKey(entry.key)
+        await Promise.all(this.layers.map((layer) => layer.set(qualifiedKey, entry.value, entry.ttl)))
+        await this.tagIndex.touch(qualifiedKey)
       })
     )
   }
 
   async persistToFile(filePath: string): Promise<void> {
+    this.assertActive('persistToFile')
     const snapshot = await this.exportState()
+    const { promises: fs } = await import('node:fs')
     await fs.writeFile(filePath, JSON.stringify(snapshot, null, 2), 'utf8')
   }
 
   async restoreFromFile(filePath: string): Promise<void> {
+    this.assertActive('restoreFromFile')
+    const { promises: fs } = await import('node:fs')
     const raw = await fs.readFile(filePath, 'utf8')
     let parsed: unknown
     try {
@@ -684,7 +795,13 @@ export class CacheStack extends EventEmitter {
       this.disconnectPromise = (async () => {
         await this.startup
         await this.unsubscribeInvalidation?.()
+        await this.flushWriteBehindQueue()
         await Promise.allSettled([...this.backgroundRefreshes.values()])
+        if (this.writeBehindTimer) {
+          clearInterval(this.writeBehindTimer)
+          this.writeBehindTimer = undefined
+        }
+        await Promise.allSettled(this.layers.map((layer) => layer.dispose?.() ?? Promise.resolve()))
       })()
     }
 
@@ -768,7 +885,7 @@ export class CacheStack extends EventEmitter {
     let fetched: T
 
     try {
-      fetched = await fetcher()
+      fetched = await this.fetchRateLimiter.schedule(options?.fetcherRateLimit ?? this.options.fetcherRateLimit, fetcher)
       this.circuitBreakerManager.recordSuccess(key)
       this.logger.debug?.('fetch', { key, durationMs: Date.now() - fetchStart })
     } catch (error) {
@@ -812,6 +929,71 @@ export class CacheStack extends EventEmitter {
     this.emit('set', { key, kind: kind as string, tags: options?.tags })
     if (this.shouldBroadcastL1Invalidation()) {
       await this.publishInvalidation({ scope: 'key', keys: [key], sourceId: this.instanceId, operation: 'write' })
+    }
+  }
+
+  private async writeBatch(entries: Array<{ key: string; value: unknown; options?: CacheWriteOptions }>): Promise<void> {
+    const now = Date.now()
+    const entriesByLayer = new Map<CacheLayer, CacheLayerSetManyEntry[]>()
+    const immediateOperations: Array<() => Promise<void>> = []
+    const deferredOperations: Array<() => Promise<void>> = []
+
+    for (const entry of entries) {
+      for (const layer of this.layers) {
+        if (this.shouldSkipLayer(layer)) {
+          continue
+        }
+
+        const layerEntry = this.buildLayerSetEntry(layer, entry.key, 'value', entry.value, entry.options, now)
+        const bucket = entriesByLayer.get(layer) ?? []
+        bucket.push(layerEntry)
+        entriesByLayer.set(layer, bucket)
+      }
+    }
+
+    for (const [layer, layerEntries] of entriesByLayer.entries()) {
+      const operation = async () => {
+        try {
+          if (layer.setMany) {
+            await layer.setMany(layerEntries)
+            return
+          }
+
+          await Promise.all(layerEntries.map((entry) => layer.set(entry.key, entry.value, entry.ttl)))
+        } catch (error) {
+          await this.handleLayerFailure(layer, 'write', error)
+        }
+      }
+
+      if (this.shouldWriteBehind(layer)) {
+        deferredOperations.push(operation)
+      } else {
+        immediateOperations.push(operation)
+      }
+    }
+
+    await this.executeLayerOperations(immediateOperations, { key: 'batch', action: 'mset' })
+    deferredOperations.forEach((operation) => this.enqueueWriteBehind(operation))
+
+    for (const entry of entries) {
+      if (entry.options?.tags) {
+        await this.tagIndex.track(entry.key, entry.options.tags)
+      } else {
+        await this.tagIndex.touch(entry.key)
+      }
+
+      this.metricsCollector.increment('sets')
+      this.logger.debug?.('set', { key: entry.key, kind: 'value', tags: entry.options?.tags })
+      this.emit('set', { key: entry.key, kind: 'value', tags: entry.options?.tags })
+    }
+
+    if (this.shouldBroadcastL1Invalidation()) {
+      await this.publishInvalidation({
+        scope: 'keys',
+        keys: entries.map((entry) => entry.key),
+        sourceId: this.instanceId,
+        operation: 'write'
+      })
     }
   }
 
@@ -923,35 +1105,32 @@ export class CacheStack extends EventEmitter {
     options?: CacheWriteOptions
   ): Promise<void> {
     const now = Date.now()
-    const operations = this.layers.map((layer) => async () => {
-      if (this.shouldSkipLayer(layer)) {
-        return
+    const immediateOperations: Array<() => Promise<void>> = []
+    const deferredOperations: Array<() => Promise<void>> = []
+
+    for (const layer of this.layers) {
+      const operation = async () => {
+        if (this.shouldSkipLayer(layer)) {
+          return
+        }
+
+        const entry = this.buildLayerSetEntry(layer, key, kind, value, options, now)
+        try {
+          await layer.set(entry.key, entry.value, entry.ttl)
+        } catch (error) {
+          await this.handleLayerFailure(layer, 'write', error)
+        }
       }
 
-      const freshTtl = this.resolveFreshTtl(key, layer.name, kind, options, layer.defaultTtl)
-      const staleWhileRevalidate = this.resolveLayerSeconds(
-        layer.name,
-        options?.staleWhileRevalidate,
-        this.options.staleWhileRevalidate
-      )
-      const staleIfError = this.resolveLayerSeconds(layer.name, options?.staleIfError, this.options.staleIfError)
-      const payload = createStoredValueEnvelope({
-        kind,
-        value,
-        freshTtlSeconds: freshTtl,
-        staleWhileRevalidateSeconds: staleWhileRevalidate,
-        staleIfErrorSeconds: staleIfError,
-        now
-      })
-      const ttl = remainingStoredTtlSeconds(payload, now) ?? freshTtl
-      try {
-        await layer.set(key, payload, ttl)
-      } catch (error) {
-        await this.handleLayerFailure(layer, 'write', error)
+      if (this.shouldWriteBehind(layer)) {
+        deferredOperations.push(operation)
+      } else {
+        immediateOperations.push(operation)
       }
-    })
+    }
 
-    await this.executeLayerOperations(operations, { key, action: kind === 'empty' ? 'negative-set' : 'set' })
+    await this.executeLayerOperations(immediateOperations, { key, action: kind === 'empty' ? 'negative-set' : 'set' })
+    deferredOperations.forEach((operation) => this.enqueueWriteBehind(operation))
   }
 
   private async executeLayerOperations(
@@ -988,9 +1167,19 @@ export class CacheStack extends EventEmitter {
     layerName: string,
     kind: CacheWriteKind,
     options: CacheWriteOptions | undefined,
-    fallbackTtl: number | undefined
+    fallbackTtl: number | undefined,
+    value: unknown
   ): number | undefined {
-    return this.ttlResolver.resolveFreshTtl(key, layerName, kind, options, fallbackTtl, this.options.negativeTtl)
+    return this.ttlResolver.resolveFreshTtl(
+      key,
+      layerName,
+      kind,
+      options,
+      fallbackTtl,
+      this.options.negativeTtl,
+      undefined,
+      value
+    )
   }
 
   private resolveLayerSeconds(
@@ -1112,6 +1301,124 @@ export class CacheStack extends EventEmitter {
     return this.options.broadcastL1Invalidation ?? this.options.publishSetInvalidation ?? true
   }
 
+  private initializeWriteBehind(options: CacheWriteBehindOptions | undefined): void {
+    if (this.options.writeStrategy !== 'write-behind') {
+      return
+    }
+
+    const flushIntervalMs = options?.flushIntervalMs
+    if (!flushIntervalMs || flushIntervalMs <= 0) {
+      return
+    }
+
+    this.writeBehindTimer = setInterval(() => {
+      void this.flushWriteBehindQueue()
+    }, flushIntervalMs)
+    this.writeBehindTimer.unref?.()
+  }
+
+  private shouldWriteBehind(layer: CacheLayer): boolean {
+    return this.options.writeStrategy === 'write-behind' && !layer.isLocal
+  }
+
+  private enqueueWriteBehind(operation: () => Promise<void>): void {
+    this.writeBehindQueue.push(operation)
+    const batchSize = this.options.writeBehind?.batchSize
+    if (batchSize && this.writeBehindQueue.length >= batchSize) {
+      void this.flushWriteBehindQueue()
+    }
+  }
+
+  private async flushWriteBehindQueue(): Promise<void> {
+    if (this.writeBehindFlushPromise || this.writeBehindQueue.length === 0) {
+      await this.writeBehindFlushPromise
+      return
+    }
+
+    const batchSize = this.options.writeBehind?.batchSize ?? this.writeBehindQueue.length
+    const batch = this.writeBehindQueue.splice(0, batchSize)
+    this.writeBehindFlushPromise = (async () => {
+      await Promise.allSettled(batch.map((operation) => operation()))
+    })()
+
+    await this.writeBehindFlushPromise
+    this.writeBehindFlushPromise = undefined
+
+    if (this.writeBehindQueue.length > 0) {
+      await this.flushWriteBehindQueue()
+    }
+  }
+
+  private buildLayerSetEntry(
+    layer: CacheLayer,
+    key: string,
+    kind: CacheWriteKind,
+    value: unknown,
+    options: CacheWriteOptions | undefined,
+    now: number
+  ): CacheLayerSetManyEntry {
+    const freshTtl = this.resolveFreshTtl(key, layer.name, kind, options, layer.defaultTtl, value)
+    const staleWhileRevalidate = this.resolveLayerSeconds(
+      layer.name,
+      options?.staleWhileRevalidate,
+      this.options.staleWhileRevalidate
+    )
+    const staleIfError = this.resolveLayerSeconds(layer.name, options?.staleIfError, this.options.staleIfError)
+    const payload = createStoredValueEnvelope({
+      kind,
+      value,
+      freshTtlSeconds: freshTtl,
+      staleWhileRevalidateSeconds: staleWhileRevalidate,
+      staleIfErrorSeconds: staleIfError,
+      now
+    })
+    const ttl = remainingStoredTtlSeconds(payload, now) ?? freshTtl
+    return {
+      key,
+      value: payload,
+      ttl
+    }
+  }
+
+  private intersectKeys(groups: string[][]): string[] {
+    if (groups.length === 0) {
+      return []
+    }
+
+    const [firstGroup, ...rest] = groups
+    if (!firstGroup) {
+      return []
+    }
+
+    return [...new Set(firstGroup)].filter((key) => rest.every((group) => group.includes(key)))
+  }
+
+  private qualifyKey(key: string): string {
+    const prefix = this.generationPrefix()
+    return prefix ? `${prefix}${key}` : key
+  }
+
+  private qualifyPattern(pattern: string): string {
+    const prefix = this.generationPrefix()
+    return prefix ? `${prefix}${pattern}` : pattern
+  }
+
+  private stripQualifiedKey(key: string): string {
+    const prefix = this.generationPrefix()
+    if (!prefix || !key.startsWith(prefix)) {
+      return key
+    }
+    return key.slice(prefix.length)
+  }
+
+  private generationPrefix(): string {
+    if (this.currentGeneration === undefined) {
+      return ''
+    }
+
+    return `v${this.currentGeneration}:`
+  }
+
   private async deleteKeysFromLayers(layers: CacheLayer[], keys: string[]): Promise<void> {
     await Promise.all(
       layers.map(async (layer) => {
@@ -1164,6 +1471,9 @@ export class CacheStack extends EventEmitter {
     this.validatePositiveNumber('singleFlightPollMs', this.options.singleFlightPollMs)
     this.validateAdaptiveTtlOptions(this.options.adaptiveTtl)
     this.validateCircuitBreakerOptions(this.options.circuitBreaker)
+    if (this.options.generation !== undefined) {
+      this.validateNonNegativeNumber('generation', this.options.generation)
+    }
   }
 
   private validateWriteOptions(options: CacheWriteOptions | undefined): void {
@@ -1177,6 +1487,7 @@ export class CacheStack extends EventEmitter {
     this.validateLayerNumberOption('options.staleIfError', options.staleIfError)
     this.validateLayerNumberOption('options.ttlJitter', options.ttlJitter)
     this.validateLayerNumberOption('options.refreshAhead', options.refreshAhead)
+    this.validateTtlPolicy('options.ttlPolicy', options.ttlPolicy)
     this.validateAdaptiveTtlOptions(options.adaptiveTtl)
     this.validateCircuitBreakerOptions(options.circuitBreaker)
   }
@@ -1230,6 +1541,25 @@ export class CacheStack extends EventEmitter {
     }
 
     return key
+  }
+
+  private validateTtlPolicy(name: string, policy: CacheTtlPolicy | undefined): void {
+    if (!policy || typeof policy === 'function' || policy === 'until-midnight' || policy === 'next-hour') {
+      return
+    }
+
+    if ('alignTo' in policy) {
+      this.validatePositiveNumber(`${name}.alignTo`, policy.alignTo)
+      return
+    }
+
+    throw new Error(`${name} is invalid.`)
+  }
+
+  private assertActive(operation: string): void {
+    if (this.isDisconnecting) {
+      throw new Error(`CacheStack is disconnecting; cannot perform ${operation}.`)
+    }
   }
 
   private serializeOptions(options: CacheGetOptions | undefined): string {
@@ -1374,4 +1704,8 @@ export class CacheStack extends EventEmitter {
 
     return value
   }
+}
+
+function createInstanceId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `layercache-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }

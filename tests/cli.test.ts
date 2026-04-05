@@ -7,6 +7,8 @@ vi.mock('ioredis', () => {
       connect: async () => undefined,
       scan: async () => ['0', ['key:1', 'key:2']],
       del: async () => 2,
+      getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
+      ttl: async () => 42,
       disconnect: () => undefined,
       smembers: async () => [],
       pipeline: () => ({ exec: async () => [] })
@@ -97,5 +99,13 @@ describe('CLI — main()', () => {
     const output = stdoutOutput.join('')
     expect(output).toContain('deletedKeys')
     expect(output).toContain('user:1')
+  })
+
+  it('inspect command outputs key metadata', async () => {
+    const { main } = await import('../src/cli')
+    await main(['inspect', '--redis', 'redis://localhost:6379', '--key', 'user:1'])
+    const output = stdoutOutput.join('')
+    expect(output).toContain('"key": "user:1"')
+    expect(output).toContain('"ttlSeconds": 42')
   })
 })

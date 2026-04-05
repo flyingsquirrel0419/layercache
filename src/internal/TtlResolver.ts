@@ -1,4 +1,4 @@
-import type { CacheAdaptiveTtlOptions, CacheWriteOptions, LayerTtlMap } from '../types'
+import type { CacheAdaptiveTtlOptions, CacheTtlPolicy, CacheWriteOptions, LayerTtlMap } from '../types'
 
 interface AccessProfile {
   hits: number
@@ -44,17 +44,20 @@ export class TtlResolver {
     options: CacheWriteOptions | undefined,
     fallbackTtl: number | undefined,
     globalNegativeTtl: number | LayerTtlMap | undefined,
-    globalTtl?: number | LayerTtlMap
+    globalTtl?: number | LayerTtlMap,
+    value?: unknown
   ): number | undefined {
+    const policyTtl = kind === 'value' ? this.resolvePolicyTtl(key, value, options?.ttlPolicy) : undefined
     const baseTtl =
       kind === 'empty'
         ? this.resolveLayerSeconds(
             layerName,
             options?.negativeTtl,
             globalNegativeTtl,
-            this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, fallbackTtl) ?? DEFAULT_NEGATIVE_TTL_SECONDS
+            this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, policyTtl ?? fallbackTtl) ??
+              DEFAULT_NEGATIVE_TTL_SECONDS
           )
-        : this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, fallbackTtl)
+        : this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, policyTtl ?? fallbackTtl)
 
     const adaptiveTtl = this.applyAdaptiveTtl(key, layerName, baseTtl, options?.adaptiveTtl)
     const jitter = this.resolveLayerSeconds(layerName, options?.ttlJitter, undefined)
@@ -112,6 +115,34 @@ export class TtlResolver {
 
     const delta = (Math.random() * 2 - 1) * jitter
     return Math.max(1, Math.round(ttl + delta))
+  }
+
+  private resolvePolicyTtl(key: string, value: unknown, policy: CacheTtlPolicy | undefined): number | undefined {
+    if (!policy) {
+      return undefined
+    }
+
+    if (typeof policy === 'function') {
+      return policy({ key, value })
+    }
+
+    const now = new Date()
+    if (policy === 'until-midnight') {
+      const nextMidnight = new Date(now)
+      nextMidnight.setHours(24, 0, 0, 0)
+      return Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1_000))
+    }
+
+    if (policy === 'next-hour') {
+      const nextHour = new Date(now)
+      nextHour.setMinutes(60, 0, 0)
+      return Math.max(1, Math.ceil((nextHour.getTime() - now.getTime()) / 1_000))
+    }
+
+    const alignToSeconds = policy.alignTo
+    const currentSeconds = Math.floor(Date.now() / 1_000)
+    const nextBoundary = Math.ceil((currentSeconds + 1) / alignToSeconds) * alignToSeconds
+    return Math.max(1, nextBoundary - currentSeconds)
   }
 
   private readLayerNumber(layerName: string, value: number | LayerTtlMap): number | undefined {

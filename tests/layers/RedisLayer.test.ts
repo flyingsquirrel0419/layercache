@@ -1,6 +1,7 @@
 import Redis from 'ioredis-mock'
 import { describe, expect, it } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
+import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
 
 describe('RedisLayer', () => {
@@ -66,5 +67,20 @@ describe('RedisLayer', () => {
 
     await expect(prefixedLayer.get('user:1')).resolves.toBeNull()
     await expect(otherLayer.get('user:1')).resolves.toEqual({ id: 2 })
+  })
+
+  it('can deserialize with fallback serializers and rewrite using the primary serializer', async () => {
+    const client = new Redis()
+    const json = new JsonSerializer()
+    const msgpack = new MsgpackSerializer()
+    const layer = new RedisLayer({ client, serializer: [msgpack, json] })
+
+    await client.set('legacy', json.serialize({ legacy: true }) as string)
+
+    await expect(layer.get('legacy')).resolves.toEqual({ legacy: true })
+
+    const raw = await client.getBuffer('legacy')
+    expect(raw).not.toBeNull()
+    expect(() => msgpack.deserialize(raw as Buffer)).not.toThrow()
   })
 })

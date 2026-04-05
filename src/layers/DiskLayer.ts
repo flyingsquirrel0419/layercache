@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
-import type { CacheLayer, CacheSerializer } from '../types'
+import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
 
 interface DiskLayerOptions {
   directory: string
@@ -44,6 +44,7 @@ export class DiskLayer implements CacheLayer {
   private readonly directory: string
   private readonly serializer: CacheSerializer
   private readonly maxFiles: number | undefined
+  private writeQueue = Promise.resolve()
 
   constructor(options: DiskLayerOptions) {
     this.directory = options.directory
@@ -83,17 +84,32 @@ export class DiskLayer implements CacheLayer {
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
-    await fs.mkdir(this.directory, { recursive: true })
-    const entry: DiskEntry = {
-      key,
-      value,
-      expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null
-    }
-    const payload = this.serializer.serialize(entry)
-    await fs.writeFile(this.keyToPath(key), payload)
+    await this.enqueueWrite(async () => {
+      await fs.mkdir(this.directory, { recursive: true })
+      const entry: DiskEntry = {
+        key,
+        value,
+        expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null
+      }
+      const payload = this.serializer.serialize(entry)
+      const targetPath = this.keyToPath(key)
+      const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+      await fs.writeFile(tempPath, payload)
+      await fs.rename(tempPath, targetPath)
 
-    if (this.maxFiles !== undefined) {
-      await this.enforceMaxFiles()
+      if (this.maxFiles !== undefined) {
+        await this.enforceMaxFiles()
+      }
+    })
+  }
+
+  async getMany<T>(keys: string[]): Promise<Array<T | null>> {
+    return Promise.all(keys.map((key) => this.getEntry<T>(key)))
+  }
+
+  async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
+    for (const entry of entries) {
+      await this.set(entry.key, entry.value, entry.ttl)
     }
   }
 
@@ -130,24 +146,28 @@ export class DiskLayer implements CacheLayer {
   }
 
   async delete(key: string): Promise<void> {
-    await this.safeDelete(this.keyToPath(key))
+    await this.enqueueWrite(() => this.safeDelete(this.keyToPath(key)))
   }
 
   async deleteMany(keys: string[]): Promise<void> {
-    await Promise.all(keys.map((key) => this.delete(key)))
+    await this.enqueueWrite(async () => {
+      await Promise.all(keys.map((key) => this.safeDelete(this.keyToPath(key))))
+    })
   }
 
   async clear(): Promise<void> {
-    let entries: string[]
-    try {
-      entries = await fs.readdir(this.directory)
-    } catch {
-      return
-    }
+    await this.enqueueWrite(async () => {
+      let entries: string[]
+      try {
+        entries = await fs.readdir(this.directory)
+      } catch {
+        return
+      }
 
-    await Promise.all(
-      entries.filter((name) => name.endsWith('.lc')).map((name) => this.safeDelete(join(this.directory, name)))
-    )
+      await Promise.all(
+        entries.filter((name) => name.endsWith('.lc')).map((name) => this.safeDelete(join(this.directory, name)))
+      )
+    })
   }
 
   /**
@@ -200,6 +220,17 @@ export class DiskLayer implements CacheLayer {
     return keys.length
   }
 
+  async ping(): Promise<boolean> {
+    try {
+      await fs.mkdir(this.directory, { recursive: true })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async dispose(): Promise<void> {}
+
   private keyToPath(key: string): string {
     // Hash the key to produce a safe filename
     const hash = createHash('sha256').update(key).digest('hex')
@@ -212,6 +243,12 @@ export class DiskLayer implements CacheLayer {
     } catch {
       // File already gone — not an error
     }
+  }
+
+  private enqueueWrite(operation: () => Promise<void>): Promise<void> {
+    const next = this.writeQueue.then(operation, operation)
+    this.writeQueue = next.catch(() => undefined)
+    return next
   }
 
   /**

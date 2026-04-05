@@ -216,4 +216,13 @@ describe('CacheStack', () => {
 
     await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
   })
+
+  it('rejects operations after disconnect begins', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await cache.disconnect()
+
+    await expect(cache.get('user:1')).rejects.toThrow(/disconnecting/i)
+    await expect(cache.set('user:1', { id: 1 })).rejects.toThrow(/disconnecting/i)
+  })
 })

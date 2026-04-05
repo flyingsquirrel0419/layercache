@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import { createCachedMethodDecorator } from '../../src/decorators/createCachedMethodDecorator'
 import { createCacheStatsHandler } from '../../src/http/createCacheStatsHandler'
+import { createHonoCacheMiddleware } from '../../src/integrations/hono'
+import { createOpenTelemetryPlugin } from '../../src/integrations/opentelemetry'
 import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { RedisLayer } from '../../src/layers/RedisLayer'
@@ -56,6 +58,7 @@ describe('growth features', () => {
 
     await expect(namespace.get('top')).resolves.toBeNull()
     await expect(cache.get('other:key')).resolves.toBe(1)
+    expect(namespace.getMetrics().sets).toBeGreaterThanOrEqual(1)
   })
 
   it('supports snapshots on disk and export/import in memory', async () => {
@@ -228,6 +231,84 @@ describe('growth features', () => {
     await expect(service.loadUser(1)).resolves.toEqual({ id: 1 })
     expect(executions).toBe(1)
     expect(wrapSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('supports generation-based invalidation and prefix/tag batch invalidation', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { generation: 1 })
+
+    await cache.set('user:1', { id: 1 }, { tags: ['users', 'tenant:a'] })
+    await cache.set('user:2', { id: 2 }, { tags: ['users'] })
+    await cache.set('post:1', { id: 1 }, { tags: ['posts', 'tenant:a'] })
+
+    await cache.invalidateByTags(['users', 'tenant:a'], 'all')
+    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:2')).resolves.toEqual({ id: 2 })
+
+    await cache.invalidateByPrefix('post:')
+    await expect(cache.get('post:1')).resolves.toBeNull()
+
+    cache.bumpGeneration()
+    await expect(cache.get('user:2')).resolves.toBeNull()
+  })
+
+  it('supports health checks and ttl policies', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.set('aligned', { ok: true }, { ttlPolicy: { alignTo: 60 } })
+
+    const ttl = await cache.ttl('aligned')
+    expect(ttl).toBeGreaterThan(0)
+
+    const health = await cache.healthCheck()
+    expect(health).toEqual([
+      expect.objectContaining({
+        layer: 'memory',
+        healthy: true
+      })
+    ])
+  })
+
+  it('provides hono middleware and an OpenTelemetry plugin', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const spans: Array<{ name: string; ended: boolean }> = []
+    const tracer = {
+      startSpan: (name: string) => {
+        const span = { name, ended: false }
+        spans.push(span)
+        return {
+          setAttribute: () => undefined,
+          end: () => {
+            span.ended = true
+          }
+        }
+      }
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    await cache.set('otel:key', { ok: true })
+    await cache.get('otel:key')
+    plugin.uninstall()
+
+    const middleware = createHonoCacheMiddleware(cache)
+    const headers: Record<string, string> = {}
+    let responseBody: unknown
+    await middleware(
+      {
+        req: { method: 'GET', path: '/users' },
+        header: (name, value) => {
+          headers[name] = value
+        },
+        json: (body) => {
+          responseBody = body
+          return body
+        }
+      },
+      async () => {
+        responseBody = { ok: true }
+      }
+    )
+
+    expect(spans.some((span) => span.name === 'layercache.get' && span.ended)).toBe(true)
+    expect(responseBody).toEqual({ ok: true })
   })
 
   it('cleans access profiles on delete and clear', async () => {

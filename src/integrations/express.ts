@@ -49,37 +49,41 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
   const allowedMethods = new Set((options.methods ?? ['GET']).map((m) => m.toUpperCase()))
 
   return async (req: ExpressLikeRequest, res: ExpressLikeResponse, next: NextFunction): Promise<void> => {
-    const method = (req.method ?? 'GET').toUpperCase()
-    if (!allowedMethods.has(method)) {
+    try {
+      const method = (req.method ?? 'GET').toUpperCase()
+      if (!allowedMethods.has(method)) {
+        next()
+        return
+      }
+
+      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${req.originalUrl ?? req.url ?? '/'}`
+
+      const cached = await cache.get<unknown>(key, undefined, options)
+      if (cached !== null) {
+        res.setHeader?.('content-type', 'application/json; charset=utf-8')
+        res.setHeader?.('x-cache', 'HIT')
+        if (res.json) {
+          res.json(cached)
+        } else {
+          res.end?.(JSON.stringify(cached))
+        }
+        return
+      }
+
+      // Intercept res.json to capture the response body for caching
+      const originalJson = res.json?.bind(res)
+      if (originalJson) {
+        res.json = (body: unknown) => {
+          res.setHeader?.('x-cache', 'MISS')
+          // Fire and forget — don't delay the response
+          void cache.set(key, body, options)
+          return originalJson(body)
+        }
+      }
+
       next()
-      return
+    } catch (error) {
+      next(error)
     }
-
-    const key = options.keyResolver ? options.keyResolver(req) : `${method}:${req.originalUrl ?? req.url ?? '/'}`
-
-    const cached = await cache.get<unknown>(key, undefined, options)
-    if (cached !== null) {
-      res.setHeader?.('content-type', 'application/json; charset=utf-8')
-      res.setHeader?.('x-cache', 'HIT')
-      if (res.json) {
-        res.json(cached)
-      } else {
-        res.end?.(JSON.stringify(cached))
-      }
-      return
-    }
-
-    // Intercept res.json to capture the response body for caching
-    const originalJson = res.json?.bind(res)
-    if (originalJson) {
-      res.json = (body: unknown) => {
-        res.setHeader?.('x-cache', 'MISS')
-        // Fire and forget — don't delay the response
-        void cache.set(key, body, options)
-        return originalJson(body)
-      }
-    }
-
-    next()
   }
 }
