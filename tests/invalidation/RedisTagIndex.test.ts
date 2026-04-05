@@ -13,4 +13,14 @@ describe('RedisTagIndex', () => {
 
     await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
   })
+
+  it('filters prefix scan results with startsWith for literal safety', async () => {
+    const redis = new Redis()
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:safe' })
+
+    await index.touch('user[1]:a')
+    await index.touch('user1:a')
+
+    await expect(index.keysForPrefix('user[1]:')).resolves.toEqual(['user[1]:a'])
+  })
 })

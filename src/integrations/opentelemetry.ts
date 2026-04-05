@@ -12,6 +12,13 @@ interface OpenTelemetryTracer {
 
 type AsyncMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => Promise<TResult>
 
+/**
+ * Lightweight OpenTelemetry instrumentation for a CacheStack instance.
+ *
+ * Note: this implementation wraps instance methods directly. Avoid stacking
+ * multiple OpenTelemetry plugins on the same CacheStack at the same time,
+ * because each plugin replaces and later restores those methods.
+ */
 export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemetryTracer) {
   const originals = {
     get: cache.get.bind(cache),

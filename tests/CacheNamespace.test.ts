@@ -101,6 +101,15 @@ describe('CacheNamespace', () => {
     const result = await ns.getOrSet('key', async () => 42)
     expect(result).toBe(42)
     expect(await ns.get('key')).toBe(42)
+    expect(ns.getMetrics().sets).toBeGreaterThanOrEqual(1)
+  })
+
+  it('getOrThrow participates in namespace metrics', async () => {
+    const ns = makeCache().namespace('strict')
+    await ns.set('key', 1)
+
+    await expect(ns.getOrThrow('key')).resolves.toBe(1)
+    expect(ns.getMetrics().hits).toBeGreaterThanOrEqual(1)
   })
 
   it('getMetrics proxies to the underlying stack', () => {

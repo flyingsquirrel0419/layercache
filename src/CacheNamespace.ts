@@ -1,3 +1,4 @@
+import { Mutex } from 'async-mutex'
 import type { CacheStack } from './CacheStack'
 import type {
   CacheGetOptions,
@@ -13,6 +14,7 @@ import type {
 } from './types'
 
 export class CacheNamespace {
+  private static readonly metricsMutex = new Mutex()
   private metrics: CacheMetricsSnapshot = emptyMetrics()
 
   constructor(
@@ -25,14 +27,14 @@ export class CacheNamespace {
   }
 
   async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
-    return this.cache.getOrSet(this.qualify(key), fetcher, options)
+    return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, options))
   }
 
   /**
    * Like `get()`, but throws `CacheMissError` instead of returning `null`.
    */
   async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
-    return this.cache.getOrThrow(this.qualify(key), fetcher, options)
+    return this.trackMetrics(() => this.cache.getOrThrow(this.qualify(key), fetcher, options))
   }
 
   async has(key: string): Promise<boolean> {
@@ -56,7 +58,7 @@ export class CacheNamespace {
   }
 
   async clear(): Promise<void> {
-    await this.trackMetrics(() => this.cache.invalidateByPrefix(`${this.prefix}:`))
+    await this.trackMetrics(() => this.cache.invalidateByPrefix(this.prefix))
   }
 
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
@@ -157,11 +159,13 @@ export class CacheNamespace {
   }
 
   private async trackMetrics<T>(operation: () => Promise<T>): Promise<T> {
-    const before = this.cache.getMetrics()
-    const result = await operation()
-    const after = this.cache.getMetrics()
-    this.metrics = addMetrics(this.metrics, diffMetrics(before, after))
-    return result
+    return CacheNamespace.metricsMutex.runExclusive(async () => {
+      const before = this.cache.getMetrics()
+      const result = await operation()
+      const after = this.cache.getMetrics()
+      this.metrics = addMetrics(this.metrics, diffMetrics(before, after))
+      return result
+    })
   }
 }
 

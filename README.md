@@ -205,6 +205,8 @@ Prefer this over glob invalidation when your keys are hierarchical.
 await cache.invalidateByPrefix('user:123:') // deletes user:123:profile, user:123:posts, ...
 ```
 
+The prefix is matched as-is. You do not need to append `*`, and namespace helpers pass their namespace prefix directly.
+
 ### `cache.mget<T>(entries): Promise<Array<T | null>>`
 
 Concurrent multi-key fetch, each with its own optional fetcher.
@@ -275,6 +277,10 @@ const cache = new CacheStack([...], { generation: 1 })
 await cache.set('user:123', user)
 cache.bumpGeneration() // now reads use v2:user:123
 ```
+
+### OpenTelemetry note
+
+`createOpenTelemetryPlugin()` currently wraps a `CacheStack` instance's methods directly. Use one OpenTelemetry plugin per cache instance; if you need to compose multiple wrappers, install them in a fixed order and uninstall them in reverse order.
 
 ### `cache.warm(entries, options?)`
 

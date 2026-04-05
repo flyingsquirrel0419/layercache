@@ -68,19 +68,11 @@ export class RedisTagIndex implements CacheTagIndex {
   async keysForPrefix(prefix: string): Promise<string[]> {
     const matches: string[] = []
     let cursor = '0'
-    const pattern = `${prefix}*`
 
     do {
-      const [nextCursor, keys] = await this.client.sscan(
-        this.knownKeysKey(),
-        cursor,
-        'MATCH',
-        pattern,
-        'COUNT',
-        this.scanCount
-      )
+      const [nextCursor, keys] = await this.client.sscan(this.knownKeysKey(), cursor, 'COUNT', this.scanCount)
       cursor = nextCursor
-      matches.push(...keys)
+      matches.push(...keys.filter((key) => key.startsWith(prefix)))
     } while (cursor !== '0')
 
     return matches

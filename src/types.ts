@@ -268,6 +268,7 @@ export interface CacheRateLimitOptions {
 export interface CacheWriteBehindOptions {
   flushIntervalMs?: number
   batchSize?: number
+  maxQueueSize?: number
 }
 
 export interface CacheWarmEntry<T = unknown> {

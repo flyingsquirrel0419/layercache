@@ -167,11 +167,9 @@ export class CacheStack extends EventEmitter {
    * and no `fetcher` is provided.
    */
   async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
-    this.assertActive('get')
     const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     this.validateWriteOptions(options)
-    await this.startup
-    this.assertActive('get')
+    await this.awaitStartup('get')
 
     const hit = await this.readFromLayers<T>(normalizedKey, options, 'allow-stale')
     if (hit.found) {
@@ -246,10 +244,8 @@ export class CacheStack extends EventEmitter {
    * Returns true if the given key exists and is not expired in any layer.
    */
   async has(key: string): Promise<boolean> {
-    this.assertActive('has')
     const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
-    await this.startup
-    this.assertActive('has')
+    await this.awaitStartup('has')
 
     for (const layer of this.layers) {
       if (this.shouldSkipLayer(layer)) {
@@ -283,10 +279,8 @@ export class CacheStack extends EventEmitter {
    * that has it, or null if the key is not found / has no TTL.
    */
   async ttl(key: string): Promise<number | null> {
-    this.assertActive('ttl')
     const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
-    await this.startup
-    this.assertActive('ttl')
+    await this.awaitStartup('ttl')
 
     for (const layer of this.layers) {
       if (this.shouldSkipLayer(layer)) {
@@ -310,11 +304,9 @@ export class CacheStack extends EventEmitter {
    * Stores a value in all cache layers. Overwrites any existing value.
    */
   async set<T>(key: string, value: T, options?: CacheWriteOptions): Promise<void> {
-    this.assertActive('set')
     const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     this.validateWriteOptions(options)
-    await this.startup
-    this.assertActive('set')
+    await this.awaitStartup('set')
     await this.storeEntry(normalizedKey, 'value', value, options)
   }
 
@@ -322,10 +314,8 @@ export class CacheStack extends EventEmitter {
    * Deletes the key from all layers and publishes an invalidation message.
    */
   async delete(key: string): Promise<void> {
-    this.assertActive('delete')
     const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
-    await this.startup
-    this.assertActive('delete')
+    await this.awaitStartup('delete')
     await this.deleteKeys([normalizedKey])
     await this.publishInvalidation({
       scope: 'key',
@@ -336,9 +326,7 @@ export class CacheStack extends EventEmitter {
   }
 
   async clear(): Promise<void> {
-    this.assertActive('clear')
-    await this.startup
-    this.assertActive('clear')
+    await this.awaitStartup('clear')
     await Promise.all(this.layers.map((layer) => layer.clear()))
     await this.tagIndex.clear()
     this.ttlResolver.clearProfiles()
@@ -352,12 +340,10 @@ export class CacheStack extends EventEmitter {
    * Deletes multiple keys at once. More efficient than calling `delete()` in a loop.
    */
   async mdelete(keys: string[]): Promise<void> {
-    this.assertActive('mdelete')
     if (keys.length === 0) {
       return
     }
-    await this.startup
-    this.assertActive('mdelete')
+    await this.awaitStartup('mdelete')
     const normalizedKeys = keys.map((k) => this.validateCacheKey(k))
     const cacheKeys = normalizedKeys.map((key) => this.qualifyKey(key))
     await this.deleteKeys(cacheKeys)
@@ -414,8 +400,7 @@ export class CacheStack extends EventEmitter {
       )
     }
 
-    await this.startup
-    this.assertActive('mget')
+    await this.awaitStartup('mget')
     const pending = new Set<string>()
     const indexesByKey = new Map<string, number[]>()
     const resultsByKey = new Map<string, T | null>()
@@ -480,8 +465,7 @@ export class CacheStack extends EventEmitter {
       key: this.qualifyKey(this.validateCacheKey(entry.key))
     }))
     normalizedEntries.forEach((entry) => this.validateWriteOptions(entry.options))
-    await this.startup
-    this.assertActive('mset')
+    await this.awaitStartup('mset')
     await this.writeBatch(normalizedEntries)
   }
 
@@ -546,22 +530,18 @@ export class CacheStack extends EventEmitter {
   }
 
   async invalidateByTag(tag: string): Promise<void> {
-    this.assertActive('invalidateByTag')
-    await this.startup
-    this.assertActive('invalidateByTag')
+    await this.awaitStartup('invalidateByTag')
     const keys = await this.tagIndex.keysForTag(tag)
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
 
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
-    this.assertActive('invalidateByTags')
     if (tags.length === 0) {
       return
     }
 
-    await this.startup
-    this.assertActive('invalidateByTags')
+    await this.awaitStartup('invalidateByTags')
     const keysByTag = await Promise.all(tags.map((tag) => this.tagIndex.keysForTag(tag)))
     const keys = mode === 'all' ? this.intersectKeys(keysByTag) : [...new Set(keysByTag.flat())]
 
@@ -570,18 +550,14 @@ export class CacheStack extends EventEmitter {
   }
 
   async invalidateByPattern(pattern: string): Promise<void> {
-    this.assertActive('invalidateByPattern')
-    await this.startup
-    this.assertActive('invalidateByPattern')
+    await this.awaitStartup('invalidateByPattern')
     const keys = await this.tagIndex.matchPattern(this.qualifyPattern(pattern))
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
 
   async invalidateByPrefix(prefix: string): Promise<void> {
-    this.assertActive('invalidateByPrefix')
-    await this.startup
-    this.assertActive('invalidateByPrefix')
+    await this.awaitStartup('invalidateByPrefix')
     const qualifiedPrefix = this.qualifyKey(this.validateCacheKey(prefix))
     const keys = this.tagIndex.keysForPrefix
       ? await this.tagIndex.keysForPrefix(qualifiedPrefix)
@@ -654,11 +630,9 @@ export class CacheStack extends EventEmitter {
    * Returns `null` if the key does not exist in any layer.
    */
   async inspect(key: string): Promise<CacheInspectResult | null> {
-    this.assertActive('inspect')
     const userKey = this.validateCacheKey(key)
     const normalizedKey = this.qualifyKey(userKey)
-    await this.startup
-    this.assertActive('inspect')
+    await this.awaitStartup('inspect')
 
     const foundInLayers: string[] = []
     let freshTtlSeconds: number | null = null
@@ -711,9 +685,7 @@ export class CacheStack extends EventEmitter {
   }
 
   async exportState(): Promise<CacheSnapshotEntry[]> {
-    this.assertActive('exportState')
-    await this.startup
-    this.assertActive('exportState')
+    await this.awaitStartup('exportState')
     const exported = new Map<string, CacheSnapshotEntry>()
 
     for (const layer of this.layers) {
@@ -745,9 +717,7 @@ export class CacheStack extends EventEmitter {
   }
 
   async importState(entries: CacheSnapshotEntry[]): Promise<void> {
-    this.assertActive('importState')
-    await this.startup
-    this.assertActive('importState')
+    await this.awaitStartup('importState')
     await Promise.all(
       entries.map(async (entry) => {
         const qualifiedKey = this.qualifyKey(entry.key)
@@ -975,7 +945,7 @@ export class CacheStack extends EventEmitter {
     }
 
     await this.executeLayerOperations(immediateOperations, { key: 'batch', action: 'mset' })
-    deferredOperations.forEach((operation) => this.enqueueWriteBehind(operation))
+    await Promise.all(deferredOperations.map((operation) => this.enqueueWriteBehind(operation)))
 
     for (const entry of entries) {
       if (entry.options?.tags) {
@@ -1132,7 +1102,7 @@ export class CacheStack extends EventEmitter {
     }
 
     await this.executeLayerOperations(immediateOperations, { key, action: kind === 'empty' ? 'negative-set' : 'set' })
-    deferredOperations.forEach((operation) => this.enqueueWriteBehind(operation))
+    await Promise.all(deferredOperations.map((operation) => this.enqueueWriteBehind(operation)))
   }
 
   private async executeLayerOperations(
@@ -1323,11 +1293,18 @@ export class CacheStack extends EventEmitter {
     return this.options.writeStrategy === 'write-behind' && !layer.isLocal
   }
 
-  private enqueueWriteBehind(operation: () => Promise<void>): void {
+  private async enqueueWriteBehind(operation: () => Promise<void>): Promise<void> {
     this.writeBehindQueue.push(operation)
-    const batchSize = this.options.writeBehind?.batchSize
-    if (batchSize && this.writeBehindQueue.length >= batchSize) {
-      void this.flushWriteBehindQueue()
+    const batchSize = this.options.writeBehind?.batchSize ?? 100
+    const maxQueueSize = this.options.writeBehind?.maxQueueSize ?? batchSize * 10
+
+    if (this.writeBehindQueue.length >= batchSize) {
+      await this.flushWriteBehindQueue()
+      return
+    }
+
+    if (this.writeBehindQueue.length >= maxQueueSize) {
+      await this.flushWriteBehindQueue()
     }
   }
 
@@ -1337,7 +1314,7 @@ export class CacheStack extends EventEmitter {
       return
     }
 
-    const batchSize = this.options.writeBehind?.batchSize ?? this.writeBehindQueue.length
+    const batchSize = this.options.writeBehind?.batchSize ?? 100
     const batch = this.writeBehindQueue.splice(0, batchSize)
     this.writeBehindFlushPromise = (async () => {
       await Promise.allSettled(batch.map((operation) => operation()))
@@ -1392,7 +1369,8 @@ export class CacheStack extends EventEmitter {
       return []
     }
 
-    return [...new Set(firstGroup)].filter((key) => rest.every((group) => group.includes(key)))
+    const restSets = rest.map((group) => new Set(group))
+    return [...new Set(firstGroup)].filter((key) => restSets.every((group) => group.has(key)))
   }
 
   private qualifyKey(key: string): string {
@@ -1562,6 +1540,12 @@ export class CacheStack extends EventEmitter {
     if (this.isDisconnecting) {
       throw new Error(`CacheStack is disconnecting; cannot perform ${operation}.`)
     }
+  }
+
+  private async awaitStartup(operation: string): Promise<void> {
+    this.assertActive(operation)
+    await this.startup
+    this.assertActive(operation)
   }
 
   private serializeOptions(options: CacheGetOptions | undefined): string {

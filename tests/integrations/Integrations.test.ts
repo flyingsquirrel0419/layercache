@@ -4,6 +4,7 @@ import { createCacheStatsHandler } from '../../src/http/createCacheStatsHandler'
 import { createExpressCacheMiddleware } from '../../src/integrations/express'
 import { createFastifyLayercachePlugin } from '../../src/integrations/fastify'
 import { cacheGraphqlResolver } from '../../src/integrations/graphql'
+import { createHonoCacheMiddleware } from '../../src/integrations/hono'
 import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
@@ -165,5 +166,24 @@ describe('createExpressCacheMiddleware', () => {
 
     expect(next).toHaveBeenCalledTimes(1)
     expect(next.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+  })
+})
+
+describe('createHonoCacheMiddleware', () => {
+  it('surfaces cache errors to the framework as a rejected middleware promise', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.disconnect()
+
+    const middleware = createHonoCacheMiddleware(cache)
+
+    await expect(
+      middleware(
+        {
+          req: { method: 'GET', path: '/users' },
+          json: (body) => body
+        },
+        async () => undefined
+      )
+    ).rejects.toThrow(/disconnecting/i)
   })
 })
