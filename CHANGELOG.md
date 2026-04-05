@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-04-05
+
+### Added
+- **`invalidateByTags(tags, mode)`** — batch tag invalidation with `any` / `all` semantics for multi-tag cache clearing.
+- **`invalidateByPrefix(prefix)`** and generation helpers — efficient hierarchical invalidation and generation-based cache rotation for bulk refresh scenarios.
+- **`healthCheck()`**, **OpenTelemetry integration**, **Hono middleware**, **write-behind controls**, and richer admin/inspection support for operational debugging.
+- **Additional test coverage** for namespaces, integrations, Redis tag indexing, lifecycle safety, and queue behavior; the suite now passes with **157 tests**.
+
+### Changed
+- **`CacheStack` startup/disconnect flow** now uses a shared active-state guard helper, and write-behind queuing has safer default batching and queue limits.
+- **`RedisTagIndex.keysForPrefix()`** now performs literal prefix filtering after scanning, avoiding glob-style scan mismatches on keys containing special characters.
+- **README** was refreshed to document the new invalidation, observability, and runtime-safety behavior.
+
+### Fixed
+- **Namespace metrics consistency**: `CacheNamespace.getOrSet()` and `getOrThrow()` now participate in namespace-scoped metrics, and `clear()` uses the prefix invalidation path consistently.
+- **Namespace metrics race**: metric diff collection is now serialized so concurrent namespace operations do not overcount each other.
+- **Tag intersection performance**: `CacheStack` now intersects multi-tag invalidation candidates with `Set` lookups instead of repeated `Array.includes()` scans.
+- **Write-behind queue growth**: deferred writes now flush under bounded defaults instead of growing unbounded until the next interval tick.
+- **Redis prefix invalidation correctness**: literal prefixes are now filtered safely after `SSCAN`.
+- **Lint / formatting regressions** in the newly added integrations and cache-management code.
+
 ## [1.2.0] — 2026-04-05
 
 ### Added
