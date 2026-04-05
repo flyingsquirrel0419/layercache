@@ -23,7 +23,7 @@ export class PatternMatcher {
     // patterns that are only '*' can match empty string
     for (let i = 1; i <= m; i++) {
       if (pattern[i - 1] === '*') {
-        dp[i]![0] = dp[i - 1]![0]!
+        dp[i]![0] = dp[i - 1]?.[0]!
       }
     }
 
@@ -32,13 +32,13 @@ export class PatternMatcher {
         const pc = pattern[i - 1]!
         if (pc === '*') {
           // '*' matches zero characters (dp[i-1][j]) or one more character (dp[i][j-1])
-          dp[i]![j] = dp[i - 1]![j]! || dp[i]![j - 1]!
+          dp[i]![j] = dp[i - 1]?.[j]! || dp[i]?.[j - 1]!
         } else if (pc === '?' || pc === value[j - 1]) {
-          dp[i]![j] = dp[i - 1]![j - 1]!
+          dp[i]![j] = dp[i - 1]?.[j - 1]!
         }
       }
     }
 
-    return dp[m]![n]!
+    return dp[m]?.[n]!
   }
 }

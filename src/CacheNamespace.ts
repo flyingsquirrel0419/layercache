@@ -1,15 +1,15 @@
+import type { CacheStack } from './CacheStack'
 import type {
   CacheGetOptions,
+  CacheHitRateSnapshot,
   CacheMGetEntry,
   CacheMSetEntry,
   CacheMetricsSnapshot,
-  CacheHitRateSnapshot,
   CacheWarmEntry,
   CacheWarmOptions,
   CacheWrapOptions,
   CacheWriteOptions
 } from './types'
-import type { CacheStack } from './CacheStack'
 
 export class CacheNamespace {
   constructor(
@@ -50,17 +50,21 @@ export class CacheNamespace {
   }
 
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
-    return this.cache.mget(entries.map((entry) => ({
-      ...entry,
-      key: this.qualify(entry.key)
-    })))
+    return this.cache.mget(
+      entries.map((entry) => ({
+        ...entry,
+        key: this.qualify(entry.key)
+      }))
+    )
   }
 
   async mset<T>(entries: CacheMSetEntry<T>[]): Promise<void> {
-    await this.cache.mset(entries.map((entry) => ({
-      ...entry,
-      key: this.qualify(entry.key)
-    })))
+    await this.cache.mset(
+      entries.map((entry) => ({
+        ...entry,
+        key: this.qualify(entry.key)
+      }))
+    )
   }
 
   async invalidateByTag(tag: string): Promise<void> {
@@ -80,10 +84,13 @@ export class CacheNamespace {
   }
 
   warm(entries: CacheWarmEntry[], options?: CacheWarmOptions): Promise<void> {
-    return this.cache.warm(entries.map((entry) => ({
-      ...entry,
-      key: this.qualify(entry.key)
-    })), options)
+    return this.cache.warm(
+      entries.map((entry) => ({
+        ...entry,
+        key: this.qualify(entry.key)
+      })),
+      options
+    )
   }
 
   getMetrics(): CacheMetricsSnapshot {

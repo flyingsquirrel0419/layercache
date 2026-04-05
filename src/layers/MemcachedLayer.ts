@@ -10,8 +10,8 @@ import type { CacheLayer } from '../types'
  */
 export interface MemcachedClient {
   get(key: string): Promise<{ value: Buffer | null } | null>
-  set(key: string, value: string | Buffer, options?: { expires?: number }): Promise<boolean | void>
-  delete(key: string): Promise<boolean | void>
+  set(key: string, value: string | Buffer, options?: { expires?: number }): Promise<boolean | undefined>
+  delete(key: string): Promise<boolean | undefined>
 }
 
 interface MemcachedLayerOptions {

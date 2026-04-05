@@ -1,5 +1,5 @@
-import type { CacheLayer } from '../types'
 import { unwrapStoredValue } from '../internal/StoredValue'
+import type { CacheLayer } from '../types'
 
 export interface MemoryLayerSnapshotEntry {
   key: string
@@ -189,13 +189,10 @@ export class MemoryLayer implements CacheLayer {
 
     // LFU: evict entry with smallest frequency; break ties by insertedAt (oldest)
     let victimKey: string | undefined
-    let minFreq = Infinity
-    let minInsertedAt = Infinity
+    let minFreq = Number.POSITIVE_INFINITY
+    let minInsertedAt = Number.POSITIVE_INFINITY
     for (const [key, entry] of this.entries.entries()) {
-      if (
-        entry.frequency < minFreq ||
-        (entry.frequency === minFreq && entry.insertedAt < minInsertedAt)
-      ) {
+      if (entry.frequency < minFreq || (entry.frequency === minFreq && entry.insertedAt < minInsertedAt)) {
         minFreq = entry.frequency
         minInsertedAt = entry.insertedAt
         victimKey = key

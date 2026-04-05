@@ -12,7 +12,9 @@ vi.mock('ioredis', () => {
       pipeline: () => ({ exec: async () => [] })
     }
   }
-  function Redis() { return makeClient() }
+  function Redis() {
+    return makeClient()
+  }
   return { default: Redis }
 })
 

@@ -22,7 +22,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   const redisUrl = validateRedisUrl(args.redisUrl)
   if (!redisUrl) {
-    process.stderr.write(`Error: invalid Redis URL "${args.redisUrl}". Expected format: redis://[user:password@]host[:port][/db]\n`)
+    process.stderr.write(
+      `Error: invalid Redis URL "${args.redisUrl}". Expected format: redis://[user:password@]host[:port][/db]\n`
+    )
     process.exitCode = 1
     return
   }
@@ -143,16 +145,16 @@ async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {
 
 function printUsage(): void {
   process.stdout.write(
-    'Usage:\n'
-    + '  layercache stats --redis <url> [--pattern <glob>]\n'
-    + '  layercache keys --redis <url> [--pattern <glob>]\n'
-    + '  layercache invalidate --redis <url> [--pattern <glob> | --tag <tag>] [--tag-index-prefix <prefix>]\n'
-    + '\n'
-    + 'Options:\n'
-    + '  --redis <url>               Redis connection URL (e.g. redis://localhost:6379)\n'
-    + '  --pattern <glob>            Glob pattern to filter keys (default: *)\n'
-    + '  --tag <tag>                 Invalidate by tag name\n'
-    + '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n'
+    'Usage:\n' +
+      '  layercache stats --redis <url> [--pattern <glob>]\n' +
+      '  layercache keys --redis <url> [--pattern <glob>]\n' +
+      '  layercache invalidate --redis <url> [--pattern <glob> | --tag <tag>] [--tag-index-prefix <prefix>]\n' +
+      '\n' +
+      'Options:\n' +
+      '  --redis <url>               Redis connection URL (e.g. redis://localhost:6379)\n' +
+      '  --pattern <glob>            Glob pattern to filter keys (default: *)\n' +
+      '  --tag <tag>                 Invalidate by tag name\n' +
+      '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n'
   )
 }
 

@@ -11,7 +11,10 @@ class RecordingLayer implements CacheLayer {
   readonly capturedTtls: Array<number | undefined> = []
   readonly values = new Map<string, unknown>()
 
-  constructor(name: string, readonly defaultTtl?: number) {
+  constructor(
+    name: string,
+    readonly defaultTtl?: number
+  ) {
     this.name = name
   }
 
@@ -115,15 +118,11 @@ describe('CacheStack', () => {
   it('propagates invalidation to local layers across bridge instances', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
-    const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })],
-      { invalidationBus: bus }
-    )
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })], {
+      invalidationBus: bus
+    })
     const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheStack(
-      [memoryB, new RedisLayer({ client: redis, ttl: 300 })],
-      { invalidationBus: bus }
-    )
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300 })], { invalidationBus: bus })
 
     await cacheA.set('user:1', { id: 1, version: 1 })
     await expect(cacheB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
@@ -146,10 +145,10 @@ describe('CacheStack', () => {
       { invalidationBus: bus, tagIndex: sharedTagIndex }
     )
     const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheStack(
-      [memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
-      { invalidationBus: bus, tagIndex: sharedTagIndex }
-    )
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })], {
+      invalidationBus: bus,
+      tagIndex: sharedTagIndex
+    })
 
     await cacheA.set('user:1', { id: 1 }, { tags: ['user:1'] })
     await cacheB.set('user:1:posts', [{ id: 99 }], { tags: ['user:1'] })
@@ -205,10 +204,9 @@ describe('CacheStack', () => {
       [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
       { invalidationBus: bus, publishSetInvalidation: false }
     )
-    const cacheB = new CacheStack(
-      [memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
-      { invalidationBus: bus }
-    )
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })], {
+      invalidationBus: bus
+    })
 
     await cacheA.set('user:1', { id: 1, version: 1 })
     await cacheB.get('user:1')

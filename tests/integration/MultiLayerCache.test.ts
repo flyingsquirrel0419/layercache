@@ -7,10 +7,7 @@ import { RedisLayer } from '../../src/layers/RedisLayer'
 describe('multi-layer integration', () => {
   it('fetches once and serves repeated hits from cache layers', async () => {
     const redis = new Redis()
-    const cache = new CacheStack([
-      new MemoryLayer({ ttl: 60 }),
-      new RedisLayer({ client: redis, ttl: 300 })
-    ])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })])
 
     let fetches = 0
     const first = await cache.get('profile:1', async () => {

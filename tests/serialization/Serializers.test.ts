@@ -28,7 +28,7 @@ describe('JsonSerializer', () => {
 
   it('throws on circular references', () => {
     const circular: Record<string, unknown> = {}
-    circular['self'] = circular
+    circular.self = circular
     expect(() => serializer.serialize(circular)).toThrow()
   })
 })

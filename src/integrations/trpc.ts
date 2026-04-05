@@ -1,5 +1,5 @@
-import type { CacheGetOptions } from '../types'
 import type { CacheStack } from '../CacheStack'
+import type { CacheGetOptions } from '../types'
 
 interface TrpcCacheMiddlewareContext<TInput = unknown, TResult = unknown> {
   path?: string

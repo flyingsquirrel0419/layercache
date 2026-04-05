@@ -20,9 +20,7 @@ export function createPrometheusMetricsExporter(
   stacks: CacheStack | Array<{ stack: CacheStack; name: string }>
 ): () => string {
   return () => {
-    const entries = Array.isArray(stacks)
-      ? stacks
-      : [{ stack: stacks, name: 'default' }]
+    const entries = Array.isArray(stacks) ? stacks : [{ stack: stacks, name: 'default' }]
 
     const lines: string[] = []
 

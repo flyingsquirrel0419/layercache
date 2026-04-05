@@ -8,10 +8,13 @@
     "rules": {
       "recommended": true,
       "complexity": {
-        "noForEach": "off"
+        "noForEach": "off",
+        "noStaticOnlyClass": "off"
       },
       "suspicious": {
-        "noExplicitAny": "warn"
+        "noExplicitAny": "warn",
+        "noUnsafeDeclarationMerging": "off",
+        "noControlCharactersInRegex": "off"
       },
       "style": {
         "noNonNullAssertion": "warn",
@@ -33,11 +36,6 @@
     }
   },
   "files": {
-    "ignore": [
-      "dist",
-      "node_modules",
-      "coverage",
-      "*.json"
-    ]
+    "ignore": ["dist", "node_modules", "coverage", "*.json"]
   }
 }

@@ -46,21 +46,17 @@ export class TtlResolver {
     globalNegativeTtl: number | LayerTtlMap | undefined,
     globalTtl?: number | LayerTtlMap
   ): number | undefined {
-    const baseTtl = kind === 'empty'
-      ? this.resolveLayerSeconds(
-          layerName,
-          options?.negativeTtl,
-          globalNegativeTtl,
-          this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, fallbackTtl) ?? DEFAULT_NEGATIVE_TTL_SECONDS
-        )
-      : this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, fallbackTtl)
+    const baseTtl =
+      kind === 'empty'
+        ? this.resolveLayerSeconds(
+            layerName,
+            options?.negativeTtl,
+            globalNegativeTtl,
+            this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, fallbackTtl) ?? DEFAULT_NEGATIVE_TTL_SECONDS
+          )
+        : this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, fallbackTtl)
 
-    const adaptiveTtl = this.applyAdaptiveTtl(
-      key,
-      layerName,
-      baseTtl,
-      options?.adaptiveTtl
-    )
+    const adaptiveTtl = this.applyAdaptiveTtl(key, layerName, baseTtl, options?.adaptiveTtl)
     const jitter = this.resolveLayerSeconds(layerName, options?.ttlJitter, undefined)
     return this.applyJitter(adaptiveTtl, jitter)
   }

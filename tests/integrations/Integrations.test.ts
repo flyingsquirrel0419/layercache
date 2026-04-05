@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
-import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { createCacheStatsHandler } from '../../src/http/createCacheStatsHandler'
 import { createFastifyLayercachePlugin } from '../../src/integrations/fastify'
 import { cacheGraphqlResolver } from '../../src/integrations/graphql'
 import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
+import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 function makeCache() {
   return new CacheStack([new MemoryLayer({ ttl: 60 })])
@@ -41,12 +41,14 @@ describe('createFastifyLayercachePlugin', () => {
     const plugin = createFastifyLayercachePlugin(cache, { exposeStatsRoute: false })
     const decorations: Record<string, unknown> = {}
     const fastify = {
-      decorate: (name: string, value: unknown) => { decorations[name] = value },
+      decorate: (name: string, value: unknown) => {
+        decorations[name] = value
+      },
       get: vi.fn()
     }
 
     await plugin(fastify)
-    expect(decorations['cache']).toBe(cache)
+    expect(decorations.cache).toBe(cache)
     expect(fastify.get).not.toHaveBeenCalled()
   })
 
@@ -56,7 +58,9 @@ describe('createFastifyLayercachePlugin', () => {
     const registeredRoutes: string[] = []
     const fastify = {
       decorate: vi.fn(),
-      get: (path: string) => { registeredRoutes.push(path) }
+      get: (path: string) => {
+        registeredRoutes.push(path)
+      }
     }
 
     await plugin(fastify)

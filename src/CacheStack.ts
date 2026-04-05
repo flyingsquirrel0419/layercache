@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { promises as fs } from 'node:fs'
 import { EventEmitter } from 'node:events'
+import { promises as fs } from 'node:fs'
+import { CacheNamespace } from './CacheNamespace'
+import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
+import { MetricsCollector } from './internal/MetricsCollector'
 import {
   createStoredValueEnvelope,
   isStoredValueEnvelope,
@@ -10,9 +13,6 @@ import {
   resolveStoredValue
 } from './internal/StoredValue'
 import { TtlResolver } from './internal/TtlResolver'
-import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
-import { MetricsCollector } from './internal/MetricsCollector'
-import { CacheNamespace } from './CacheNamespace'
 import { TagIndex } from './invalidation/TagIndex'
 import { StampedeGuard } from './stampede/StampedeGuard'
 import type {
@@ -23,8 +23,8 @@ import type {
   CacheLayer,
   CacheLogger,
   CacheMGetEntry,
-  CacheMetricsSnapshot,
   CacheMSetEntry,
+  CacheMetricsSnapshot,
   CacheSingleFlightExecutionOptions,
   CacheSnapshotEntry,
   CacheStackEvents,
@@ -50,7 +50,14 @@ type ReadMode = 'allow-stale' | 'fresh-only'
 type CacheWriteKind = 'value' | 'empty'
 
 type ReadHit<T> =
-  | { found: true; value: T | null; stored: unknown; state: 'fresh' | 'stale-while-revalidate' | 'stale-if-error'; layerIndex: number; layerName: string }
+  | {
+      found: true
+      value: T | null
+      stored: unknown
+      state: 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
+      layerIndex: number
+      layerName: string
+    }
   | { found: false; value: null; stored: null; state: 'miss' }
 
 class DebugLogger implements CacheLogger {
@@ -127,13 +134,13 @@ export class CacheStack extends EventEmitter {
 
     if (options.publishSetInvalidation !== undefined) {
       console.warn(
-        '[layercache] CacheStackOptions.publishSetInvalidation is deprecated. ' +
-        'Use broadcastL1Invalidation instead.'
+        '[layercache] CacheStackOptions.publishSetInvalidation is deprecated. ' + 'Use broadcastL1Invalidation instead.'
       )
     }
 
-    const debugEnv = process.env['DEBUG']?.split(',').includes('layercache:debug') ?? false
-    this.logger = typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
+    const debugEnv = process.env.DEBUG?.split(',').includes('layercache:debug') ?? false
+    this.logger =
+      typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
     this.startup = this.initialize()
   }
@@ -222,7 +229,6 @@ export class CacheStack extends EventEmitter {
           if (exists) {
             return true
           }
-          continue
         } catch {
           // fall through to next layer
         }
@@ -283,7 +289,12 @@ export class CacheStack extends EventEmitter {
     const normalizedKey = this.validateCacheKey(key)
     await this.startup
     await this.deleteKeys([normalizedKey])
-    await this.publishInvalidation({ scope: 'key', keys: [normalizedKey], sourceId: this.instanceId, operation: 'delete' })
+    await this.publishInvalidation({
+      scope: 'key',
+      keys: [normalizedKey],
+      sourceId: this.instanceId,
+      operation: 'delete'
+    })
   }
 
   async clear(): Promise<void> {
@@ -307,7 +318,12 @@ export class CacheStack extends EventEmitter {
     await this.startup
     const normalizedKeys = keys.map((k) => this.validateCacheKey(k))
     await this.deleteKeys(normalizedKeys)
-    await this.publishInvalidation({ scope: 'keys', keys: normalizedKeys, sourceId: this.instanceId, operation: 'delete' })
+    await this.publishInvalidation({
+      scope: 'keys',
+      keys: normalizedKeys,
+      sourceId: this.instanceId,
+      operation: 'delete'
+    })
   }
 
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
@@ -322,11 +338,14 @@ export class CacheStack extends EventEmitter {
     normalizedEntries.forEach((entry) => this.validateWriteOptions(entry.options))
     const canFastPath = normalizedEntries.every((entry) => entry.fetch === undefined && entry.options === undefined)
     if (!canFastPath) {
-      const pendingReads = new Map<string, {
-        promise: Promise<T | null>
-        fetch?: () => Promise<T>
-        optionsSignature: string
-      }>()
+      const pendingReads = new Map<
+        string,
+        {
+          promise: Promise<T | null>
+          fetch?: () => Promise<T>
+          optionsSignature: string
+        }
+      >()
 
       return Promise.all(
         normalizedEntries.map((entry) => {
@@ -357,7 +376,9 @@ export class CacheStack extends EventEmitter {
     const resultsByKey = new Map<string, T | null>()
 
     for (let index = 0; index < normalizedEntries.length; index += 1) {
-      const key = normalizedEntries[index].key
+      const entry = normalizedEntries[index]
+      if (!entry) continue
+      const key = entry.key
       const indexes = indexesByKey.get(key) ?? []
       indexes.push(index)
       indexesByKey.set(key, indexes)
@@ -366,6 +387,7 @@ export class CacheStack extends EventEmitter {
 
     for (let layerIndex = 0; layerIndex < this.layers.length; layerIndex += 1) {
       const layer = this.layers[layerIndex]
+      if (!layer) continue
       const keys = [...pending]
       if (keys.length === 0) {
         break
@@ -378,7 +400,7 @@ export class CacheStack extends EventEmitter {
       for (let offset = 0; offset < values.length; offset += 1) {
         const key = keys[offset]
         const stored = values[offset]
-        if (stored === null) {
+        if (!key || stored === null) {
           continue
         }
 
@@ -549,10 +571,12 @@ export class CacheStack extends EventEmitter {
 
   async importState(entries: CacheSnapshotEntry[]): Promise<void> {
     await this.startup
-    await Promise.all(entries.map(async (entry) => {
-      await Promise.all(this.layers.map((layer) => layer.set(entry.key, entry.value, entry.ttl)))
-      await this.tagIndex.touch(entry.key)
-    }))
+    await Promise.all(
+      entries.map(async (entry) => {
+        await Promise.all(this.layers.map((layer) => layer.set(entry.key, entry.value, entry.ttl)))
+        await this.tagIndex.touch(entry.key)
+      })
+    )
   }
 
   async persistToFile(filePath: string): Promise<void> {
@@ -603,7 +627,11 @@ export class CacheStack extends EventEmitter {
     })
   }
 
-  private async fetchWithGuards<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  private async fetchWithGuards<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    options?: CacheGetOptions
+  ): Promise<T | null> {
     const fetchTask = async (): Promise<T | null> => {
       const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
       if (secondHit.found) {
@@ -619,11 +647,8 @@ export class CacheStack extends EventEmitter {
         return fetchTask()
       }
 
-      return this.options.singleFlightCoordinator.execute(
-        key,
-        this.resolveSingleFlightOptions(),
-        fetchTask,
-        () => this.waitForFreshValue(key, fetcher, options)
+      return this.options.singleFlightCoordinator.execute(key, this.resolveSingleFlightOptions(), fetchTask, () =>
+        this.waitForFreshValue(key, fetcher, options)
       )
     }
 
@@ -634,7 +659,11 @@ export class CacheStack extends EventEmitter {
     return this.stampedeGuard.execute(key, singleFlightTask)
   }
 
-  private async waitForFreshValue<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  private async waitForFreshValue<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    options?: CacheGetOptions
+  ): Promise<T | null> {
     const timeoutMs = this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS
     const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
     const deadline = Date.now() + timeoutMs
@@ -654,7 +683,11 @@ export class CacheStack extends EventEmitter {
     return this.fetchAndPopulate(key, fetcher, options)
   }
 
-  private async fetchAndPopulate<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  private async fetchAndPopulate<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    options?: CacheGetOptions
+  ): Promise<T | null> {
     this.circuitBreakerManager.assertClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
     this.metricsCollector.increment('fetches')
     const fetchStart = Date.now()
@@ -682,7 +715,12 @@ export class CacheStack extends EventEmitter {
     return fetched
   }
 
-  private async storeEntry(key: string, kind: CacheWriteKind, value: unknown, options?: CacheWriteOptions): Promise<void> {
+  private async storeEntry(
+    key: string,
+    kind: CacheWriteKind,
+    value: unknown,
+    options?: CacheWriteOptions
+  ): Promise<void> {
     await this.writeAcrossLayers(key, kind, value, options)
     if (options?.tags) {
       await this.tagIndex.track(key, options.tags)
@@ -698,11 +736,16 @@ export class CacheStack extends EventEmitter {
     }
   }
 
-  private async readFromLayers<T>(key: string, options: CacheGetOptions | undefined, mode: ReadMode): Promise<ReadHit<T>> {
+  private async readFromLayers<T>(
+    key: string,
+    options: CacheGetOptions | undefined,
+    mode: ReadMode
+  ): Promise<ReadHit<T>> {
     let sawRetainableValue = false
 
     for (let index = 0; index < this.layers.length; index += 1) {
       const layer = this.layers[index]
+      if (!layer) continue
       const stored = await this.readLayerEntry(layer, key)
       if (stored === null) {
         this.metricsCollector.incrementLayer('missesByLayer', layer.name)
@@ -726,7 +769,14 @@ export class CacheStack extends EventEmitter {
       this.metricsCollector.incrementLayer('hitsByLayer', layer.name)
       this.logger.debug?.('hit', { key, layer: layer.name, state: resolved.state })
       this.emit('hit', { key, layer: layer.name, state: resolved.state as CacheStackEvents['hit']['state'] })
-      return { found: true, value: resolved.value, stored, state: resolved.state, layerIndex: index, layerName: layer.name }
+      return {
+        found: true,
+        value: resolved.value,
+        stored,
+        state: resolved.state,
+        layerIndex: index,
+        layerName: layer.name
+      }
     }
 
     if (!sawRetainableValue) {
@@ -765,11 +815,13 @@ export class CacheStack extends EventEmitter {
 
     for (let index = 0; index <= upToIndex; index += 1) {
       const layer = this.layers[index]
-      if (this.shouldSkipLayer(layer)) {
+      if (!layer || this.shouldSkipLayer(layer)) {
         continue
       }
 
-      const ttl = remainingStoredTtlSeconds(stored) ?? this.resolveLayerSeconds(layer.name, options?.ttl, undefined, layer.defaultTtl)
+      const ttl =
+        remainingStoredTtlSeconds(stored) ??
+        this.resolveLayerSeconds(layer.name, options?.ttl, undefined, layer.defaultTtl)
       try {
         await layer.set(key, stored, ttl)
       } catch (error) {
@@ -800,11 +852,7 @@ export class CacheStack extends EventEmitter {
         options?.staleWhileRevalidate,
         this.options.staleWhileRevalidate
       )
-      const staleIfError = this.resolveLayerSeconds(
-        layer.name,
-        options?.staleIfError,
-        this.options.staleIfError
-      )
+      const staleIfError = this.resolveLayerSeconds(layer.name, options?.staleIfError, this.options.staleIfError)
       const payload = createStoredValueEnvelope({
         kind,
         value,
@@ -860,14 +908,7 @@ export class CacheStack extends EventEmitter {
     options: CacheWriteOptions | undefined,
     fallbackTtl: number | undefined
   ): number | undefined {
-    return this.ttlResolver.resolveFreshTtl(
-      key,
-      layerName,
-      kind,
-      options,
-      fallbackTtl,
-      this.options.negativeTtl
-    )
+    return this.ttlResolver.resolveFreshTtl(key, layerName, kind, options, fallbackTtl, this.options.negativeTtl)
   }
 
   private resolveLayerSeconds(
@@ -998,22 +1039,24 @@ export class CacheStack extends EventEmitter {
           return
         }
 
-        await Promise.all(keys.map(async (key) => {
-          try {
-            await layer.delete(key)
-          } catch (error) {
-            await this.handleLayerFailure(layer, 'delete', error)
-          }
-        }))
+        await Promise.all(
+          keys.map(async (key) => {
+            try {
+              await layer.delete(key)
+            } catch (error) {
+              await this.handleLayerFailure(layer, 'delete', error)
+            }
+          })
+        )
       })
     )
   }
 
   private validateConfiguration(): void {
     if (
-      this.options.broadcastL1Invalidation !== undefined
-      && this.options.publishSetInvalidation !== undefined
-      && this.options.broadcastL1Invalidation !== this.options.publishSetInvalidation
+      this.options.broadcastL1Invalidation !== undefined &&
+      this.options.publishSetInvalidation !== undefined &&
+      this.options.broadcastL1Invalidation !== this.options.publishSetInvalidation
     ) {
       throw new Error('broadcastL1Invalidation and publishSetInvalidation cannot conflict.')
     }
@@ -1129,7 +1172,8 @@ export class CacheStack extends EventEmitter {
     options: CacheGetOptions | undefined,
     fetcher?: () => Promise<T>
   ): Promise<void> {
-    const refreshAhead = this.resolveLayerSeconds(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
+    const refreshAhead =
+      this.resolveLayerSeconds(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
     const remainingFreshTtl = remainingFreshTtlSeconds(hit.stored) ?? 0
 
     if ((options?.slidingTtl ?? false) && isStoredValueEnvelope(hit.stored)) {
@@ -1137,7 +1181,7 @@ export class CacheStack extends EventEmitter {
       const ttl = remainingStoredTtlSeconds(refreshed)
       for (let index = 0; index <= hit.layerIndex; index += 1) {
         const layer = this.layers[index]
-        if (this.shouldSkipLayer(layer)) {
+        if (!layer || this.shouldSkipLayer(layer)) {
           continue
         }
 
@@ -1164,9 +1208,10 @@ export class CacheStack extends EventEmitter {
       throw error
     }
 
-    const retryAfterMs = typeof this.options.gracefulDegradation === 'object'
-      ? this.options.gracefulDegradation.retryAfterMs ?? 10_000
-      : 10_000
+    const retryAfterMs =
+      typeof this.options.gracefulDegradation === 'object'
+        ? (this.options.gracefulDegradation.retryAfterMs ?? 10_000)
+        : 10_000
 
     this.layerDegradedUntil.set(layer.name, Date.now() + retryAfterMs)
     this.metricsCollector.increment('degradedOperations')
@@ -1211,14 +1256,17 @@ export class CacheStack extends EventEmitter {
   }
 
   private isCacheSnapshotEntries(value: unknown): value is CacheSnapshotEntry[] {
-    return Array.isArray(value) && value.every((entry) => {
-      if (!entry || typeof entry !== 'object') {
-        return false
-      }
+    return (
+      Array.isArray(value) &&
+      value.every((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return false
+        }
 
-      const candidate = entry as Partial<CacheSnapshotEntry>
-      return typeof candidate.key === 'string'
-    })
+        const candidate = entry as Partial<CacheSnapshotEntry>
+        return typeof candidate.key === 'string'
+      })
+    )
   }
 
   private normalizeForSerialization(value: unknown): unknown {

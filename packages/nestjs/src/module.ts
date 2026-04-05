@@ -1,6 +1,6 @@
-import { DynamicModule, Global, Inject, Module, type Provider } from '@nestjs/common'
+import { type DynamicModule, Global, Inject, Module, type Provider } from '@nestjs/common'
 import { CacheStack } from '../../../src/CacheStack'
-import type { CacheStackOptions, CacheLayer } from '../../../src/types'
+import type { CacheLayer, CacheStackOptions } from '../../../src/types'
 import { CACHE_STACK } from './constants'
 
 export interface CacheStackModuleOptions {

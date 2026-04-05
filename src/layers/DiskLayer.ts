@@ -128,9 +128,7 @@ export class DiskLayer implements CacheLayer {
     }
 
     await Promise.all(
-      entries
-        .filter((name) => name.endsWith('.lc'))
-        .map((name) => this.safeDelete(join(this.directory, name)))
+      entries.filter((name) => name.endsWith('.lc')).map((name) => this.safeDelete(join(this.directory, name)))
     )
   }
 
@@ -144,9 +142,7 @@ export class DiskLayer implements CacheLayer {
 
     // Keys are encoded in the filenames; we can only return them as filenames
     // since the hash is one-way. Return the raw hash names stripped of extension.
-    return entries
-      .filter((name) => name.endsWith('.lc'))
-      .map((name) => name.slice(0, -3))
+    return entries.filter((name) => name.endsWith('.lc')).map((name) => name.slice(0, -3))
   }
 
   async size(): Promise<number> {

@@ -8,7 +8,7 @@ export class MetricsCollector {
   }
 
   increment(field: keyof Omit<CacheMetricsSnapshot, 'hitsByLayer' | 'missesByLayer' | 'resetAt'>, amount = 1): void {
-    (this.data[field] as number) += amount
+    ;(this.data[field] as number) += amount
   }
 
   incrementLayer(map: 'hitsByLayer' | 'missesByLayer', layerName: string): void {
@@ -24,10 +24,7 @@ export class MetricsCollector {
     const overall = total === 0 ? 0 : this.data.hits / total
 
     const byLayer: Record<string, number> = {}
-    const allLayers = new Set([
-      ...Object.keys(this.data.hitsByLayer),
-      ...Object.keys(this.data.missesByLayer)
-    ])
+    const allLayers = new Set([...Object.keys(this.data.hitsByLayer), ...Object.keys(this.data.missesByLayer)])
     for (const layer of allLayers) {
       const h = this.data.hitsByLayer[layer] ?? 0
       const m = this.data.missesByLayer[layer] ?? 0

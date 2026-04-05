@@ -1,4 +1,4 @@
-import { brotliCompressSync, brotliDecompressSync, gzipSync, gunzipSync } from 'node:zlib'
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib'
 import type Redis from 'ioredis'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
@@ -134,7 +134,9 @@ export class RedisLayer implements CacheLayer {
    */
   async clear(): Promise<void> {
     if (!this.prefix && !this.allowUnprefixedClear) {
-      throw new Error('RedisLayer.clear() requires a prefix or allowUnprefixedClear=true to avoid deleting unrelated keys.')
+      throw new Error(
+        'RedisLayer.clear() requires a prefix or allowUnprefixedClear=true to avoid deleting unrelated keys.'
+      )
     }
 
     const pattern = `${this.prefix}*`
@@ -206,9 +208,7 @@ export class RedisLayer implements CacheLayer {
     }
 
     const header = Buffer.from(`LCZ1:${this.compression}:`)
-    const compressed = this.compression === 'gzip'
-      ? gzipSync(source)
-      : brotliCompressSync(source)
+    const compressed = this.compression === 'gzip' ? gzipSync(source) : brotliCompressSync(source)
 
     return Buffer.concat([header, compressed])
   }

@@ -78,15 +78,23 @@ export class RedisInvalidationBus implements InvalidationBus {
 
     const candidate = value as Partial<InvalidationMessage>
     const validScope = candidate.scope === 'key' || candidate.scope === 'keys' || candidate.scope === 'clear'
-    const validOperation = candidate.operation === undefined
-      || candidate.operation === 'write'
-      || candidate.operation === 'delete'
-      || candidate.operation === 'invalidate'
-      || candidate.operation === 'clear'
-    const validKeys = candidate.keys === undefined
-      || (Array.isArray(candidate.keys) && candidate.keys.every((key) => typeof key === 'string'))
+    const validOperation =
+      candidate.operation === undefined ||
+      candidate.operation === 'write' ||
+      candidate.operation === 'delete' ||
+      candidate.operation === 'invalidate' ||
+      candidate.operation === 'clear'
+    const validKeys =
+      candidate.keys === undefined ||
+      (Array.isArray(candidate.keys) && candidate.keys.every((key) => typeof key === 'string'))
 
-    return validScope && typeof candidate.sourceId === 'string' && candidate.sourceId.length > 0 && validOperation && validKeys
+    return (
+      validScope &&
+      typeof candidate.sourceId === 'string' &&
+      candidate.sourceId.length > 0 &&
+      validOperation &&
+      validKeys
+    )
   }
 
   private reportError(message: string, error: unknown): void {
