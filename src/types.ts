@@ -1,5 +1,19 @@
 export type CacheValue = Record<string, unknown> | unknown[] | string | number | boolean | null
 
+/**
+ * Thrown by `CacheStack.getOrThrow()` when no value is found for the given key
+ * (fetcher returned null or no fetcher was provided and the key is absent).
+ */
+export class CacheMissError extends Error {
+  readonly key: string
+
+  constructor(key: string) {
+    super(`Cache miss for key "${key}".`)
+    this.name = 'CacheMissError'
+    this.key = key
+  }
+}
+
 export interface LayerTtlMap {
   [layerName: string]: number | undefined
 }
@@ -16,6 +30,15 @@ export interface CacheWriteOptions {
   refreshAhead?: number | LayerTtlMap
   adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
   circuitBreaker?: CacheCircuitBreakerOptions
+  /**
+   * Optional predicate called with the fetcher's return value before caching.
+   * Return `false` to skip storing the value in the cache (but still return it
+   * to the caller). Useful for not caching failed API responses or empty results.
+   *
+   * @example
+   * cache.get('key', fetchData, { shouldCache: (v) => v.status === 200 })
+   */
+  shouldCache?: (value: unknown) => boolean
 }
 
 export interface CacheGetOptions extends CacheWriteOptions {}
@@ -68,6 +91,16 @@ export interface CacheSerializer {
   deserialize<T>(payload: string | Buffer): T
 }
 
+/** Per-layer latency statistics (rolling window of sampled read durations). */
+export interface CacheLayerLatency {
+  /** Average read latency in milliseconds. */
+  avgMs: number
+  /** Maximum observed read latency in milliseconds. */
+  maxMs: number
+  /** Number of samples used to compute the statistics. */
+  count: number
+}
+
 /** Snapshot of cumulative cache counters. */
 export interface CacheMetricsSnapshot {
   hits: number
@@ -87,6 +120,8 @@ export interface CacheMetricsSnapshot {
   degradedOperations: number
   hitsByLayer: Record<string, number>
   missesByLayer: Record<string, number>
+  /** Per-layer read latency statistics (sampled from successful reads). */
+  latencyByLayer: Record<string, CacheLayerLatency>
   /** Timestamp (ms since epoch) when metrics were last reset. */
   resetAt: number
 }
@@ -111,6 +146,8 @@ export interface CacheTagIndex {
   track(key: string, tags: string[]): Promise<void>
   remove(key: string): Promise<void>
   keysForTag(tag: string): Promise<string[]>
+  /** Returns the tags associated with a specific key, or an empty array. */
+  tagsForKey?(key: string): Promise<string[]>
   matchPattern(pattern: string): Promise<string[]>
   clear(): Promise<void>
 }
@@ -231,6 +268,23 @@ export interface CacheStatsSnapshot {
     degradedUntil: number | null
   }>
   backgroundRefreshes: number
+}
+
+/** Detailed inspection result for a single cache key. */
+export interface CacheInspectResult {
+  key: string
+  /** Layers in which the key is currently stored (not expired). */
+  foundInLayers: string[]
+  /** Remaining fresh TTL in seconds, or null if no expiry or not an envelope. */
+  freshTtlSeconds: number | null
+  /** Remaining stale-while-revalidate window in seconds, or null. */
+  staleTtlSeconds: number | null
+  /** Remaining stale-if-error window in seconds, or null. */
+  errorTtlSeconds: number | null
+  /** Whether the key is currently serving stale-while-revalidate. */
+  isStale: boolean
+  /** Tags associated with this key (from the TagIndex). */
+  tags: string[]
 }
 
 // ---------------------------------------------------------------------------

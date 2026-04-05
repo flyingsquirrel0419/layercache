@@ -1,18 +1,45 @@
-import type { CacheHitRateSnapshot, CacheMetricsSnapshot } from '../types'
+import type { CacheHitRateSnapshot, CacheLayerLatency, CacheMetricsSnapshot } from '../types'
 
 export class MetricsCollector {
   private data: CacheMetricsSnapshot = this.empty()
 
   get snapshot(): CacheMetricsSnapshot {
-    return { ...this.data }
+    return {
+      ...this.data,
+      hitsByLayer: { ...this.data.hitsByLayer },
+      missesByLayer: { ...this.data.missesByLayer },
+      latencyByLayer: Object.fromEntries(Object.entries(this.data.latencyByLayer).map(([k, v]) => [k, { ...v }]))
+    }
   }
 
-  increment(field: keyof Omit<CacheMetricsSnapshot, 'hitsByLayer' | 'missesByLayer' | 'resetAt'>, amount = 1): void {
+  increment(
+    field: keyof Omit<CacheMetricsSnapshot, 'hitsByLayer' | 'missesByLayer' | 'latencyByLayer' | 'resetAt'>,
+    amount = 1
+  ): void {
     ;(this.data[field] as number) += amount
   }
 
   incrementLayer(map: 'hitsByLayer' | 'missesByLayer', layerName: string): void {
     this.data[map][layerName] = (this.data[map][layerName] ?? 0) + 1
+  }
+
+  /**
+   * Records a read latency sample for the given layer.
+   * Maintains a rolling average and max using Welford's online algorithm.
+   */
+  recordLatency(layerName: string, durationMs: number): void {
+    const existing = this.data.latencyByLayer[layerName]
+    if (!existing) {
+      this.data.latencyByLayer[layerName] = { avgMs: durationMs, maxMs: durationMs, count: 1 }
+      return
+    }
+
+    existing.count += 1
+    // Welford's online mean update: avg_n = avg_{n-1} + (x - avg_{n-1}) / n
+    existing.avgMs += (durationMs - existing.avgMs) / existing.count
+    if (durationMs > existing.maxMs) {
+      existing.maxMs = durationMs
+    }
   }
 
   reset(): void {
@@ -53,6 +80,7 @@ export class MetricsCollector {
       degradedOperations: 0,
       hitsByLayer: {},
       missesByLayer: {},
+      latencyByLayer: {},
       resetAt: Date.now()
     }
   }

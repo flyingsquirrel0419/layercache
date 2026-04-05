@@ -7,11 +7,19 @@ interface RedisInvalidationBusOptions {
   channel?: string
 }
 
+/**
+ * Redis pub/sub invalidation bus.
+ *
+ * Supports multiple concurrent subscriptions — each `CacheStack` instance
+ * can independently call `subscribe()` and receive its own unsubscribe handle.
+ * The underlying Redis SUBSCRIBE is only issued once and shared across all handlers.
+ */
 export class RedisInvalidationBus implements InvalidationBus {
   private readonly channel: string
   private readonly publisher: Redis
   private readonly subscriber: Redis
-  private activeListener?: (_channel: string, payload: string) => void
+  private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
+  private sharedListener?: (_channel: string, payload: string) => void
 
   constructor(options: RedisInvalidationBusOptions) {
     this.publisher = options.publisher
@@ -20,26 +28,27 @@ export class RedisInvalidationBus implements InvalidationBus {
   }
 
   async subscribe(handler: (message: InvalidationMessage) => Promise<void> | void): Promise<() => Promise<void>> {
-    if (this.activeListener) {
-      throw new Error('RedisInvalidationBus already has an active subscription.')
+    // First subscriber — attach to Redis
+    if (this.handlers.size === 0) {
+      const listener = (_channel: string, payload: string): void => {
+        void this.dispatchToHandlers(payload)
+      }
+      this.sharedListener = listener
+      this.subscriber.on('message', listener)
+      await this.subscriber.subscribe(this.channel)
     }
 
-    const listener = (_channel: string, payload: string): void => {
-      void this.handleMessage(payload, handler)
-    }
-
-    this.activeListener = listener
-    this.subscriber.on('message', listener)
-    await this.subscriber.subscribe(this.channel)
+    this.handlers.add(handler)
 
     return async () => {
-      if (this.activeListener !== listener) {
-        return
-      }
+      this.handlers.delete(handler)
 
-      this.activeListener = undefined
-      this.subscriber.off('message', listener)
-      await this.subscriber.unsubscribe(this.channel)
+      // Last subscriber — detach from Redis
+      if (this.handlers.size === 0 && this.sharedListener) {
+        this.subscriber.off('message', this.sharedListener)
+        this.sharedListener = undefined
+        await this.subscriber.unsubscribe(this.channel)
+      }
     }
   }
 
@@ -47,10 +56,7 @@ export class RedisInvalidationBus implements InvalidationBus {
     await this.publisher.publish(this.channel, JSON.stringify(message))
   }
 
-  private async handleMessage(
-    payload: string,
-    handler: (message: InvalidationMessage) => Promise<void> | void
-  ): Promise<void> {
+  private async dispatchToHandlers(payload: string): Promise<void> {
     let message: InvalidationMessage
 
     try {
@@ -64,11 +70,15 @@ export class RedisInvalidationBus implements InvalidationBus {
       return
     }
 
-    try {
-      await handler(message)
-    } catch (error) {
-      this.reportError('invalidation handler failed', error)
-    }
+    await Promise.all(
+      [...this.handlers].map(async (handler) => {
+        try {
+          await handler(message)
+        } catch (error) {
+          this.reportError('invalidation handler failed', error)
+        }
+      })
+    )
   }
 
   private isInvalidationMessage(value: unknown): value is InvalidationMessage {

@@ -15,29 +15,31 @@ import {
 import { TtlResolver } from './internal/TtlResolver'
 import { TagIndex } from './invalidation/TagIndex'
 import { StampedeGuard } from './stampede/StampedeGuard'
-import type {
-  CacheAdaptiveTtlOptions,
-  CacheCircuitBreakerOptions,
-  CacheGetOptions,
-  CacheHitRateSnapshot,
-  CacheLayer,
-  CacheLogger,
-  CacheMGetEntry,
-  CacheMSetEntry,
-  CacheMetricsSnapshot,
-  CacheSingleFlightExecutionOptions,
-  CacheSnapshotEntry,
-  CacheStackEvents,
-  CacheStackOptions,
-  CacheStatsSnapshot,
-  CacheTagIndex,
-  CacheWarmEntry,
-  CacheWarmOptions,
-  CacheWarmProgress,
-  CacheWrapOptions,
-  CacheWriteOptions,
-  InvalidationMessage,
-  LayerTtlMap
+import {
+  type CacheAdaptiveTtlOptions,
+  type CacheCircuitBreakerOptions,
+  type CacheGetOptions,
+  type CacheHitRateSnapshot,
+  type CacheInspectResult,
+  type CacheLayer,
+  type CacheLogger,
+  type CacheMGetEntry,
+  type CacheMSetEntry,
+  type CacheMetricsSnapshot,
+  CacheMissError,
+  type CacheSingleFlightExecutionOptions,
+  type CacheSnapshotEntry,
+  type CacheStackEvents,
+  type CacheStackOptions,
+  type CacheStatsSnapshot,
+  type CacheTagIndex,
+  type CacheWarmEntry,
+  type CacheWarmOptions,
+  type CacheWarmProgress,
+  type CacheWrapOptions,
+  type CacheWriteOptions,
+  type InvalidationMessage,
+  type LayerTtlMap
 } from './types'
 
 const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
@@ -210,6 +212,19 @@ export class CacheStack extends EventEmitter {
    */
   async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.get(key, fetcher, options)
+  }
+
+  /**
+   * Like `get()`, but throws `CacheMissError` instead of returning `null`.
+   * Useful when the value is expected to exist or the fetcher is expected to
+   * return non-null.
+   */
+  async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
+    const value = await this.get(key, fetcher, options)
+    if (value === null) {
+      throw new CacheMissError(key)
+    }
+    return value
   }
 
   /**
@@ -538,6 +553,65 @@ export class CacheStack extends EventEmitter {
     return this.metricsCollector.hitRate()
   }
 
+  /**
+   * Returns detailed metadata about a single cache key: which layers contain it,
+   * remaining fresh/stale/error TTLs, and associated tags.
+   * Returns `null` if the key does not exist in any layer.
+   */
+  async inspect(key: string): Promise<CacheInspectResult | null> {
+    const normalizedKey = this.validateCacheKey(key)
+    await this.startup
+
+    const foundInLayers: string[] = []
+    let freshTtlSeconds: number | null = null
+    let staleTtlSeconds: number | null = null
+    let errorTtlSeconds: number | null = null
+    let isStale = false
+
+    for (const layer of this.layers) {
+      if (this.shouldSkipLayer(layer)) {
+        continue
+      }
+      const stored = await this.readLayerEntry(layer, normalizedKey)
+      if (stored === null) {
+        continue
+      }
+
+      const resolved = resolveStoredValue(stored)
+      if (resolved.state === 'expired') {
+        continue
+      }
+
+      foundInLayers.push(layer.name)
+
+      // Take TTL info from the first (fastest) layer that has it
+      if (foundInLayers.length === 1 && resolved.envelope) {
+        const now = Date.now()
+        freshTtlSeconds =
+          resolved.envelope.freshUntil !== null
+            ? Math.max(0, Math.ceil((resolved.envelope.freshUntil - now) / 1_000))
+            : null
+        staleTtlSeconds =
+          resolved.envelope.staleUntil !== null
+            ? Math.max(0, Math.ceil((resolved.envelope.staleUntil - now) / 1_000))
+            : null
+        errorTtlSeconds =
+          resolved.envelope.errorUntil !== null
+            ? Math.max(0, Math.ceil((resolved.envelope.errorUntil - now) / 1_000))
+            : null
+        isStale = resolved.state === 'stale-while-revalidate' || resolved.state === 'stale-if-error'
+      }
+    }
+
+    if (foundInLayers.length === 0) {
+      return null
+    }
+
+    const tags = await this.getTagsForKey(normalizedKey)
+
+    return { key: normalizedKey, foundInLayers, freshTtlSeconds, staleTtlSeconds, errorTtlSeconds, isStale, tags }
+  }
+
   async exportState(): Promise<CacheSnapshotEntry[]> {
     await this.startup
     const exported = new Map<string, CacheSnapshotEntry>()
@@ -711,6 +785,11 @@ export class CacheStack extends EventEmitter {
       return null
     }
 
+    // Conditional caching: skip storage if shouldCache returns false
+    if (options?.shouldCache && !options.shouldCache(fetched)) {
+      return fetched
+    }
+
     await this.storeEntry(key, 'value', fetched, options)
     return fetched
   }
@@ -746,7 +825,10 @@ export class CacheStack extends EventEmitter {
     for (let index = 0; index < this.layers.length; index += 1) {
       const layer = this.layers[index]
       if (!layer) continue
+      const readStart = performance.now()
       const stored = await this.readLayerEntry(layer, key)
+      const readDuration = performance.now() - readStart
+      this.metricsCollector.recordLatency(layer.name, readDuration)
       if (stored === null) {
         this.metricsCollector.incrementLayer('missesByLayer', layer.name)
         continue
@@ -1005,6 +1087,13 @@ export class CacheStack extends EventEmitter {
         this.ttlResolver.deleteProfile(key)
       }
     }
+  }
+
+  private async getTagsForKey(key: string): Promise<string[]> {
+    if (this.tagIndex.tagsForKey) {
+      return this.tagIndex.tagsForKey(key)
+    }
+    return []
   }
 
   private formatError(error: unknown): string {

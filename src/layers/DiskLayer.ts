@@ -10,9 +10,17 @@ interface DiskLayerOptions {
   ttl?: number
   name?: string
   serializer?: CacheSerializer
+  /**
+   * Maximum number of cache files to store on disk. When exceeded, the oldest
+   * entries (by file mtime) are evicted to keep the directory bounded.
+   * Defaults to unlimited.
+   */
+  maxFiles?: number
 }
 
 interface DiskEntry {
+  /** Original cache key — stored so that keys() can return real key names. */
+  key: string
   value: unknown
   expiresAt: number | null
 }
@@ -21,6 +29,9 @@ interface DiskEntry {
  * A file-system backed cache layer.
  * Each key is stored as a separate JSON file in `directory`.
  * Useful for persisting cache across process restarts without needing Redis.
+ *
+ * - `keys()` returns the original cache key strings (not hashes).
+ * - `maxFiles` limits on-disk entries; when exceeded, oldest files are evicted.
  *
  * NOTE: DiskLayer is designed for low-to-medium traffic scenarios.
  * For high-throughput workloads, use MemoryLayer + RedisLayer.
@@ -32,12 +43,14 @@ export class DiskLayer implements CacheLayer {
 
   private readonly directory: string
   private readonly serializer: CacheSerializer
+  private readonly maxFiles: number | undefined
 
   constructor(options: DiskLayerOptions) {
     this.directory = options.directory
     this.defaultTtl = options.ttl
     this.name = options.name ?? 'disk'
     this.serializer = options.serializer ?? new JsonSerializer()
+    this.maxFiles = options.maxFiles
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -72,11 +85,16 @@ export class DiskLayer implements CacheLayer {
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
     await fs.mkdir(this.directory, { recursive: true })
     const entry: DiskEntry = {
+      key,
       value,
       expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null
     }
     const payload = this.serializer.serialize(entry)
     await fs.writeFile(this.keyToPath(key), payload)
+
+    if (this.maxFiles !== undefined) {
+      await this.enforceMaxFiles()
+    }
   }
 
   async has(key: string): Promise<boolean> {
@@ -132,6 +150,10 @@ export class DiskLayer implements CacheLayer {
     )
   }
 
+  /**
+   * Returns the original cache key strings stored on disk.
+   * Expired entries are skipped and cleaned up during the scan.
+   */
   async keys(): Promise<string[]> {
     let entries: string[]
     try {
@@ -140,9 +162,37 @@ export class DiskLayer implements CacheLayer {
       return []
     }
 
-    // Keys are encoded in the filenames; we can only return them as filenames
-    // since the hash is one-way. Return the raw hash names stripped of extension.
-    return entries.filter((name) => name.endsWith('.lc')).map((name) => name.slice(0, -3))
+    const lcFiles = entries.filter((name) => name.endsWith('.lc'))
+    const keys: string[] = []
+
+    await Promise.all(
+      lcFiles.map(async (name) => {
+        const filePath = join(this.directory, name)
+        let raw: Buffer
+        try {
+          raw = await fs.readFile(filePath)
+        } catch {
+          return
+        }
+
+        let entry: DiskEntry
+        try {
+          entry = this.serializer.deserialize<DiskEntry>(raw)
+        } catch {
+          await this.safeDelete(filePath)
+          return
+        }
+
+        if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
+          await this.safeDelete(filePath)
+          return
+        }
+
+        keys.push(entry.key)
+      })
+    )
+
+    return keys
   }
 
   async size(): Promise<number> {
@@ -162,5 +212,43 @@ export class DiskLayer implements CacheLayer {
     } catch {
       // File already gone — not an error
     }
+  }
+
+  /**
+   * Removes the oldest files (by mtime) when the directory exceeds maxFiles.
+   */
+  private async enforceMaxFiles(): Promise<void> {
+    if (this.maxFiles === undefined) {
+      return
+    }
+
+    let entries: string[]
+    try {
+      entries = await fs.readdir(this.directory)
+    } catch {
+      return
+    }
+
+    const lcFiles = entries.filter((name) => name.endsWith('.lc'))
+    if (lcFiles.length <= this.maxFiles) {
+      return
+    }
+
+    // Collect mtime for each file and sort oldest-first
+    const withStats = await Promise.all(
+      lcFiles.map(async (name) => {
+        const filePath = join(this.directory, name)
+        try {
+          const stat = await fs.stat(filePath)
+          return { filePath, mtimeMs: stat.mtimeMs }
+        } catch {
+          return { filePath, mtimeMs: 0 }
+        }
+      })
+    )
+
+    withStats.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    const toEvict = withStats.slice(0, lcFiles.length - this.maxFiles)
+    await Promise.all(toEvict.map(({ filePath }) => this.safeDelete(filePath)))
   }
 }

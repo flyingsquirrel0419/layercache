@@ -2,6 +2,7 @@ import type { CacheStack } from './CacheStack'
 import type {
   CacheGetOptions,
   CacheHitRateSnapshot,
+  CacheInspectResult,
   CacheMGetEntry,
   CacheMSetEntry,
   CacheMetricsSnapshot,
@@ -23,6 +24,13 @@ export class CacheNamespace {
 
   async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.cache.getOrSet(this.qualify(key), fetcher, options)
+  }
+
+  /**
+   * Like `get()`, but throws `CacheMissError` instead of returning `null`.
+   */
+  async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
+    return this.cache.getOrThrow(this.qualify(key), fetcher, options)
   }
 
   async has(key: string): Promise<boolean> {
@@ -75,6 +83,13 @@ export class CacheNamespace {
     await this.cache.invalidateByPattern(this.qualify(pattern))
   }
 
+  /**
+   * Returns detailed metadata about a single cache key within this namespace.
+   */
+  async inspect(key: string): Promise<CacheInspectResult | null> {
+    return this.cache.inspect(this.qualify(key))
+  }
+
   wrap<TArgs extends unknown[], TResult>(
     keyPrefix: string,
     fetcher: (...args: TArgs) => Promise<TResult>,
@@ -99,6 +114,19 @@ export class CacheNamespace {
 
   getHitRate(): CacheHitRateSnapshot {
     return this.cache.getHitRate()
+  }
+
+  /**
+   * Creates a nested namespace. Keys are prefixed with `parentPrefix:childPrefix:`.
+   *
+   * ```ts
+   * const tenant = cache.namespace('tenant:abc')
+   * const posts = tenant.namespace('posts')
+   * // keys become: "tenant:abc:posts:mykey"
+   * ```
+   */
+  namespace(childPrefix: string): CacheNamespace {
+    return new CacheNamespace(this.cache, `${this.prefix}:${childPrefix}`)
   }
 
   qualify(key: string): string {

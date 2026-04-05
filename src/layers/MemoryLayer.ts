@@ -25,9 +25,9 @@ interface MemoryLayerOptions {
 interface MemoryEntry {
   value: unknown
   expiresAt: number | null
-  /** Insertion order for FIFO, access count for LFU */
-  frequency: number
-  /** Insertion timestamp, used as tiebreaker */
+  /** Access count — used by LFU to find the least-frequently-used entry. */
+  accessCount: number
+  /** Insertion timestamp in ms — used as a tiebreaker for LFU eviction. */
   insertedAt: number
 }
 
@@ -64,14 +64,15 @@ export class MemoryLayer implements CacheLayer {
     }
 
     if (this.evictionPolicy === 'lru') {
-      // Re-insert to move to "most recently used" position
+      // Re-insert to move to "most recently used" position in Map iteration order
       this.entries.delete(key)
-      entry.frequency += 1
+      entry.accessCount += 1
       this.entries.set(key, entry)
-    } else {
-      // LFU / FIFO: just bump frequency counter
-      entry.frequency += 1
+    } else if (this.evictionPolicy === 'lfu') {
+      // Increment access count so the least-frequently-used entry can be found
+      entry.accessCount += 1
     }
+    // FIFO: access does not affect eviction order — no update needed
 
     return entry.value as T
   }
@@ -89,7 +90,7 @@ export class MemoryLayer implements CacheLayer {
     this.entries.set(key, {
       value,
       expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null,
-      frequency: 0,
+      accessCount: 0,
       insertedAt: Date.now()
     })
 
@@ -167,7 +168,7 @@ export class MemoryLayer implements CacheLayer {
       this.entries.set(entry.key, {
         value: entry.value,
         expiresAt: entry.expiresAt,
-        frequency: 0,
+        accessCount: 0,
         insertedAt: Date.now()
       })
     }
@@ -187,13 +188,13 @@ export class MemoryLayer implements CacheLayer {
       return
     }
 
-    // LFU: evict entry with smallest frequency; break ties by insertedAt (oldest)
+    // LFU: evict entry with smallest accessCount; break ties by insertedAt (oldest)
     let victimKey: string | undefined
-    let minFreq = Number.POSITIVE_INFINITY
+    let minCount = Number.POSITIVE_INFINITY
     let minInsertedAt = Number.POSITIVE_INFINITY
     for (const [key, entry] of this.entries.entries()) {
-      if (entry.frequency < minFreq || (entry.frequency === minFreq && entry.insertedAt < minInsertedAt)) {
-        minFreq = entry.frequency
+      if (entry.accessCount < minCount || (entry.accessCount === minCount && entry.insertedAt < minInsertedAt)) {
+        minCount = entry.accessCount
         minInsertedAt = entry.insertedAt
         victimKey = key
       }

@@ -6,7 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
 [![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
-[![test coverage](https://img.shields.io/badge/tests-102%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
+[![test coverage](https://img.shields.io/badge/tests-132%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
 
 ```
 L1 hit  ~0.01 ms  ← served from memory, zero network
@@ -58,13 +58,17 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Event hooks** — `EventEmitter`-based events for hits, misses, stale serves, errors, and more
 - **Graceful degradation** — skip a failing layer for a configurable retry window
 - **Circuit breaker** — per-key or global; opens after N failures, recovers after cooldown
-- **Compression** — transparent gzip/brotli in `RedisLayer` with a byte threshold
-- **Metrics & stats** — per-layer hit/miss counters, circuit-breaker trips, degraded operations; HTTP stats handler
+- **Compression** — transparent async gzip/brotli in `RedisLayer` (non-blocking) with a byte threshold
+- **Metrics & stats** — per-layer hit/miss counters, **per-layer latency tracking**, circuit-breaker trips, degraded operations; HTTP stats handler
 - **Persistence** — `exportState` / `importState` for in-process snapshots; `persistToFile` / `restoreFromFile` for disk
 - **Admin CLI** — `layercache stats | keys | invalidate` against any Redis URL
-- **Framework integrations** — Fastify plugin, tRPC middleware, GraphQL resolver wrapper
+- **Framework integrations** — Express middleware, Fastify plugin, tRPC middleware, GraphQL resolver wrapper
 - **MessagePack serializer** — drop-in replacement for lower Redis memory usage
-- **NestJS module** — `CacheStackModule.forRoot(...)` with `@InjectCacheStack()`
+- **NestJS module** — `CacheStackModule.forRoot(...)` and `forRootAsync(...)` with `@InjectCacheStack()`
+- **`getOrThrow()`** — throws `CacheMissError` instead of returning `null`, for strict use cases
+- **`inspect()`** — debug a key: see which layers hold it, remaining TTLs, tags, and staleness state
+- **Conditional caching** — `shouldCache` predicate to skip caching specific fetcher results
+- **Nested namespaces** — `namespace('a').namespace('b')` for composable key prefixes
 - **Custom layers** — implement the 5-method `CacheLayer` interface to plug in Memcached, DynamoDB, or anything else
 - **ESM + CJS** — works with both module systems, Node.js ≥ 18
 
@@ -250,6 +254,55 @@ const posts = cache.namespace('posts')
 
 await users.set('123', userData)          // stored as "users:123"
 await users.clear()                       // only deletes "users:*"
+
+// Nested namespaces
+const tenant = cache.namespace('tenant:abc')
+const posts = tenant.namespace('posts')
+await posts.set('1', postData)            // stored as "tenant:abc:posts:1"
+```
+
+### `cache.getOrThrow<T>(key, fetcher?, options?): Promise<T>`
+
+Like `get()`, but throws `CacheMissError` instead of returning `null`. Useful when you know the value must exist (e.g. after a warm-up).
+
+```ts
+import { CacheMissError } from 'layercache'
+
+try {
+  const config = await cache.getOrThrow<Config>('app:config')
+} catch (err) {
+  if (err instanceof CacheMissError) {
+    console.error(`Missing key: ${err.key}`)
+  }
+}
+```
+
+### `cache.inspect(key): Promise<CacheInspectResult | null>`
+
+Returns detailed metadata about a cache key for debugging. Returns `null` if the key is not in any layer.
+
+```ts
+const info = await cache.inspect('user:123')
+// {
+//   key: 'user:123',
+//   foundInLayers: ['memory', 'redis'],
+//   freshTtlSeconds: 45,
+//   staleTtlSeconds: 75,
+//   errorTtlSeconds: 345,
+//   isStale: false,
+//   tags: ['user', 'user:123']
+// }
+```
+
+### Conditional caching with `shouldCache`
+
+Skip caching specific results without affecting the return value:
+
+```ts
+const data = await cache.get('api:response', fetchFromApi, {
+  shouldCache: (value) => (value as any).status === 200
+})
+// If fetchFromApi returns { status: 500 }, the value is returned but NOT cached
 ```
 
 ---
@@ -591,6 +644,26 @@ cache.on('error', ({ event, context }) => logger.error(event, context))
 
 ## Framework integrations
 
+### Express
+
+```ts
+import { CacheStack, MemoryLayer, createExpressCacheMiddleware } from 'layercache'
+
+const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+// Automatically caches GET responses as JSON
+app.get('/api/users', createExpressCacheMiddleware(cache, { ttl: 30 }), (req, res) => {
+  res.json(await db.getUsers())
+})
+
+// Custom key resolver + tag support
+app.get('/api/user/:id', createExpressCacheMiddleware(cache, {
+  keyResolver: (req) => `user:${req.url}`,
+  tags: ['users'],
+  ttl: 60
+}), handler)
+```
+
 ### tRPC
 
 ```ts
@@ -693,6 +766,25 @@ import { CacheStackModule } from '@cachestack/nestjs'
         new MemoryLayer({ ttl: 20 }),
         new RedisLayer({ client: redis, ttl: 300 })
       ]
+    })
+  ]
+})
+export class AppModule {}
+```
+
+Async configuration (resolve dependencies from DI):
+
+```ts
+@Module({
+  imports: [
+    CacheStackModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        layers: [
+          new MemoryLayer({ ttl: 20 }),
+          new RedisLayer({ client: new Redis(config.get('REDIS_URL')), ttl: 300 })
+        ]
+      })
     })
   ]
 })

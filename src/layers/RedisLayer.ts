@@ -1,4 +1,5 @@
-import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib'
+import { promisify } from 'node:util'
+import { brotliCompress, brotliDecompress, gunzip, gzip } from 'node:zlib'
 import type Redis from 'ioredis'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
@@ -7,6 +8,11 @@ import type { CacheLayer, CacheSerializer } from '../types'
 type CompressionAlgorithm = 'gzip' | 'brotli'
 
 const BATCH_DELETE_SIZE = 500
+
+const gzipAsync = promisify(gzip)
+const gunzipAsync = promisify(gunzip)
+const brotliCompressAsync = promisify(brotliCompress)
+const brotliDecompressAsync = promisify(brotliDecompress)
 
 interface RedisLayerOptions {
   client: Redis
@@ -87,7 +93,8 @@ export class RedisLayer implements CacheLayer {
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
-    const payload = this.encodePayload(this.serializer.serialize(value))
+    const serialized = this.serializer.serialize(value)
+    const payload = await this.encodePayload(serialized)
     const normalizedKey = this.withPrefix(key)
 
     if (ttl && ttl > 0) {
@@ -186,7 +193,7 @@ export class RedisLayer implements CacheLayer {
 
   private async deserializeOrDelete<T>(key: string, payload: string | Buffer): Promise<T | null> {
     try {
-      return this.serializer.deserialize<T>(this.decodePayload(payload))
+      return this.serializer.deserialize<T>(await this.decodePayload(payload))
     } catch {
       await this.client.del(this.withPrefix(key)).catch(() => undefined)
       return null
@@ -197,7 +204,11 @@ export class RedisLayer implements CacheLayer {
     return typeof payload === 'string' || Buffer.isBuffer(payload)
   }
 
-  private encodePayload(payload: string | Buffer): string | Buffer {
+  /**
+   * Compresses the payload asynchronously if compression is enabled and the
+   * payload exceeds the threshold. This avoids blocking the event loop.
+   */
+  private async encodePayload(payload: string | Buffer): Promise<string | Buffer> {
     if (!this.compression) {
       return payload
     }
@@ -208,22 +219,25 @@ export class RedisLayer implements CacheLayer {
     }
 
     const header = Buffer.from(`LCZ1:${this.compression}:`)
-    const compressed = this.compression === 'gzip' ? gzipSync(source) : brotliCompressSync(source)
+    const compressed = this.compression === 'gzip' ? await gzipAsync(source) : await brotliCompressAsync(source)
 
     return Buffer.concat([header, compressed])
   }
 
-  private decodePayload(payload: string | Buffer): string | Buffer {
+  /**
+   * Decompresses the payload asynchronously if a compression header is present.
+   */
+  private async decodePayload(payload: string | Buffer): Promise<string | Buffer> {
     if (!Buffer.isBuffer(payload)) {
       return payload
     }
 
     if (payload.subarray(0, 10).toString() === 'LCZ1:gzip:') {
-      return gunzipSync(payload.subarray(10))
+      return gunzipAsync(payload.subarray(10))
     }
 
     if (payload.subarray(0, 12).toString() === 'LCZ1:brotli:') {
-      return brotliDecompressSync(payload.subarray(12))
+      return brotliDecompressAsync(payload.subarray(12))
     }
 
     return payload

@@ -4,6 +4,9 @@ import type { CacheStack } from '../CacheStack'
  * Returns a function that generates a Prometheus-compatible text exposition
  * of the cache metrics from one or more CacheStack instances.
  *
+ * Now includes per-layer latency gauges (`layercache_layer_latency_avg_ms`,
+ * `layercache_layer_latency_max_ms`, `layercache_layer_latency_count`).
+ *
  * Usage example:
  * ```ts
  * const collect = createPrometheusMetricsExporter(cache)
@@ -54,6 +57,12 @@ export function createPrometheusMetricsExporter(
     lines.push('# TYPE layercache_hits_by_layer_total counter')
     lines.push('# HELP layercache_misses_by_layer_total Misses broken down by layer')
     lines.push('# TYPE layercache_misses_by_layer_total counter')
+    lines.push('# HELP layercache_layer_latency_avg_ms Average read latency per layer in milliseconds')
+    lines.push('# TYPE layercache_layer_latency_avg_ms gauge')
+    lines.push('# HELP layercache_layer_latency_max_ms Maximum read latency per layer in milliseconds')
+    lines.push('# TYPE layercache_layer_latency_max_ms gauge')
+    lines.push('# HELP layercache_layer_latency_count Number of read latency samples per layer')
+    lines.push('# TYPE layercache_layer_latency_count counter')
 
     for (const { stack, name } of entries) {
       const m = stack.getMetrics()
@@ -79,6 +88,12 @@ export function createPrometheusMetricsExporter(
       }
       for (const [layerName, count] of Object.entries(m.missesByLayer)) {
         lines.push(`layercache_misses_by_layer_total{${label},layer="${sanitizeLabel(layerName)}"} ${count}`)
+      }
+      for (const [layerName, latency] of Object.entries(m.latencyByLayer)) {
+        const layerLabel = `${label},layer="${sanitizeLabel(layerName)}"`
+        lines.push(`layercache_layer_latency_avg_ms{${layerLabel}} ${latency.avgMs.toFixed(4)}`)
+        lines.push(`layercache_layer_latency_max_ms{${layerLabel}} ${latency.maxMs.toFixed(4)}`)
+        lines.push(`layercache_layer_latency_count{${layerLabel}} ${latency.count}`)
       }
     }
 

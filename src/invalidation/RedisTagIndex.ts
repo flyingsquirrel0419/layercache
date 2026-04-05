@@ -65,6 +65,10 @@ export class RedisTagIndex implements CacheTagIndex {
     return this.client.smembers(this.tagKeysKey(tag))
   }
 
+  async tagsForKey(key: string): Promise<string[]> {
+    return this.client.smembers(this.keyTagsKey(key))
+  }
+
   async matchPattern(pattern: string): Promise<string[]> {
     const matches: string[] = []
     let cursor = '0'
