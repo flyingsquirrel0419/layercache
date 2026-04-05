@@ -1,17 +1,33 @@
 import type { CacheTagIndex } from '../types'
 import { PatternMatcher } from './PatternMatcher'
 
+interface TagIndexOptions {
+  /**
+   * Maximum number of keys tracked in `knownKeys`. When exceeded, the oldest
+   * 10 % of keys are pruned to keep memory bounded.
+   * Defaults to unlimited.
+   */
+  maxKnownKeys?: number
+}
+
 export class TagIndex implements CacheTagIndex {
   private readonly tagToKeys = new Map<string, Set<string>>()
   private readonly keyToTags = new Map<string, Set<string>>()
   private readonly knownKeys = new Set<string>()
+  private readonly maxKnownKeys: number | undefined
+
+  constructor(options: TagIndexOptions = {}) {
+    this.maxKnownKeys = options.maxKnownKeys
+  }
 
   async touch(key: string): Promise<void> {
     this.knownKeys.add(key)
+    this.pruneKnownKeysIfNeeded()
   }
 
   async track(key: string, tags: string[]): Promise<void> {
     this.knownKeys.add(key)
+    this.pruneKnownKeysIfNeeded()
 
     if (tags.length === 0) {
       return
@@ -60,6 +76,10 @@ export class TagIndex implements CacheTagIndex {
     return [...(this.tagToKeys.get(tag) ?? new Set<string>())]
   }
 
+  async tagsForKey(key: string): Promise<string[]> {
+    return [...(this.keyToTags.get(key) ?? new Set<string>())]
+  }
+
   async matchPattern(pattern: string): Promise<string[]> {
     return [...this.knownKeys].filter((key) => PatternMatcher.matches(pattern, key))
   }
@@ -68,5 +88,23 @@ export class TagIndex implements CacheTagIndex {
     this.tagToKeys.clear()
     this.keyToTags.clear()
     this.knownKeys.clear()
+  }
+
+  private pruneKnownKeysIfNeeded(): void {
+    if (this.maxKnownKeys === undefined || this.knownKeys.size <= this.maxKnownKeys) {
+      return
+    }
+
+    // Remove the oldest 10% of keys (Set iteration preserves insertion order)
+    const toRemove = Math.ceil(this.maxKnownKeys * 0.1)
+    let removed = 0
+    for (const key of this.knownKeys) {
+      if (removed >= toRemove) {
+        break
+      }
+      this.knownKeys.delete(key)
+      this.keyToTags.delete(key)
+      removed += 1
+    }
   }
 }

@@ -60,7 +60,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         const tagIndex = new RedisTagIndex({ client: redis, prefix: args.tagIndexPrefix ?? 'layercache:tag-index' })
         const keys = await tagIndex.keysForTag(args.tag)
         if (keys.length > 0) {
-          await redis.del(...keys)
+          await batchDelete(redis, keys)
         }
         process.stdout.write(`${JSON.stringify({ deletedKeys: keys.length, tag: args.tag }, null, 2)}\n`)
         return
@@ -68,7 +68,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
       const keys = await scanKeys(redis, args.pattern ?? '*')
       if (keys.length > 0) {
-        await redis.del(...keys)
+        await batchDelete(redis, keys)
       }
       process.stdout.write(`${JSON.stringify({ deletedKeys: keys.length, pattern: args.pattern ?? '*' }, null, 2)}\n`)
       return
@@ -128,6 +128,15 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return parsed
+}
+
+const BATCH_DELETE_SIZE = 500
+
+async function batchDelete(redis: Redis, keys: string[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += BATCH_DELETE_SIZE) {
+    const batch = keys.slice(i, i + BATCH_DELETE_SIZE)
+    await redis.del(...batch)
+  }
 }
 
 async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {

@@ -1,4 +1,6 @@
-import type { CacheLayer } from '../types'
+import { unwrapStoredValue } from '../internal/StoredValue'
+import { JsonSerializer } from '../serialization/JsonSerializer'
+import type { CacheLayer, CacheSerializer } from '../types'
 
 /**
  * Minimal interface that MemcachedLayer expects from a Memcached client.
@@ -19,10 +21,14 @@ interface MemcachedLayerOptions {
   ttl?: number
   name?: string
   keyPrefix?: string
+  serializer?: CacheSerializer
 }
 
 /**
  * Memcached-backed cache layer.
+ *
+ * Now supports pluggable serializers (default: JSON), StoredValueEnvelope
+ * for stale-while-revalidate / stale-if-error semantics, and bulk reads.
  *
  * Example usage with `memjs`:
  * ```ts
@@ -43,32 +49,47 @@ export class MemcachedLayer implements CacheLayer {
 
   private readonly client: MemcachedClient
   private readonly keyPrefix: string
+  private readonly serializer: CacheSerializer
 
   constructor(options: MemcachedLayerOptions) {
     this.client = options.client
     this.defaultTtl = options.ttl
     this.name = options.name ?? 'memcached'
     this.keyPrefix = options.keyPrefix ?? ''
+    this.serializer = options.serializer ?? new JsonSerializer()
   }
 
   async get<T>(key: string): Promise<T | null> {
+    return unwrapStoredValue<T>(await this.getEntry<T>(key))
+  }
+
+  async getEntry<T = unknown>(key: string): Promise<T | null> {
     const result = await this.client.get(this.withPrefix(key))
     if (!result || result.value === null) {
       return null
     }
 
     try {
-      return JSON.parse(result.value.toString('utf8')) as T
+      return this.serializer.deserialize<T>(result.value)
     } catch {
       return null
     }
   }
 
+  async getMany<T>(keys: string[]): Promise<Array<T | null>> {
+    return Promise.all(keys.map((key) => this.getEntry<T>(key)))
+  }
+
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
-    const payload = JSON.stringify(value)
-    await this.client.set(this.withPrefix(key), payload, {
+    const payload = this.serializer.serialize(value)
+    await this.client.set(this.withPrefix(key), payload as string | Buffer, {
       expires: ttl && ttl > 0 ? ttl : undefined
     })
+  }
+
+  async has(key: string): Promise<boolean> {
+    const result = await this.client.get(this.withPrefix(key))
+    return result !== null && result.value !== null
   }
 
   async delete(key: string): Promise<void> {

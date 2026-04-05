@@ -78,16 +78,41 @@ describe('RedisInvalidationBus', () => {
     subscriber.disconnect()
   })
 
-  it('prevents multiple active subscriptions on the same bus instance', async () => {
+  it('supports multiple concurrent subscriptions', async () => {
     const publisher = new Redis()
     const subscriber = publisher.duplicate()
-    const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:duplicate-subscribe' })
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:multi-subscribe' })
 
-    const unsubscribe = await bus.subscribe(() => undefined)
+    const handler1 = vi.fn()
+    const handler2 = vi.fn()
 
-    await expect(bus.subscribe(() => undefined)).rejects.toThrow(/active subscription/i)
+    const unsub1 = await bus.subscribe(handler1)
+    const unsub2 = await bus.subscribe(handler2)
 
-    await unsubscribe()
+    await publisher.publish(
+      'layercache:test:multi-subscribe',
+      JSON.stringify({ scope: 'key', sourceId: 'inst', keys: ['k'], operation: 'delete' })
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler1).toHaveBeenCalledTimes(1)
+    expect(handler2).toHaveBeenCalledTimes(1)
+
+    // Unsubscribing one handler should not affect the other
+    await unsub1()
+
+    await publisher.publish(
+      'layercache:test:multi-subscribe',
+      JSON.stringify({ scope: 'clear', sourceId: 'inst', operation: 'clear' })
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler1).toHaveBeenCalledTimes(1) // no more calls
+    expect(handler2).toHaveBeenCalledTimes(2)
+
+    await unsub2()
     publisher.disconnect()
     subscriber.disconnect()
   })

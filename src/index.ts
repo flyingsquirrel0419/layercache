@@ -7,6 +7,7 @@ export { TagIndex } from './invalidation/TagIndex'
 export { createCacheStatsHandler } from './http/createCacheStatsHandler'
 export { createCachedMethodDecorator } from './decorators/createCachedMethodDecorator'
 export { createFastifyLayercachePlugin } from './integrations/fastify'
+export { createExpressCacheMiddleware } from './integrations/express'
 export { cacheGraphqlResolver } from './integrations/graphql'
 export { createTrpcCacheMiddleware } from './integrations/trpc'
 export { MemoryLayer } from './layers/MemoryLayer'
@@ -20,31 +21,34 @@ export { MsgpackSerializer } from './serialization/MsgpackSerializer'
 export { RedisSingleFlightCoordinator } from './singleflight/RedisSingleFlightCoordinator'
 export { StampedeGuard } from './stampede/StampedeGuard'
 export { createPrometheusMetricsExporter } from './metrics/PrometheusExporter'
-export type {
-  CacheSingleFlightCoordinator,
-  CacheSingleFlightExecutionOptions,
-  CacheAdaptiveTtlOptions,
-  CacheCircuitBreakerOptions,
-  CacheDegradationOptions,
-  CacheHitRateSnapshot,
-  CacheStackEvents,
-  CacheStackOptions,
-  CacheStatsSnapshot,
-  CacheSnapshotEntry,
-  CacheWarmEntry,
-  CacheWarmOptions,
-  CacheWarmProgress,
-  CacheWrapOptions,
-  CacheGetOptions,
-  CacheLayer,
-  CacheLogger,
-  CacheMGetEntry,
-  CacheMetricsSnapshot,
-  CacheMSetEntry,
-  CacheTagIndex,
-  CacheSerializer,
-  CacheWriteOptions,
-  InvalidationBus,
-  InvalidationMessage,
-  LayerTtlMap
+export {
+  CacheMissError,
+  type CacheSingleFlightCoordinator,
+  type CacheSingleFlightExecutionOptions,
+  type CacheAdaptiveTtlOptions,
+  type CacheCircuitBreakerOptions,
+  type CacheDegradationOptions,
+  type CacheHitRateSnapshot,
+  type CacheInspectResult,
+  type CacheLayerLatency,
+  type CacheStackEvents,
+  type CacheStackOptions,
+  type CacheStatsSnapshot,
+  type CacheSnapshotEntry,
+  type CacheWarmEntry,
+  type CacheWarmOptions,
+  type CacheWarmProgress,
+  type CacheWrapOptions,
+  type CacheGetOptions,
+  type CacheLayer,
+  type CacheLogger,
+  type CacheMGetEntry,
+  type CacheMetricsSnapshot,
+  type CacheMSetEntry,
+  type CacheTagIndex,
+  type CacheSerializer,
+  type CacheWriteOptions,
+  type InvalidationBus,
+  type InvalidationMessage,
+  type LayerTtlMap
 } from './types'
