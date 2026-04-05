@@ -6,7 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
 [![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
-[![test coverage](https://img.shields.io/badge/tests-49%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
+[![test coverage](https://img.shields.io/badge/tests-102%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
 
 ```
 L1 hit  ~0.01 ms  ← served from memory, zero network
