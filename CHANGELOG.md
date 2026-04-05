@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — 2026-04-05
+
+- No unreleased changes yet.
+
+## [1.1.0] — 2026-04-05
 
 ### Added
 - **`has(key)`** method on `CacheStack`, `CacheNamespace`, `MemoryLayer`, and `RedisLayer` — check key existence without deserializing the value.
@@ -43,12 +47,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Memory leak**: `accessProfiles` map is now pruned when it exceeds `maxProfileEntries` entries, and cleared/per-key deleted on `clear()` / `delete()` respectively.
 - **Memory leak**: `circuitBreakers` map now has bounded size with auto-pruning.
 
-## [1.0.2] — 2025-04-01
+## [1.0.2] — 2026-04-04
+
+### Added
+- Growth-roadmap release: `wrap()`, `warm()`, `namespace()`, `getStats()`, snapshot import/export, file persistence, Fastify/tRPC/GraphQL/NestJS integrations, admin CLI, and expanded docs.
+- Redis payload compression support and richer operational test coverage.
+
+### Changed
+- README and docs were expanded to document the production feature set and usage patterns.
 
 ### Fixed
-- Initial public release patch fixes.
+- Follow-up review bugs around tRPC null handling, access-profile cleanup, sliding TTL propagation, method-decorator wrapping, and snapshot validation.
 
-## [1.0.0] — 2025-03-15
+## [1.0.1] — 2026-04-03
+
+### Added
+- Operational caching features including negative caching, stale-while-revalidate, stale-if-error, TTL jitter, best-effort writes, and Redis-backed distributed single-flight coordination.
+- Stored-value envelopes and dedicated operational feature tests.
+
+## [1.0.0] — 2026-04-03
 
 ### Added
 - Initial release with `MemoryLayer`, `RedisLayer`, `CacheStack`, stampede prevention, tag & pattern invalidation, stale-while-revalidate, stale-if-error, adaptive TTL, circuit breaker, graceful degradation, compression, NestJS module, Fastify plugin, tRPC middleware, GraphQL helper, and admin CLI.
