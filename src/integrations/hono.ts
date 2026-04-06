@@ -29,9 +29,8 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
       return
     }
 
-    const key = options.keyResolver
-      ? options.keyResolver(context.req)
-      : `${method}:${context.req.path ?? context.req.url ?? '/'}`
+    const rawPath = context.req.path ?? context.req.url ?? '/'
+    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeUrl(rawPath)}`
 
     const cached = await cache.get(key, undefined, options)
     if (cached !== null) {
@@ -44,10 +43,22 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     const originalJson = context.json.bind(context)
     context.json = (body: unknown, status?: number) => {
       context.header?.('x-cache', 'MISS')
-      void cache.set(key, body, options)
+      cache.set(key, body, options).catch((err: unknown) => {
+        cache.emit('error', err instanceof Error ? err : new Error(String(err)))
+      })
       return originalJson(body, status)
     }
 
     await next()
+  }
+}
+
+function normalizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url, 'http://localhost')
+    parsed.searchParams.sort()
+    return decodeURIComponent(parsed.pathname) + parsed.search
+  } catch {
+    return url
   }
 }

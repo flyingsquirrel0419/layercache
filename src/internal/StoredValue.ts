@@ -20,13 +20,39 @@ export interface ResolvedStoredValue<T = unknown> {
 }
 
 export function isStoredValueEnvelope(value: unknown): value is StoredValueEnvelope {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    '__layercache' in value &&
-    (value as Record<string, unknown>).__layercache === 1 &&
-    'kind' in value
-  )
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const v = value as Record<string, unknown>
+
+  if (v.__layercache !== 1) {
+    return false
+  }
+
+  if (v.kind !== 'value' && v.kind !== 'empty') {
+    return false
+  }
+
+  if (v.freshUntil !== null && typeof v.freshUntil !== 'number') {
+    return false
+  }
+
+  if (v.staleUntil !== null && typeof v.staleUntil !== 'number') {
+    return false
+  }
+
+  if (v.errorUntil !== null && typeof v.errorUntil !== 'number') {
+    return false
+  }
+
+  // Reject unreasonably large timestamps (> 10 years from now)
+  const maxTimestamp = Date.now() + 10 * 365 * 24 * 60 * 60 * 1_000
+  if (typeof v.freshUntil === 'number' && v.freshUntil > maxTimestamp) {
+    return false
+  }
+
+  return true
 }
 
 export function createStoredValueEnvelope(options: {

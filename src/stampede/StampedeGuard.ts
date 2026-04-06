@@ -15,7 +15,10 @@ export class StampedeGuard {
       return await entry.mutex.runExclusive(task)
     } finally {
       entry.references -= 1
-      if (entry.references === 0 && !entry.mutex.isLocked()) {
+      // Re-read from the map to ensure we're operating on the current entry,
+      // not a stale reference that may have been replaced under concurrency.
+      const current = this.mutexes.get(key)
+      if (current === entry && entry.references === 0 && !entry.mutex.isLocked()) {
         this.mutexes.delete(key)
       }
     }

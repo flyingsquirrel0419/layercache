@@ -14,7 +14,7 @@ export function createFastifyLayercachePlugin(cache: CacheStack, options: Fastif
   return async (fastify: FastifyLike): Promise<void> => {
     fastify.decorate('cache', cache)
 
-    if (options.exposeStatsRoute !== false && fastify.get) {
+    if (options.exposeStatsRoute === true && fastify.get) {
       fastify.get(options.statsPath ?? '/cache/stats', async () => cache.getStats())
     }
   }

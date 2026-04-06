@@ -103,6 +103,6 @@ export function createPrometheusMetricsExporter(
 }
 
 function sanitizeLabel(value: string): string {
-  // Prometheus label values must not contain double quotes or newlines
-  return value.replace(/["\\\n]/g, '_')
+  // Prometheus label values must not contain double quotes, backslashes, or newlines/carriage returns
+  return value.replace(/["\\\n\r]/g, '_')
 }

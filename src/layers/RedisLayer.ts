@@ -24,6 +24,11 @@ interface RedisLayerOptions {
   scanCount?: number
   compression?: CompressionAlgorithm
   compressionThreshold?: number
+  /**
+   * Maximum number of bytes allowed after decompression.
+   * Prevents decompression bomb attacks. Defaults to 64 MiB.
+   */
+  decompressionMaxBytes?: number
   disconnectOnDispose?: boolean
 }
 
@@ -39,6 +44,7 @@ export class RedisLayer implements CacheLayer {
   private readonly scanCount: number
   private readonly compression?: CompressionAlgorithm
   private readonly compressionThreshold: number
+  private readonly decompressionMaxBytes: number
   private readonly disconnectOnDispose: boolean
 
   constructor(options: RedisLayerOptions) {
@@ -53,6 +59,7 @@ export class RedisLayer implements CacheLayer {
     this.scanCount = options.scanCount ?? 100
     this.compression = options.compression
     this.compressionThreshold = options.compressionThreshold ?? 1_024
+    this.decompressionMaxBytes = options.decompressionMaxBytes ?? 64 * 1_024 * 1_024
     this.disconnectOnDispose = options.disconnectOnDispose ?? false
   }
 
@@ -299,6 +306,7 @@ export class RedisLayer implements CacheLayer {
 
   /**
    * Decompresses the payload asynchronously if a compression header is present.
+   * Enforces a maximum decompressed size to prevent decompression bomb attacks.
    */
   private async decodePayload(payload: string | Buffer): Promise<string | Buffer> {
     if (!Buffer.isBuffer(payload)) {
@@ -306,11 +314,23 @@ export class RedisLayer implements CacheLayer {
     }
 
     if (payload.subarray(0, 10).toString() === 'LCZ1:gzip:') {
-      return gunzipAsync(payload.subarray(10))
+      const decompressed = await gunzipAsync(payload.subarray(10))
+      if (decompressed.byteLength > this.decompressionMaxBytes) {
+        throw new Error(
+          `Decompressed payload (${decompressed.byteLength} bytes) exceeds decompressionMaxBytes limit (${this.decompressionMaxBytes} bytes).`
+        )
+      }
+      return decompressed
     }
 
     if (payload.subarray(0, 12).toString() === 'LCZ1:brotli:') {
-      return brotliDecompressAsync(payload.subarray(12))
+      const decompressed = await brotliDecompressAsync(payload.subarray(12))
+      if (decompressed.byteLength > this.decompressionMaxBytes) {
+        throw new Error(
+          `Decompressed payload (${decompressed.byteLength} bytes) exceeds decompressionMaxBytes limit (${this.decompressionMaxBytes} bytes).`
+        )
+      }
+      return decompressed
     }
 
     return payload
