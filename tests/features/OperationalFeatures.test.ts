@@ -178,6 +178,32 @@ describe('operational features', () => {
     })
   })
 
+  it('times out hung background refreshes so future refresh attempts are not blocked forever', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      backgroundRefreshTimeoutMs: 20
+    })
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    const fetcher = vi.fn(
+      async () =>
+        await new Promise<{ version: number }>(() => {
+          // intentionally hangs
+        })
+    )
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
+
+    await new Promise((resolve) => setTimeout(resolve, 35))
+
+    expect(cache.getStats().backgroundRefreshes).toBe(0)
+    expect(cache.getMetrics().refreshErrors).toBe(1)
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('returns stale values when refresh fails inside stale-if-error window', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })
@@ -352,6 +378,24 @@ describe('operational features', () => {
     )
 
     expect(maxConcurrent).toBeGreaterThan(1)
+  })
+
+  it('does not fail fetches when shouldCache throws', async () => {
+    const warn = vi.fn()
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      logger: { warn }
+    })
+
+    await expect(
+      cache.get('user:1', async () => ({ id: 1 }), {
+        shouldCache: () => {
+          throw new Error('bad predicate')
+        }
+      })
+    ).resolves.toEqual({ id: 1 })
+
+    await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
+    expect(warn).toHaveBeenCalled()
   })
 
   it('validates cache keys and runtime ttl options', async () => {

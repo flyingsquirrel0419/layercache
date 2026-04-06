@@ -94,8 +94,13 @@ export class DiskLayer implements CacheLayer {
       const payload = this.serializer.serialize(entry)
       const targetPath = this.keyToPath(key)
       const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-      await fs.writeFile(tempPath, payload)
-      await fs.rename(tempPath, targetPath)
+      try {
+        await fs.writeFile(tempPath, payload)
+        await fs.rename(tempPath, targetPath)
+      } catch (error) {
+        await this.safeDelete(tempPath)
+        throw error
+      }
 
       if (this.maxFiles !== undefined) {
         await this.enforceMaxFiles()
@@ -108,9 +113,7 @@ export class DiskLayer implements CacheLayer {
   }
 
   async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
-    for (const entry of entries) {
-      await this.set(entry.key, entry.value, entry.ttl)
-    }
+    await Promise.all(entries.map((entry) => this.set(entry.key, entry.value, entry.ttl)))
   }
 
   async has(key: string): Promise<boolean> {

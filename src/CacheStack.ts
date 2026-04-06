@@ -12,7 +12,9 @@ import {
   resolveStoredValue
 } from './internal/StoredValue'
 import { TtlResolver } from './internal/TtlResolver'
+import { PatternMatcher } from './invalidation/PatternMatcher'
 import { TagIndex } from './invalidation/TagIndex'
+import { JsonSerializer } from './serialization/JsonSerializer'
 import { StampedeGuard } from './stampede/StampedeGuard'
 import {
   type CacheAdaptiveTtlOptions,
@@ -48,8 +50,10 @@ import {
 const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
 const DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS = 5_000
 const DEFAULT_SINGLE_FLIGHT_POLL_MS = 50
+const DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
 const MAX_CACHE_KEY_LENGTH = 1_024
 const DEFAULT_MAX_PROFILE_ENTRIES = 100_000
+const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
 type ReadMode = 'allow-stale' | 'fresh-only'
 type CacheWriteKind = 'value' | 'empty'
@@ -118,6 +122,7 @@ export class CacheStack extends EventEmitter {
   private readonly logger: CacheLogger
   private readonly tagIndex: CacheTagIndex
   private readonly fetchRateLimiter = new FetchRateLimiter()
+  private readonly snapshotSerializer = new JsonSerializer()
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
   private readonly layerDegradedUntil = new Map<string, number>()
   private readonly ttlResolver: TtlResolver
@@ -126,6 +131,7 @@ export class CacheStack extends EventEmitter {
   private readonly writeBehindQueue: Array<() => Promise<void>> = []
   private writeBehindTimer?: ReturnType<typeof setInterval>
   private writeBehindFlushPromise?: Promise<void>
+  private generationCleanupPromise?: Promise<void>
   private isDisconnecting = false
   private disconnectPromise?: Promise<void>
 
@@ -156,6 +162,20 @@ export class CacheStack extends EventEmitter {
     this.logger =
       typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
+    if (!options.tagIndex && layers.some((layer) => layer.isLocal === false)) {
+      this.logger.warn?.(
+        'Using the default in-memory TagIndex with a shared cache layer only tracks keys seen by this process. Use RedisTagIndex for cross-instance tag invalidation.'
+      )
+    }
+    if (
+      options.invalidationBus &&
+      options.broadcastL1Invalidation === undefined &&
+      options.publishSetInvalidation === undefined
+    ) {
+      this.logger.warn?.(
+        'broadcastL1Invalidation defaults to false when an invalidation bus is configured; opt in explicitly if write-triggered L1 invalidation is desired.'
+      )
+    }
     this.initializeWriteBehind(options.writeBehind)
     this.startup = this.initialize()
   }
@@ -170,7 +190,14 @@ export class CacheStack extends EventEmitter {
     const normalizedKey = this.qualifyKey(this.validateCacheKey(key))
     this.validateWriteOptions(options)
     await this.awaitStartup('get')
+    return this.getPrepared(normalizedKey, fetcher, options)
+  }
 
+  private async getPrepared<T>(
+    normalizedKey: string,
+    fetcher?: () => Promise<T>,
+    options?: CacheGetOptions
+  ): Promise<T | null> {
     const hit = await this.readFromLayers<T>(normalizedKey, options, 'allow-stale')
     if (hit.found) {
       this.ttlResolver.recordAccess(normalizedKey)
@@ -258,6 +285,7 @@ export class CacheStack extends EventEmitter {
             return true
           }
         } catch {
+          await this.reportRecoverableLayerFailure(layer, 'has', new Error(`has() failed for layer "${layer.name}"`))
           // fall through to next layer
         }
       } else {
@@ -266,7 +294,8 @@ export class CacheStack extends EventEmitter {
           if (value !== null) {
             return true
           }
-        } catch {
+        } catch (error) {
+          await this.reportRecoverableLayerFailure(layer, 'has', error)
           // fall through
         }
       }
@@ -368,6 +397,7 @@ export class CacheStack extends EventEmitter {
     normalizedEntries.forEach((entry) => this.validateWriteOptions(entry.options))
     const canFastPath = normalizedEntries.every((entry) => entry.fetch === undefined && entry.options === undefined)
     if (!canFastPath) {
+      await this.awaitStartup('mget')
       const pendingReads = new Map<
         string,
         {
@@ -382,7 +412,7 @@ export class CacheStack extends EventEmitter {
           const optionsSignature = this.serializeOptions(entry.options)
           const existing = pendingReads.get(entry.key)
           if (!existing) {
-            const promise = this.get(entry.key, entry.fetch, entry.options)
+            const promise = this.getPrepared(entry.key, entry.fetch, entry.options)
             pendingReads.set(entry.key, {
               promise,
               fetch: entry.fetch,
@@ -551,7 +581,7 @@ export class CacheStack extends EventEmitter {
 
   async invalidateByPattern(pattern: string): Promise<void> {
     await this.awaitStartup('invalidateByPattern')
-    const keys = await this.tagIndex.matchPattern(this.qualifyPattern(pattern))
+    const keys = await this.collectKeysMatchingPattern(this.qualifyPattern(pattern))
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -559,9 +589,7 @@ export class CacheStack extends EventEmitter {
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.awaitStartup('invalidateByPrefix')
     const qualifiedPrefix = this.qualifyKey(this.validateCacheKey(prefix))
-    const keys = this.tagIndex.keysForPrefix
-      ? await this.tagIndex.keysForPrefix(qualifiedPrefix)
-      : await this.tagIndex.matchPattern(`${qualifiedPrefix}*`)
+    const keys = await this.collectKeysWithPrefix(qualifiedPrefix)
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -620,7 +648,15 @@ export class CacheStack extends EventEmitter {
 
   bumpGeneration(nextGeneration?: number): number {
     const current = this.currentGeneration ?? 0
+    const previousGeneration = this.currentGeneration
     this.currentGeneration = nextGeneration ?? current + 1
+    if (
+      previousGeneration !== undefined &&
+      previousGeneration !== this.currentGeneration &&
+      this.shouldCleanupGenerations()
+    ) {
+      this.scheduleGenerationCleanup(previousGeneration)
+    }
     return this.currentGeneration
   }
 
@@ -731,29 +767,29 @@ export class CacheStack extends EventEmitter {
     this.assertActive('persistToFile')
     const snapshot = await this.exportState()
     const { promises: fs } = await import('node:fs')
-    await fs.writeFile(filePath, JSON.stringify(snapshot, null, 2), 'utf8')
+    await fs.writeFile(await this.validateSnapshotFilePath(filePath), JSON.stringify(snapshot, null, 2), 'utf8')
   }
 
   async restoreFromFile(filePath: string): Promise<void> {
     this.assertActive('restoreFromFile')
     const { promises: fs } = await import('node:fs')
-    const raw = await fs.readFile(filePath, 'utf8')
+    const raw = await fs.readFile(await this.validateSnapshotFilePath(filePath), 'utf8')
     let parsed: unknown
     try {
-      // Use Object.create(null) as reviver base to prevent __proto__ pollution
-      parsed = JSON.parse(raw, (_key, value: unknown) => {
-        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-          return Object.assign(Object.create(null) as Record<string, unknown>, value)
-        }
-        return value
-      })
+      parsed = JSON.parse(raw)
     } catch (cause) {
       throw new Error(`Invalid snapshot file: could not parse JSON (${this.formatError(cause)})`)
     }
     if (!this.isCacheSnapshotEntries(parsed)) {
       throw new Error('Invalid snapshot file: expected an array of { key: string, value, ttl? } entries')
     }
-    await this.importState(parsed)
+    await this.importState(
+      parsed.map((entry) => ({
+        key: entry.key,
+        value: this.sanitizeSnapshotValue(entry.value),
+        ttl: entry.ttl
+      }))
+    )
   }
 
   async disconnect(): Promise<void> {
@@ -763,6 +799,7 @@ export class CacheStack extends EventEmitter {
         await this.startup
         await this.unsubscribeInvalidation?.()
         await this.flushWriteBehindQueue()
+        await this.generationCleanupPromise
         await Promise.allSettled([...this.backgroundRefreshes.values()])
         if (this.writeBehindTimer) {
           clearInterval(this.writeBehindTimer)
@@ -874,8 +911,14 @@ export class CacheStack extends EventEmitter {
     }
 
     // Conditional caching: skip storage if shouldCache returns false
-    if (options?.shouldCache && !options.shouldCache(fetched)) {
-      return fetched
+    if (options?.shouldCache) {
+      try {
+        if (!options.shouldCache(fetched)) {
+          return fetched
+        }
+      } catch (error) {
+        this.logger.warn?.('shouldCache-error', { key, error: this.formatError(error) })
+      }
     }
 
     await this.storeEntry(key, 'value', fetched, options)
@@ -1176,7 +1219,7 @@ export class CacheStack extends EventEmitter {
     const refresh = (async () => {
       this.metricsCollector.increment('refreshes')
       try {
-        await this.fetchWithGuards(key, fetcher, options)
+        await this.runBackgroundRefresh(key, fetcher, options)
       } catch (error) {
         this.metricsCollector.increment('refreshErrors')
         this.logger.debug?.('refresh-error', { key, error: this.formatError(error) })
@@ -1186,6 +1229,22 @@ export class CacheStack extends EventEmitter {
     })()
 
     this.backgroundRefreshes.set(key, refresh)
+  }
+
+  private async runBackgroundRefresh<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    options?: CacheGetOptions
+  ): Promise<void> {
+    const timeoutMs = this.options.backgroundRefreshTimeoutMs ?? DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS
+    await this.fetchWithGuards(
+      key,
+      () =>
+        this.withTimeout(fetcher(), timeoutMs, () => {
+          return new Error(`Background refresh timed out after ${timeoutMs}ms for key "${key}".`)
+        }),
+      options
+    )
   }
 
   private resolveSingleFlightOptions(): CacheSingleFlightExecutionOptions {
@@ -1271,8 +1330,130 @@ export class CacheStack extends EventEmitter {
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error): Promise<T> {
+    if (timeoutMs <= 0) {
+      return promise
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(onTimeout()), timeoutMs)
+          timer.unref?.()
+        })
+      ])
+    } finally {
+      if (timer) {
+        clearTimeout(timer)
+      }
+    }
+  }
+
   private shouldBroadcastL1Invalidation(): boolean {
-    return this.options.broadcastL1Invalidation ?? this.options.publishSetInvalidation ?? true
+    return this.options.broadcastL1Invalidation ?? this.options.publishSetInvalidation ?? false
+  }
+
+  private async collectKeysWithPrefix(prefix: string): Promise<string[]> {
+    const matches = new Set(
+      this.tagIndex.keysForPrefix
+        ? await this.tagIndex.keysForPrefix(prefix)
+        : await this.tagIndex.matchPattern(`${prefix}*`)
+    )
+
+    await Promise.all(
+      this.layers.map(async (layer) => {
+        if (!layer.keys || this.shouldSkipLayer(layer)) {
+          return
+        }
+
+        try {
+          const keys = await layer.keys()
+          for (const key of keys) {
+            if (key.startsWith(prefix)) {
+              matches.add(key)
+            }
+          }
+        } catch (error) {
+          await this.handleLayerFailure(layer, 'invalidate-prefix-scan', error)
+        }
+      })
+    )
+
+    return [...matches]
+  }
+
+  private async collectKeysMatchingPattern(pattern: string): Promise<string[]> {
+    const matches = new Set(await this.tagIndex.matchPattern(pattern))
+
+    await Promise.all(
+      this.layers.map(async (layer) => {
+        if (!layer.keys || this.shouldSkipLayer(layer)) {
+          return
+        }
+
+        try {
+          const keys = await layer.keys()
+          for (const key of keys) {
+            if (PatternMatcher.matches(pattern, key)) {
+              matches.add(key)
+            }
+          }
+        } catch (error) {
+          await this.handleLayerFailure(layer, 'invalidate-pattern-scan', error)
+        }
+      })
+    )
+
+    return [...matches]
+  }
+
+  private shouldCleanupGenerations(): boolean {
+    return Boolean(this.options.generationCleanup)
+  }
+
+  private generationCleanupBatchSize(): number {
+    const configured =
+      typeof this.options.generationCleanup === 'object' ? this.options.generationCleanup.batchSize : undefined
+    return configured ?? 500
+  }
+
+  private scheduleGenerationCleanup(generation: number): void {
+    const task = (this.generationCleanupPromise ?? Promise.resolve())
+      .then(() => this.cleanupGeneration(generation))
+      .catch((error) => {
+        this.logger.warn?.('generation-cleanup-error', {
+          generation,
+          error: this.formatError(error)
+        })
+      })
+
+    this.generationCleanupPromise = task.finally(() => {
+      if (this.generationCleanupPromise === task) {
+        this.generationCleanupPromise = undefined
+      }
+    })
+  }
+
+  private async cleanupGeneration(generation: number): Promise<void> {
+    const prefix = `v${generation}:`
+    const keys = await this.collectKeysWithPrefix(prefix)
+    if (keys.length === 0) {
+      return
+    }
+
+    const batchSize = this.generationCleanupBatchSize()
+    for (let index = 0; index < keys.length; index += batchSize) {
+      const batch = keys.slice(index, index + batchSize)
+      await this.deleteKeys(batch)
+      await this.publishInvalidation({
+        scope: 'keys',
+        keys: batch,
+        sourceId: this.instanceId,
+        operation: 'invalidate'
+      })
+    }
   }
 
   private initializeWriteBehind(options: CacheWriteBehindOptions | undefined): void {
@@ -1319,7 +1500,17 @@ export class CacheStack extends EventEmitter {
     const batchSize = this.options.writeBehind?.batchSize ?? 100
     const batch = this.writeBehindQueue.splice(0, batchSize)
     this.writeBehindFlushPromise = (async () => {
-      await Promise.allSettled(batch.map((operation) => operation()))
+      const results = await Promise.allSettled(batch.map((operation) => operation()))
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failures.length > 0) {
+        this.metricsCollector.increment('writeFailures', failures.length)
+        this.logger.error?.('write-behind-flush-failure', {
+          failed: failures.length,
+          total: batch.length,
+          errors: failures.map((failure) => this.formatError(failure.reason))
+        })
+        this.emitError('write-behind', { failed: failures.length, total: batch.length })
+      }
     })()
 
     await this.writeBehindFlushPromise
@@ -1452,9 +1643,13 @@ export class CacheStack extends EventEmitter {
     this.validatePositiveNumber('singleFlightTimeoutMs', this.options.singleFlightTimeoutMs)
     this.validatePositiveNumber('singleFlightPollMs', this.options.singleFlightPollMs)
     this.validatePositiveNumber('singleFlightRenewIntervalMs', this.options.singleFlightRenewIntervalMs)
+    this.validatePositiveNumber('backgroundRefreshTimeoutMs', this.options.backgroundRefreshTimeoutMs)
     this.validateRateLimitOptions('fetcherRateLimit', this.options.fetcherRateLimit)
     this.validateAdaptiveTtlOptions(this.options.adaptiveTtl)
     this.validateCircuitBreakerOptions(this.options.circuitBreaker)
+    if (typeof this.options.generationCleanup === 'object') {
+      this.validatePositiveNumber('generationCleanup.batchSize', this.options.generationCleanup.batchSize)
+    }
     if (this.options.generation !== undefined) {
       this.validateNonNegativeNumber('generation', this.options.generation)
     }
@@ -1541,6 +1736,10 @@ export class CacheStack extends EventEmitter {
 
     if (/[\u0000-\u001F\u007F]/.test(key)) {
       throw new Error('Cache key contains unsupported control characters.')
+    }
+
+    if (/[\uD800-\uDFFF]/.test(key)) {
+      throw new Error('Cache key contains unsupported surrogate code points.')
     }
 
     return key
@@ -1648,6 +1847,16 @@ export class CacheStack extends EventEmitter {
     return null
   }
 
+  private async reportRecoverableLayerFailure(layer: CacheLayer, operation: string, error: unknown): Promise<void> {
+    if (this.isGracefulDegradationEnabled()) {
+      await this.handleLayerFailure(layer, operation, error)
+      return
+    }
+
+    this.logger.warn?.('layer-operation-failed', { layer: layer.name, operation, error: this.formatError(error) })
+    this.emitError(operation, { layer: layer.name, degraded: false, error: this.formatError(error) })
+  }
+
   private isGracefulDegradationEnabled(): boolean {
     return Boolean(this.options.gracefulDegradation)
   }
@@ -1676,11 +1885,19 @@ export class CacheStack extends EventEmitter {
   }
 
   private serializeKeyPart(value: unknown): string {
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return String(value)
+    if (typeof value === 'string') {
+      return `s:${value}`
     }
 
-    return JSON.stringify(this.normalizeForSerialization(value))
+    if (typeof value === 'number') {
+      return `n:${value}`
+    }
+
+    if (typeof value === 'boolean') {
+      return `b:${value}`
+    }
+
+    return `j:${JSON.stringify(this.normalizeForSerialization(value))}`
   }
 
   private isCacheSnapshotEntries(value: unknown): value is CacheSnapshotEntry[] {
@@ -1692,9 +1909,41 @@ export class CacheStack extends EventEmitter {
         }
 
         const candidate = entry as Partial<CacheSnapshotEntry>
-        return typeof candidate.key === 'string'
+        return (
+          typeof candidate.key === 'string' &&
+          (candidate.ttl === undefined ||
+            (typeof candidate.ttl === 'number' && Number.isFinite(candidate.ttl) && candidate.ttl >= 0))
+        )
       })
     )
+  }
+
+  private sanitizeSnapshotValue(value: unknown): unknown {
+    return this.snapshotSerializer.deserialize(this.snapshotSerializer.serialize(value))
+  }
+
+  private async validateSnapshotFilePath(filePath: string): Promise<string> {
+    if (filePath.length === 0) {
+      throw new Error('filePath must not be empty.')
+    }
+
+    if (filePath.includes('\u0000')) {
+      throw new Error('filePath must not contain null bytes.')
+    }
+
+    const path = await import('node:path')
+    const resolved = path.resolve(filePath)
+    const baseDir =
+      this.options.snapshotBaseDir === false ? false : path.resolve(this.options.snapshotBaseDir ?? process.cwd())
+
+    if (baseDir !== false) {
+      const relative = path.relative(baseDir, resolved)
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error(`filePath is outside the allowed snapshot directory: ${baseDir}`)
+      }
+    }
+
+    return resolved
   }
 
   private normalizeForSerialization(value: unknown): unknown {
@@ -1706,6 +1955,9 @@ export class CacheStack extends EventEmitter {
       return Object.keys(value as Record<string, unknown>)
         .sort()
         .reduce<Record<string, unknown>>((normalized, key) => {
+          if (DANGEROUS_OBJECT_KEYS.has(key)) {
+            return normalized
+          }
           normalized[key] = this.normalizeForSerialization((value as Record<string, unknown>)[key])
           return normalized
         }, {})

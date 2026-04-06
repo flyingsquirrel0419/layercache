@@ -61,8 +61,23 @@ describe('growth features', () => {
     expect(namespace.getMetrics().sets).toBeGreaterThanOrEqual(1)
   })
 
+  it('serializes wrap() key parts with type prefixes to avoid collisions', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    let calls = 0
+    const wrapped = cache.wrap('typed', async (value: string | number) => {
+      calls += 1
+      return { value, type: typeof value }
+    })
+
+    await expect(wrapped('1')).resolves.toEqual({ value: '1', type: 'string' })
+    await expect(wrapped(1)).resolves.toEqual({ value: 1, type: 'number' })
+    expect(calls).toBe(2)
+  })
+
   it('supports snapshots on disk and export/import in memory', async () => {
-    const first = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-'))
+    const filePath = join(dir, 'snapshot.json')
+    const first = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
     await first.set('user:1', { id: 1 }, { ttl: 30 })
 
     const snapshot = await first.exportState()
@@ -70,12 +85,9 @@ describe('growth features', () => {
     await second.importState(snapshot)
     await expect(second.get('user:1')).resolves.toEqual({ id: 1 })
 
-    const dir = await mkdtemp(join(tmpdir(), 'layercache-'))
-    const filePath = join(dir, 'snapshot.json')
-
     try {
       await first.persistToFile(filePath)
-      const third = new CacheStack([new MemoryLayer({ ttl: 60 })])
+      const third = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
       await third.restoreFromFile(filePath)
 
       await expect(third.get('user:1')).resolves.toEqual({ id: 1 })
@@ -86,15 +98,44 @@ describe('growth features', () => {
   })
 
   it('rejects invalid snapshot files before import', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     const dir = await mkdtemp(join(tmpdir(), 'layercache-invalid-'))
     const filePath = join(dir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
 
     try {
       await cache.persistToFile(filePath)
       await expect(readFile(filePath, 'utf8')).resolves.toContain('[')
       await writeFile(filePath, '{"bad":true}', 'utf8')
       await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/Invalid snapshot file/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects snapshot paths outside the allowed base directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-paths-'))
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+    const outsidePath = join(dir, '..', 'outside.json')
+
+    try {
+      await expect(cache.persistToFile(outsidePath)).rejects.toThrow(/outside the allowed snapshot directory/i)
+      await expect(cache.restoreFromFile(outsidePath)).rejects.toThrow(/outside the allowed snapshot directory/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('sanitizes snapshot values before importing them back into the cache', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-sanitize-'))
+    const filePath = join(dir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+
+    try {
+      await writeFile(filePath, '[{"key":"user:1","value":{"safe":1,"__proto__":{"polluted":true}}}]', 'utf8')
+      await cache.restoreFromFile(filePath)
+
+      await expect(cache.get('user:1')).resolves.toEqual({ safe: 1 })
+      expect({}.polluted).toBeUndefined()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

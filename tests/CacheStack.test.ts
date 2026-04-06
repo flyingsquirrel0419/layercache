@@ -101,6 +101,38 @@ describe('CacheStack', () => {
     await expect(cache.get('post:1')).resolves.toEqual({ id: 1 })
   })
 
+  it('invalidates by wildcard pattern using actual layer keys after tag-index state is lost', async () => {
+    const redis = new Redis()
+    const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:pattern:' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), redisLayer])
+
+    await redisLayer.set('user:1', { id: 1 })
+    await redisLayer.set('user:2', { id: 2 })
+    await redisLayer.set('post:1', { id: 1 })
+
+    await cache.invalidateByPattern('user:*')
+
+    await expect(redisLayer.get('user:1')).resolves.toBeNull()
+    await expect(redisLayer.get('user:2')).resolves.toBeNull()
+    await expect(redisLayer.get('post:1')).resolves.toEqual({ id: 1 })
+  })
+
+  it('invalidates by prefix using actual layer keys after tag-index state is lost', async () => {
+    const redis = new Redis()
+    const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:prefix:' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), redisLayer])
+
+    await redisLayer.set('user:1:profile', { id: 1 })
+    await redisLayer.set('user:1:posts', [{ id: 1 }])
+    await redisLayer.set('user:2:profile', { id: 2 })
+
+    await cache.invalidateByPrefix('user:1:')
+
+    await expect(redisLayer.get('user:1:profile')).resolves.toBeNull()
+    await expect(redisLayer.get('user:1:posts')).resolves.toBeNull()
+    await expect(redisLayer.get('user:2:profile')).resolves.toEqual({ id: 2 })
+  })
+
   it('tracks cache metrics', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -115,7 +147,52 @@ describe('CacheStack', () => {
     })
   })
 
+  it('can clean up stale generations after a generation bump', async () => {
+    const redis = new Redis()
+    const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:generation:' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), redisLayer], {
+      generation: 1,
+      generationCleanup: { batchSize: 1 }
+    })
+
+    await cache.set('user:1', { id: 1 })
+    await expect(redisLayer.get('v1:user:1')).resolves.toEqual({ id: 1 })
+
+    cache.bumpGeneration()
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if ((await redisLayer.get('v1:user:1')) === null) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+
+    await expect(redisLayer.get('v1:user:1')).resolves.toBeNull()
+  })
+
   it('propagates invalidation to local layers across bridge instances', async () => {
+    const redis = new Redis()
+    const bus = new InMemoryInvalidationBus()
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })], {
+      invalidationBus: bus,
+      broadcastL1Invalidation: true
+    })
+    const memoryB = new MemoryLayer({ ttl: 60 })
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300 })], { invalidationBus: bus })
+
+    await cacheA.set('user:1', { id: 1, version: 1 })
+    await expect(cacheB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
+    await expect(memoryB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
+
+    await cacheA.set('user:1', { id: 1, version: 2 })
+
+    await expect(memoryB.get('user:1')).resolves.toBeNull()
+    await expect(cacheB.get('user:1')).resolves.toEqual({ id: 1, version: 2 })
+
+    await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
+  })
+
+  it('does not broadcast write invalidations by default', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })], {
@@ -130,8 +207,7 @@ describe('CacheStack', () => {
 
     await cacheA.set('user:1', { id: 1, version: 2 })
 
-    await expect(memoryB.get('user:1')).resolves.toBeNull()
-    await expect(cacheB.get('user:1')).resolves.toEqual({ id: 1, version: 2 })
+    await expect(memoryB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
 
     await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
   })

@@ -11,6 +11,7 @@ interface QueueItem<T> {
 interface BucketState {
   active: number
   startedAt: number[]
+  cleanupTimer?: ReturnType<typeof setTimeout>
 }
 
 interface ScheduleContext {
@@ -23,8 +24,9 @@ interface NormalizedRateLimitOptions extends CacheRateLimitOptions {
 }
 
 export class FetchRateLimiter {
-  private readonly queue: Array<QueueItem<unknown>> = []
   private readonly buckets = new Map<string, BucketState>()
+  private readonly queuesByBucket = new Map<string, Array<QueueItem<unknown>>>()
+  private readonly pendingBuckets = new Set<string>()
   private readonly fetcherBuckets = new WeakMap<(...args: never[]) => unknown, string>()
   private nextFetcherBucketId = 0
   private drainTimer?: ReturnType<typeof setTimeout>
@@ -44,13 +46,17 @@ export class FetchRateLimiter {
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({
-        bucketKey: this.resolveBucketKey(normalized, context),
+      const bucketKey = this.resolveBucketKey(normalized, context)
+      const queue = this.queuesByBucket.get(bucketKey) ?? []
+      queue.push({
+        bucketKey,
         options: normalized,
         task,
         resolve,
         reject
       })
+      this.queuesByBucket.set(bucketKey, queue)
+      this.pendingBuckets.add(bucketKey)
       this.drain()
     })
   }
@@ -103,26 +109,35 @@ export class FetchRateLimiter {
       this.drainTimer = undefined
     }
 
-    while (this.queue.length > 0) {
-      let nextIndex = -1
+    while (this.pendingBuckets.size > 0) {
+      let nextBucketKey: string | undefined
       let nextWaitMs = Number.POSITIVE_INFINITY
 
-      for (let index = 0; index < this.queue.length; index += 1) {
-        const next = this.queue[index]
-        if (!next) {
+      for (const bucketKey of this.pendingBuckets) {
+        const queue = this.queuesByBucket.get(bucketKey)
+        if (!queue || queue.length === 0) {
+          this.pendingBuckets.delete(bucketKey)
+          this.queuesByBucket.delete(bucketKey)
           continue
         }
 
-        const waitMs = this.waitTime(next.bucketKey, next.options)
+        const next = queue[0]
+        if (!next) {
+          this.pendingBuckets.delete(bucketKey)
+          this.queuesByBucket.delete(bucketKey)
+          continue
+        }
+
+        const waitMs = this.waitTime(bucketKey, next.options)
         if (waitMs <= 0) {
-          nextIndex = index
+          nextBucketKey = bucketKey
           break
         }
 
         nextWaitMs = Math.min(nextWaitMs, waitMs)
       }
 
-      if (nextIndex < 0) {
+      if (!nextBucketKey) {
         if (Number.isFinite(nextWaitMs)) {
           this.drainTimer = setTimeout(() => {
             this.drainTimer = undefined
@@ -133,20 +148,38 @@ export class FetchRateLimiter {
         return
       }
 
-      const next = this.queue.splice(nextIndex, 1)[0]
+      const queue = this.queuesByBucket.get(nextBucketKey)
+      const next = queue?.shift()
       if (!next) {
-        return
+        this.pendingBuckets.delete(nextBucketKey)
+        this.queuesByBucket.delete(nextBucketKey)
+        continue
+      }
+
+      if (!queue || queue.length === 0) {
+        this.pendingBuckets.delete(nextBucketKey)
+        this.queuesByBucket.delete(nextBucketKey)
       }
 
       const bucket = this.bucketState(next.bucketKey)
+      if (bucket.cleanupTimer) {
+        clearTimeout(bucket.cleanupTimer)
+        bucket.cleanupTimer = undefined
+      }
       bucket.active += 1
-      bucket.startedAt.push(Date.now())
+      if (next.options.intervalMs && next.options.maxPerInterval) {
+        bucket.startedAt.push(Date.now())
+      }
 
       void next
         .task()
         .then(next.resolve, next.reject)
         .finally(() => {
           bucket.active -= 1
+          if ((this.queuesByBucket.get(next.bucketKey)?.length ?? 0) > 0) {
+            this.pendingBuckets.add(next.bucketKey)
+          }
+          this.cleanupBucket(next.bucketKey, bucket, next.options.intervalMs)
           this.drain()
         })
     }
@@ -196,5 +229,38 @@ export class FetchRateLimiter {
     const bucket: BucketState = { active: 0, startedAt: [] }
     this.buckets.set(bucketKey, bucket)
     return bucket
+  }
+
+  private cleanupBucket(bucketKey: string, bucket: BucketState, intervalMs: number | undefined): void {
+    const queued = this.queuesByBucket.get(bucketKey)?.length ?? 0
+    if (queued === 0 && bucket.active === 0 && bucket.startedAt.length === 0) {
+      this.buckets.delete(bucketKey)
+      this.queuesByBucket.delete(bucketKey)
+      this.pendingBuckets.delete(bucketKey)
+      return
+    }
+
+    if (!intervalMs || bucket.active > 0 || queued > 0) {
+      return
+    }
+
+    if (bucket.cleanupTimer) {
+      clearTimeout(bucket.cleanupTimer)
+    }
+
+    bucket.cleanupTimer = setTimeout(() => {
+      bucket.cleanupTimer = undefined
+      this.prune(bucket, Date.now(), intervalMs)
+      if (
+        bucket.active === 0 &&
+        bucket.startedAt.length === 0 &&
+        (this.queuesByBucket.get(bucketKey)?.length ?? 0) === 0
+      ) {
+        this.buckets.delete(bucketKey)
+        this.queuesByBucket.delete(bucketKey)
+        this.pendingBuckets.delete(bucketKey)
+      }
+    }, intervalMs)
+    bucket.cleanupTimer.unref?.()
   }
 }

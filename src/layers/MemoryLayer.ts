@@ -90,17 +90,11 @@ export class MemoryLayer implements CacheLayer {
   }
 
   async getMany<T>(keys: string[]): Promise<Array<T | null>> {
-    const values: Array<T | null> = []
-    for (const key of keys) {
-      values.push(await this.getEntry<T>(key))
-    }
-    return values
+    return Promise.all(keys.map((key) => this.getEntry<T>(key)))
   }
 
   async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
-    for (const entry of entries) {
-      await this.set(entry.key, entry.value, entry.ttl)
-    }
+    await Promise.all(entries.map((entry) => this.set(entry.key, entry.value, entry.ttl)))
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {

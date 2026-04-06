@@ -6,7 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
 [![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
-[![test coverage](https://img.shields.io/badge/tests-164%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
+[![test coverage](https://img.shields.io/badge/tests-177%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
 
 ```
 L1 hit  ~0.01 ms  ← served from memory, zero network
@@ -45,7 +45,7 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Batch tag invalidation** — `invalidateByTags(['tenant:a', 'users'], 'all')` for OR/AND invalidation in one call
 - **Pattern invalidation** — `invalidateByPattern('user:*')`
 - **Prefix invalidation** — efficient `invalidateByPrefix('user:123:')` for hierarchical keys
-- **Generation-based invalidation** — `generation` prefixes keys with `vN:` and `bumpGeneration()` rotates the namespace instantly
+- **Generation-based invalidation** — `generation` prefixes keys with `vN:` and `bumpGeneration()` rotates the namespace instantly, with optional stale-generation cleanup
 - **Per-layer TTL overrides** — different TTLs for memory vs. Redis in one call
 - **TTL policies** — align TTLs to time boundaries (`until-midnight`, `next-hour`, `{ alignTo }`, or a function)
 - **Negative caching** — cache known misses for a short TTL to protect the database
@@ -193,11 +193,13 @@ await cache.invalidateByTags(['users', 'posts'], 'any')    // keys tagged with e
 
 ### `cache.invalidateByPattern(pattern): Promise<void>`
 
-Glob-style deletion against the tracked key set.
+Glob-style deletion against the tracked key set, plus any layer that can enumerate real keys (for example `MemoryLayer`, `RedisLayer`, or `DiskLayer`).
 
 ```ts
 await cache.invalidateByPattern('user:*') // deletes user:1, user:2, …
 ```
+
+For multi-instance deployments, prefer a shared `RedisTagIndex`. Without it, pattern invalidation still scans real layer keys when available, but tag tracking itself remains process-local.
 
 ### `cache.invalidateByPrefix(prefix): Promise<void>`
 
@@ -278,6 +280,15 @@ const cache = new CacheStack([...], { generation: 1 })
 
 await cache.set('user:123', user)
 cache.bumpGeneration() // now reads use v2:user:123
+```
+
+If you also want old generation keys cleaned up automatically instead of waiting for TTL expiry:
+
+```ts
+const cache = new CacheStack([...], {
+  generation: 1,
+  generationCleanup: { batchSize: 500 }
+})
 ```
 
 ### OpenTelemetry note
@@ -482,10 +493,10 @@ const cache = new CacheStack(
 await cache.disconnect() // unsubscribes cleanly on shutdown
 ```
 
-By default, every `set` also broadcasts an invalidation so other servers evict stale memory immediately. To suppress broadcasts on writes (high write-volume services):
+By default, write-triggered L1 invalidation is **off** even when an invalidation bus is configured. This avoids surprising Redis Pub/Sub traffic in write-heavy services. Enable it explicitly when you want every write to evict peer memory caches immediately:
 
 ```ts
-new CacheStack([...], { invalidationBus: bus, publishSetInvalidation: false })
+new CacheStack([...], { invalidationBus: bus, broadcastL1Invalidation: true })
 ```
 
 ### Distributed tag invalidation
@@ -509,6 +520,8 @@ const cache = new CacheStack(
 ```
 
 Now `invalidateByTag('user:123')` on any server deletes every tagged key, regardless of which server originally wrote it.
+
+The same recommendation applies to `invalidateByPattern()` and `invalidateByPrefix()` in distributed deployments: a shared tag index gives the most complete view of known keys, while layer key scans act as a fallback when the layer exposes `keys()`.
 
 ### Safe Redis clearing
 
@@ -622,6 +635,8 @@ await cache.get('leaderboard', fetchLeaderboard, {
 })
 ```
 
+Background refreshes time out after 30 seconds by default so a hung upstream fetch cannot block future refresh attempts forever. Override that with `backgroundRefreshTimeoutMs`.
+
 ---
 
 ## Graceful degradation & circuit breaker
@@ -717,6 +732,8 @@ await anotherCache.importState(snapshot)
 await cache.persistToFile('./cache-snapshot.json')
 await cache.restoreFromFile('./cache-snapshot.json')
 ```
+
+For safety, file snapshots are restricted to `process.cwd()` by default. Set `snapshotBaseDir` to an explicit directory for application-controlled snapshot storage, or `false` if you intentionally want to disable that restriction.
 
 ---
 

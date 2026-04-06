@@ -204,6 +204,7 @@ export interface CacheStackOptions {
   invalidationBus?: InvalidationBus
   tagIndex?: CacheTagIndex
   generation?: number
+  generationCleanup?: boolean | CacheGenerationCleanupOptions
   broadcastL1Invalidation?: boolean
   /**
    * @deprecated Use `broadcastL1Invalidation` instead.
@@ -222,11 +223,13 @@ export interface CacheStackOptions {
   writeStrategy?: 'write-through' | 'write-behind'
   writeBehind?: CacheWriteBehindOptions
   fetcherRateLimit?: CacheRateLimitOptions
+  backgroundRefreshTimeoutMs?: number
   singleFlightCoordinator?: CacheSingleFlightCoordinator
   singleFlightLeaseMs?: number
   singleFlightTimeoutMs?: number
   singleFlightPollMs?: number
   singleFlightRenewIntervalMs?: number
+  snapshotBaseDir?: string | false
   /**
    * Maximum number of entries in `accessProfiles` and `circuitBreakers` maps
    * before the oldest entries are pruned. Prevents unbounded memory growth.
@@ -239,6 +242,10 @@ export interface CacheAdaptiveTtlOptions {
   hotAfter?: number
   step?: number | LayerTtlMap
   maxTtl?: number | LayerTtlMap
+}
+
+export interface CacheGenerationCleanupOptions {
+  batchSize?: number
 }
 
 export type CacheTtlPolicy =
