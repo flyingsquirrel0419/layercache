@@ -84,7 +84,7 @@ On a hit, the value is returned from the fastest layer that has it, and automati
 - **Nested namespaces** — `namespace('a').namespace('b')` for composable key prefixes with namespace-scoped metrics
 - **Custom layers** — implement the 5-method `CacheLayer` interface to plug in Memcached, DynamoDB, or anything else
 - **Edge-safe entry point** — `layercache/edge` exports the non-Node helpers for Worker-style runtimes
-- **ESM + CJS** — works with both module systems, Node.js ≥ 18
+- **ESM + CJS** — works with both module systems, Node.js ≥ 20
 
 ---
 
@@ -1036,7 +1036,7 @@ new CacheStack([...], {
 
 ## Requirements
 
-- Node.js ≥ 18
+- Node.js ≥ 20
 - TypeScript ≥ 5.0 (optional — fully typed, ships `.d.ts`)
 - ioredis ≥ 5 (optional peer dependency — only needed for `RedisLayer` / `RedisTagIndex`)
 

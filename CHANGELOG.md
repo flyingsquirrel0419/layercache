@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FetchRateLimiter` now schedules per-bucket queues instead of rescanning every queued request on each drain cycle, reducing queue-management overhead under scoped rate limits.
 - Write-triggered L1 invalidation now defaults to **off** unless `broadcastL1Invalidation` is explicitly enabled.
 - `mget()` now shares a single startup barrier in its non-fast-path instead of re-awaiting startup inside every delegated `get()`.
+- The project now targets **Node.js 20+** and the validation workflow runs on Node.js 20 and 22, matching the current Vitest 4 toolchain requirements.
 - README now documents snapshot path restrictions, distributed invalidation guidance, generation cleanup, and background refresh timeout behavior. The suite currently passes with **177 tests**.
 
 ### Fixed
