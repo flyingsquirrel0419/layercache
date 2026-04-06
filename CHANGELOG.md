@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `backgroundRefreshTimeoutMs` to bound stale refresh attempts so a hung upstream fetch cannot block future refresh work forever.
 - `generationCleanup` to let `bumpGeneration()` asynchronously prune stale generation keys instead of leaving old namespaces behind until TTL expiry.
+- **`decompressionMaxBytes`** option on `RedisLayer` (default 64 MiB) to prevent decompression bomb attacks via crafted compressed payloads.
+- **MemcachedLayer key validation** — keys are checked for the 250-byte Memcached limit and disallowed whitespace/control characters before every operation.
 
 ### Changed
 - `invalidateByPattern()` now augments tag-index matches with real layer key scans when a layer exposes `keys()`, making wildcard invalidation more reliable after restarts or partial index loss.
@@ -21,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `withTimeout()` now observes late-settling background refresh promises so post-timeout rejections do not escape as unhandled promise rejections.
 - `TagIndex.clear()` now resets trie node id allocation along with the stored key state.
 - The project now targets **Node.js 20+** and the validation workflow runs on Node.js 20 and 22, matching the current Vitest 4 toolchain requirements.
+- **Fastify stats route** now requires `exposeStatsRoute: true` (opt-in) instead of being enabled by default, preventing accidental information disclosure.
+- **`TagIndex` default `maxKnownKeys`** is now 100,000 instead of unlimited, bounding in-memory trie growth for high-cardinality workloads.
+- **Express and Hono middleware** now normalize URLs before deriving cache keys (decode percent-encoding, sort query parameters), preventing cache poisoning via encoding variants.
 - README now documents snapshot path restrictions, distributed invalidation guidance, generation cleanup, and background refresh timeout behavior. The suite currently passes with **180 tests**.
 
 ### Fixed
@@ -28,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Background refresh timeouts now terminate inside the fetch dedupe path so stuck refreshes do not leave the key permanently blocked behind an unfinished guarded fetch.
 - `shouldCache` callback failures are isolated from normal fetch success paths, preventing user predicate bugs from surfacing as cache fetch failures.
 - `CacheStack` now warns when a shared layer without `keys()` is paired with the default in-memory `TagIndex`, because prefix and pattern invalidation cannot be fully reconstructed after a restart in that configuration.
+
+### Security
+- **MsgpackSerializer** now strips `__proto__`, `prototype`, and `constructor` keys during deserialization, matching the existing `JsonSerializer` hardening and preventing prototype pollution via crafted cache payloads.
+- **JsonSerializer** now enforces a maximum recursion depth (200) in `sanitizeJsonValue()` to prevent stack overflow on deeply nested payloads stored in the backing cache.
+- **StoredValueEnvelope validation** now enforces `kind` enum values (`value`/`empty`), strict numeric types for timestamps, and rejects `freshUntil` values more than 10 years in the future to prevent envelope spoofing.
+- **Prometheus label sanitization** now also replaces carriage return (`\r`) characters, closing a potential metric-line injection vector.
+- **StampedeGuard** now re-reads the mutex map entry before deletion, preventing a race condition where a concurrently-replaced entry could be incorrectly removed.
+- **Express and Hono middleware** now emit cache-write errors via `cache.emit('error', ...)` instead of silently swallowing them.
+- **CLI** now masks Redis passwords in error messages to prevent credential leakage in logs and CI output.
 
 ## [1.2.2] — 2026-04-06
 

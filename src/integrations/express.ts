@@ -78,7 +78,10 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
           res.setHeader?.('x-cache', 'MISS')
           // Fire and forget — don't delay the response
           cache.set(key, body, options).catch((err: unknown) => {
-            cache.emit('error', err instanceof Error ? err : new Error(String(err)))
+            cache.emit('error', {
+              operation: 'set',
+              error: err instanceof Error ? err.message : String(err)
+            })
           })
           return originalJson(body)
         }
