@@ -44,7 +44,10 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     context.json = (body: unknown, status?: number) => {
       context.header?.('x-cache', 'MISS')
       cache.set(key, body, options).catch((err: unknown) => {
-        cache.emit('error', err instanceof Error ? err : new Error(String(err)))
+        cache.emit('error', {
+          operation: 'set',
+          error: err instanceof Error ? err.message : String(err)
+        })
       })
       return originalJson(body, status)
     }
