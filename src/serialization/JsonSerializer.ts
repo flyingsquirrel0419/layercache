@@ -9,13 +9,19 @@ export class JsonSerializer implements CacheSerializer {
 
   deserialize<T>(payload: string | Buffer): T {
     const normalized = Buffer.isBuffer(payload) ? payload.toString('utf8') : payload
-    return sanitizeJsonValue(JSON.parse(normalized)) as T
+    return sanitizeJsonValue(JSON.parse(normalized), 0) as T
   }
 }
 
-function sanitizeJsonValue(value: unknown): unknown {
+const MAX_SANITIZE_DEPTH = 200
+
+function sanitizeJsonValue(value: unknown, depth: number): unknown {
+  if (depth > MAX_SANITIZE_DEPTH) {
+    return value
+  }
+
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeJsonValue(entry))
+    return value.map((entry) => sanitizeJsonValue(entry, depth + 1))
   }
 
   if (!isPlainObject(value)) {
@@ -28,7 +34,7 @@ function sanitizeJsonValue(value: unknown): unknown {
       continue
     }
 
-    sanitized[key] = sanitizeJsonValue(entry)
+    sanitized[key] = sanitizeJsonValue(entry, depth + 1)
   }
 
   return sanitized

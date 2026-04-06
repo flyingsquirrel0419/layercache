@@ -56,7 +56,8 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
         return
       }
 
-      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${req.originalUrl ?? req.url ?? '/'}`
+      const rawUrl = req.originalUrl ?? req.url ?? '/'
+      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeUrl(rawUrl)}`
 
       const cached = await cache.get<unknown>(key, undefined, options)
       if (cached !== null) {
@@ -76,7 +77,9 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
         res.json = (body: unknown) => {
           res.setHeader?.('x-cache', 'MISS')
           // Fire and forget — don't delay the response
-          void cache.set(key, body, options)
+          cache.set(key, body, options).catch((err: unknown) => {
+            cache.emit('error', err instanceof Error ? err : new Error(String(err)))
+          })
           return originalJson(body)
         }
       }
@@ -85,5 +88,15 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
     } catch (error) {
       next(error)
     }
+  }
+}
+
+function normalizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url, 'http://localhost')
+    parsed.searchParams.sort()
+    return decodeURIComponent(parsed.pathname) + parsed.search
+  } catch {
+    return url
   }
 }

@@ -64,6 +64,7 @@ export class MemcachedLayer implements CacheLayer {
   }
 
   async getEntry<T = unknown>(key: string): Promise<T | null> {
+    this.validateKey(key)
     const result = await this.client.get(this.withPrefix(key))
     if (!result || result.value === null) {
       return null
@@ -81,6 +82,7 @@ export class MemcachedLayer implements CacheLayer {
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
+    this.validateKey(key)
     const payload = this.serializer.serialize(value)
     await this.client.set(this.withPrefix(key), payload as string | Buffer, {
       expires: ttl && ttl > 0 ? ttl : undefined
@@ -88,11 +90,13 @@ export class MemcachedLayer implements CacheLayer {
   }
 
   async has(key: string): Promise<boolean> {
+    this.validateKey(key)
     const result = await this.client.get(this.withPrefix(key))
     return result !== null && result.value !== null
   }
 
   async delete(key: string): Promise<void> {
+    this.validateKey(key)
     await this.client.delete(this.withPrefix(key))
   }
 
@@ -110,5 +114,17 @@ export class MemcachedLayer implements CacheLayer {
 
   private withPrefix(key: string): string {
     return `${this.keyPrefix}${key}`
+  }
+
+  private validateKey(key: string): void {
+    const fullKey = this.withPrefix(key)
+    if (Buffer.byteLength(fullKey, 'utf8') > 250) {
+      throw new Error(`MemcachedLayer: key exceeds 250-byte Memcached limit: "${fullKey.slice(0, 60)}..."`)
+    }
+    if (/[\s\x00-\x1f\x7f]/.test(fullKey)) {
+      throw new Error(
+        'MemcachedLayer: key contains invalid characters (whitespace or control characters are not allowed).'
+      )
+    }
   }
 }

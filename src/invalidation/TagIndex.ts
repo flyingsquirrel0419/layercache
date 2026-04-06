@@ -4,7 +4,7 @@ interface TagIndexOptions {
   /**
    * Maximum number of keys tracked in `knownKeys`. When exceeded, the oldest
    * 10 % of keys are pruned to keep memory bounded.
-   * Defaults to unlimited.
+   * Defaults to 100,000.
    */
   maxKnownKeys?: number
 }
@@ -24,7 +24,7 @@ export class TagIndex implements CacheTagIndex {
   private readonly root = this.createTrieNode()
 
   constructor(options: TagIndexOptions = {}) {
-    this.maxKnownKeys = options.maxKnownKeys
+    this.maxKnownKeys = options.maxKnownKeys ?? 100_000
   }
 
   async touch(key: string): Promise<void> {
