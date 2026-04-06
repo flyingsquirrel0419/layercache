@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] — 2026-04-07
+
 ### Changed
 - `CacheStack` now delegates prefix and pattern invalidation key discovery to a dedicated `CacheKeyDiscovery` helper, reducing class sprawl and isolating layer-scan orchestration.
 
