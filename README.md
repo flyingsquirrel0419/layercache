@@ -28,6 +28,15 @@
 
 ---
 
+## At a glance
+
+- **Fast read path** — combine memory L1, Redis L2, disk, or custom layers behind one API with automatic backfill.
+- **Stampede control** — prevent duplicate miss storms with in-process dedupe and optional distributed single-flight.
+- **Strong invalidation model** — support tags, batched tags, wildcards, prefixes, and generation-based cache rotation.
+- **Built for production failure modes** — serve stale safely, refresh ahead, degrade gracefully, trip circuit breakers, and throttle fetchers.
+- **Operational visibility included** — expose metrics, stats, health checks, OpenTelemetry spans, and an admin CLI.
+- **Fits real Node stacks** — integrate directly with Express, Fastify, Hono, GraphQL, tRPC, and NestJS.
+
 Most Node.js services hit the same wall:
 
 | Approach | Tradeoff |
