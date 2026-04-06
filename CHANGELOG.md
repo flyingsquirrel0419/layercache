@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `CacheStack` now delegates prefix and pattern invalidation key discovery to a dedicated `CacheKeyDiscovery` helper, reducing class sprawl and isolating layer-scan orchestration.
+
+### Fixed
+- `FetchRateLimiter` interval cleanup coverage now uses fake timers instead of wall-clock sleeps, making the validation suite deterministic again.
+
 ## [1.2.3] — 2026-04-06
 
 ### Added
@@ -18,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `invalidateByPattern()` now augments tag-index matches with real layer key scans when a layer exposes `keys()`, making wildcard invalidation more reliable after restarts or partial index loss.
 - `invalidateByPrefix()` now uses the same real-layer key fallback path, so hierarchical invalidation remains effective after tag-index state is lost.
+- Invalidating by pattern or prefix now routes through a dedicated `CacheKeyDiscovery` helper instead of keeping that scan orchestration inside `CacheStack`.
 - The default in-memory `TagIndex` now uses a trie-backed known-key index so prefix and wildcard invalidation avoid full linear scans in the common case.
 - `FetchRateLimiter` now schedules per-bucket queues instead of rescanning every queued request on each drain cycle, reducing queue-management overhead under scoped rate limits.
 - Write-triggered L1 invalidation now defaults to **off** unless `broadcastL1Invalidation` is explicitly enabled.
@@ -35,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Background refresh timeouts now terminate inside the fetch dedupe path so stuck refreshes do not leave the key permanently blocked behind an unfinished guarded fetch.
 - `shouldCache` callback failures are isolated from normal fetch success paths, preventing user predicate bugs from surfacing as cache fetch failures.
 - `CacheStack` now warns when a shared layer without `keys()` is paired with the default in-memory `TagIndex`, because prefix and pattern invalidation cannot be fully reconstructed after a restart in that configuration.
+- `FetchRateLimiter` interval cleanup coverage now uses fake timers instead of wall-clock sleeps, making the validation suite deterministic again.
 
 ### Security
 - **MsgpackSerializer** now strips `__proto__`, `prototype`, and `constructor` keys during deserialization, matching the existing `JsonSerializer` hardening and preventing prototype pollution via crafted cache payloads.

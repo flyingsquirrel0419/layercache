@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { CacheNamespace } from './CacheNamespace'
+import { CacheKeyDiscovery } from './internal/CacheKeyDiscovery'
 import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
 import { FetchRateLimiter } from './internal/FetchRateLimiter'
 import { MetricsCollector } from './internal/MetricsCollector'
@@ -12,7 +13,6 @@ import {
   resolveStoredValue
 } from './internal/StoredValue'
 import { TtlResolver } from './internal/TtlResolver'
-import { PatternMatcher } from './invalidation/PatternMatcher'
 import { TagIndex } from './invalidation/TagIndex'
 import { JsonSerializer } from './serialization/JsonSerializer'
 import { StampedeGuard } from './stampede/StampedeGuard'
@@ -121,6 +121,7 @@ export class CacheStack extends EventEmitter {
   private unsubscribeInvalidation?: () => Promise<void> | void
   private readonly logger: CacheLogger
   private readonly tagIndex: CacheTagIndex
+  private readonly keyDiscovery: CacheKeyDiscovery
   private readonly fetchRateLimiter = new FetchRateLimiter()
   private readonly snapshotSerializer = new JsonSerializer()
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
@@ -162,6 +163,14 @@ export class CacheStack extends EventEmitter {
     this.logger =
       typeof options.logger === 'object' ? options.logger : new DebugLogger(Boolean(options.logger) || debugEnv)
     this.tagIndex = options.tagIndex ?? new TagIndex()
+    this.keyDiscovery = new CacheKeyDiscovery({
+      layers: this.layers,
+      tagIndex: this.tagIndex,
+      shouldSkipLayer: (layer) => this.shouldSkipLayer(layer),
+      handleLayerFailure: async (layer, operation, error) => {
+        await this.handleLayerFailure(layer, operation, error)
+      }
+    })
     if (!options.tagIndex && layers.some((layer) => layer.isLocal === false)) {
       this.logger.warn?.(
         'Using the default in-memory TagIndex with a shared cache layer only tracks keys seen by this process. Use RedisTagIndex for cross-instance tag invalidation.'
@@ -586,7 +595,7 @@ export class CacheStack extends EventEmitter {
 
   async invalidateByPattern(pattern: string): Promise<void> {
     await this.awaitStartup('invalidateByPattern')
-    const keys = await this.collectKeysMatchingPattern(this.qualifyPattern(pattern))
+    const keys = await this.keyDiscovery.collectKeysMatchingPattern(this.qualifyPattern(pattern))
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -594,7 +603,7 @@ export class CacheStack extends EventEmitter {
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.awaitStartup('invalidateByPrefix')
     const qualifiedPrefix = this.qualifyKey(this.validateCacheKey(prefix))
-    const keys = await this.collectKeysWithPrefix(qualifiedPrefix)
+    const keys = await this.keyDiscovery.collectKeysWithPrefix(qualifiedPrefix)
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -1376,60 +1385,6 @@ export class CacheStack extends EventEmitter {
     return this.options.broadcastL1Invalidation ?? this.options.publishSetInvalidation ?? false
   }
 
-  private async collectKeysWithPrefix(prefix: string): Promise<string[]> {
-    const matches = new Set(
-      this.tagIndex.keysForPrefix
-        ? await this.tagIndex.keysForPrefix(prefix)
-        : await this.tagIndex.matchPattern(`${prefix}*`)
-    )
-
-    await Promise.all(
-      this.layers.map(async (layer) => {
-        if (!layer.keys || this.shouldSkipLayer(layer)) {
-          return
-        }
-
-        try {
-          const keys = await layer.keys()
-          for (const key of keys) {
-            if (key.startsWith(prefix)) {
-              matches.add(key)
-            }
-          }
-        } catch (error) {
-          await this.handleLayerFailure(layer, 'invalidate-prefix-scan', error)
-        }
-      })
-    )
-
-    return [...matches]
-  }
-
-  private async collectKeysMatchingPattern(pattern: string): Promise<string[]> {
-    const matches = new Set(await this.tagIndex.matchPattern(pattern))
-
-    await Promise.all(
-      this.layers.map(async (layer) => {
-        if (!layer.keys || this.shouldSkipLayer(layer)) {
-          return
-        }
-
-        try {
-          const keys = await layer.keys()
-          for (const key of keys) {
-            if (PatternMatcher.matches(pattern, key)) {
-              matches.add(key)
-            }
-          }
-        } catch (error) {
-          await this.handleLayerFailure(layer, 'invalidate-pattern-scan', error)
-        }
-      })
-    )
-
-    return [...matches]
-  }
-
   private shouldCleanupGenerations(): boolean {
     return Boolean(this.options.generationCleanup)
   }
@@ -1459,7 +1414,7 @@ export class CacheStack extends EventEmitter {
 
   private async cleanupGeneration(generation: number): Promise<void> {
     const prefix = `v${generation}:`
-    const keys = await this.collectKeysWithPrefix(prefix)
+    const keys = await this.keyDiscovery.collectKeysWithPrefix(prefix)
     if (keys.length === 0) {
       return
     }

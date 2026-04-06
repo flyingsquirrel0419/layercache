@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { FetchRateLimiter } from '../../src/internal/FetchRateLimiter'
 
 describe('FetchRateLimiter', () => {
@@ -15,17 +15,22 @@ describe('FetchRateLimiter', () => {
   })
 
   it('cleans up interval buckets after the rate-limit window passes', async () => {
+    vi.useFakeTimers()
     const limiter = new FetchRateLimiter()
 
-    await limiter.schedule(
-      { intervalMs: 10, maxPerInterval: 1, scope: 'key' },
-      { key: 'user:1', fetcher: async () => 'a' },
-      async () => 'a'
-    )
+    try {
+      await limiter.schedule(
+        { intervalMs: 10, maxPerInterval: 1, scope: 'key' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        async () => 'a'
+      )
 
-    await new Promise((resolve) => setTimeout(resolve, 20))
+      await vi.advanceTimersByTimeAsync(10)
 
-    const buckets = (limiter as unknown as { buckets: Map<string, unknown> }).buckets
-    expect(buckets.size).toBe(0)
+      const buckets = (limiter as unknown as { buckets: Map<string, unknown> }).buckets
+      expect(buckets.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
