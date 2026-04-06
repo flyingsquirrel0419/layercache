@@ -47,11 +47,6 @@ Most Node.js services hit the same wall:
 
 `layercache` gives you a single API for layered caching and handles the hard parts for you: read-through fetches, backfill, stale serving, distributed invalidation, rate limiting, persistence, and operational introspection.
 
-```ts
-const user = await cache.get('user:123', () => db.findUser(123))
-//                                         ↑ only runs on a full miss
-```
-
 On a hit, `layercache` serves the fastest available layer and backfills anything above it. On a miss, the fetcher runs once, even under heavy concurrency.
 
 ## Performance profile
@@ -117,16 +112,11 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60,   maxSize: 1_000 }),   // L1 — local memory
-  new RedisLayer({ client: new Redis(), ttl: 3600 }) // L2 — Redis
+  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 3600 })
 ])
 
-// Fetch pattern — cache miss runs the fetcher, hit skips it entirely
 const user = await cache.get<User>('user:123', () => db.findUser(123))
-
-// Manual set / delete
-await cache.set('user:123', user)
-await cache.delete('user:123')
 ```
 
 Memory-only setup (no Redis required):
