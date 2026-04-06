@@ -1,92 +1,95 @@
-# layercache
+<p align="center">
+  <img src="./logo.png" width="520" alt="layercache logo">
+</p>
 
-**Production-ready multi-layer caching for Node.js — memory, Redis, persistence, invalidation, and resilience in one API.**
+<h1 align="center">layercache</h1>
 
-[![npm version](https://img.shields.io/npm/v/layercache)](https://www.npmjs.com/package/layercache)
-[![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
-[![license](https://img.shields.io/npm/l/layercache)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
-[![test coverage](https://img.shields.io/badge/tests-180%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
+<p align="center">
+  <strong>Production-ready multi-layer caching for Node.js</strong><br>
+  <em>Memory, Redis, persistence, invalidation, observability, and resilience in one API.</em>
+</p>
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/layercache"><img src="https://img.shields.io/npm/v/layercache" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/layercache"><img src="https://img.shields.io/npm/dw/layercache" alt="npm downloads"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/layercache" alt="license"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-blue" alt="TypeScript"></a>
+  <a href="https://github.com/flyingsquirrel0419/layercache"><img src="https://img.shields.io/badge/tests-180%20passing-brightgreen" alt="tests"></a>
+</p>
+
+<p align="center">
+  <a href="#installation">Installation</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#core-api">Core API</a> ·
+  <a href="#invalidation--freshness">Invalidation</a> ·
+  <a href="#integrations--tooling">Integrations</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
+
+---
+
+Most Node.js services hit the same wall:
+
+| Approach | Tradeoff |
+|---|---|
+| Memory-only cache | Fast, but every instance has a different view of data |
+| Redis-only cache | Shared, but every request pays a network round-trip |
+| Hand-rolled hybrid cache | Possible, but you rebuild stampede prevention, invalidation, TTL policy, and observability yourself |
+
+`layercache` gives you a single API for layered caching and handles the hard parts for you: read-through fetches, backfill, stale serving, distributed invalidation, rate limiting, persistence, and operational introspection.
+
+```ts
+const user = await cache.get('user:123', () => db.findUser(123))
+//                                         ↑ only runs on a full miss
 ```
+
+On a hit, `layercache` serves the fastest available layer and backfills anything above it. On a miss, the fetcher runs once, even under heavy concurrency.
+
+## Performance profile
+
+```text
 L1 hit  ~0.01 ms  ← served from memory, zero network
 L2 hit  ~0.5  ms  ← served from Redis, backfilled to memory
 miss    ~20   ms  ← fetcher runs once, all layers filled
 ```
 
----
+## Why teams use it
 
-## Why layercache?
+- **Predictable cache behavior** — layered reads, automatic backfill, negative caching, refresh-ahead, and stale serving.
+- **Reliable invalidation** — tags, batched tags, wildcards, prefixes, and generation-based rotation.
+- **Production safeguards** — rate limiting, circuit breakers, graceful degradation, compression limits, serializer hardening, and snapshot path validation.
+- **Operational visibility** — metrics, health checks, OpenTelemetry spans, stats endpoints, and an admin CLI.
+- **Works with your stack** — Express, Fastify, Hono, GraphQL, tRPC, NestJS, CLI, and custom cache layers.
 
-Most Node.js services end up with the same problem:
+## Feature map
 
-- **Memory-only** → fast, but not shared across servers
-- **Redis-only** → shared, but every read pays a network round-trip
-- **Hand-rolled layers** → works, but you rewrite stampede prevention, backfill logic, and tag invalidation in every project
+### Core caching
 
-layercache solves all three. You declare your layers once and call `get`. Everything else is handled.
+- Layered reads with automatic backfill
+- Stampede prevention and optional distributed single-flight
+- Bulk reads and writes with layer-level `getMany()` / `setMany()` fast paths
+- `wrap()`, namespaces, cache warming, `getOrThrow()`, and `inspect()`
 
-It is designed for production services that need predictable cache behavior under load: stampede prevention, cross-instance invalidation, layered TTL control, operational metrics, and safer persistence defaults.
+### Invalidation and freshness
 
-```ts
-const user = await cache.get('user:123', () => db.findUser(123))
-//                                         ↑ only called on a full miss
-```
+- Tag invalidation, batched tag invalidation, wildcard invalidation, and prefix invalidation
+- Generation-based invalidation with optional stale-generation cleanup
+- Sliding TTL, adaptive TTL, refresh-ahead, stale-while-revalidate, and stale-if-error
+- Per-layer TTL overrides, TTL policies, negative caching, and TTL jitter
 
-On a hit, the value is returned from the fastest layer that has it, and automatically backfilled into any faster layers that didn't. On a miss, the fetcher runs exactly once — even under 100 concurrent requests for the same key.
+### Operations and resilience
 
----
+- Graceful degradation, circuit breakers, scoped fetcher rate limiting, and write-behind
+- Persistence to memory snapshots or disk snapshots
+- Compression, serializer fallback chains, and MessagePack support
+- Health checks, per-layer metrics, latency tracking, and event hooks
 
-## Features
+### Integrations and tooling
 
-- **Layered reads & automatic backfill** — hits in slower layers propagate up
-- **Cache stampede prevention** — mutex-based deduplication per key
-- **Tag-based invalidation** — `set('user:123:posts', posts, { tags: ['user:123'] })` then `invalidateByTag('user:123')`
-- **Batch tag invalidation** — `invalidateByTags(['tenant:a', 'users'], 'all')` for OR/AND invalidation in one call
-- **Pattern invalidation** — `invalidateByPattern('user:*')`
-- **Prefix invalidation** — efficient `invalidateByPrefix('user:123:')` for hierarchical keys
-- **Generation-based invalidation** — `generation` prefixes keys with `vN:` and `bumpGeneration()` rotates the namespace instantly, with optional stale-generation cleanup
-- **Per-layer TTL overrides** — different TTLs for memory vs. Redis in one call
-- **TTL policies** — align TTLs to time boundaries (`until-midnight`, `next-hour`, `{ alignTo }`, or a function)
-- **Negative caching** — cache known misses for a short TTL to protect the database
-- **Stale strategies** — `staleWhileRevalidate` and `staleIfError` as opt-in read behavior
-- **TTL jitter** — spread expirations to avoid synchronized stampedes
-- **Sliding & adaptive TTL** — extend TTL on every read or ramp it up for hot keys
-- **Refresh-ahead** — trigger background refresh when TTL drops below a threshold
-- **Fetcher rate limiting** — cap concurrent fetchers or requests per interval
-- **Best-effort writes** — tolerate partial layer write failures when desired
-- **Write-behind mode** — write local layers immediately and flush slower remote layers asynchronously
-- **Bulk reads** — `mget` uses layer-level `getMany()` when available
-- **Bulk writes** — `mset` uses layer-level `setMany()` when available
-- **Distributed tag index** — `RedisTagIndex` keeps tag state consistent across multiple servers
-- **Optional distributed single-flight** — plug in a coordinator to dedupe misses across instances
-- **Cross-server L1 invalidation** — Redis pub/sub bus flushes stale memory on other instances when you write or delete
-- **`wrap()` decorator API** — turn any async function into a cached version with auto-generated keys
-- **Cache warming** — pre-populate layers with a prioritised list of entries at startup
-- **Namespaces** — scope a `CacheStack` to a key prefix for multi-tenant or module isolation
-- **Event hooks** — `EventEmitter`-based events for hits, misses, stale serves, errors, and more
-- **Graceful degradation** — skip a failing layer for a configurable retry window
-- **Circuit breaker** — per-key or global; opens after N failures, recovers after cooldown
-- **Compression** — transparent async gzip/brotli in `RedisLayer` (non-blocking) with a byte threshold
-- **Serializer fallback chains** — transparently read legacy payloads (for example JSON) and rewrite them with the primary serializer
-- **Metrics & stats** — per-layer hit/miss counters, **per-layer latency tracking**, circuit-breaker trips, degraded operations; HTTP stats handler
-- **Health checks** — `cache.healthCheck()` returns per-layer health and latency
-- **Persistence** — `exportState` / `importState` for in-process snapshots; `persistToFile` / `restoreFromFile` for disk
-- **Admin CLI** — `layercache stats | keys | inspect | invalidate` against any Redis URL
-- **Framework integrations** — Express middleware, Fastify plugin, Hono middleware, tRPC middleware, GraphQL resolver wrapper
-- **OpenTelemetry plugin** — instrument `get` / `set` / invalidation flows with spans
-- **MessagePack serializer** — drop-in replacement for lower Redis memory usage
-- **NestJS module** — `CacheStackModule.forRoot(...)` and `forRootAsync(...)` with `@InjectCacheStack()`
-- **`getOrThrow()`** — throws `CacheMissError` instead of returning `null`, for strict use cases
-- **`inspect()`** — debug a key: see which layers hold it, remaining TTLs, tags, and staleness state
-- **MemoryLayer cleanup hooks** — periodic TTL cleanup and `onEvict` callbacks
-- **Conditional caching** — `shouldCache` predicate to skip caching specific fetcher results
-- **Nested namespaces** — `namespace('a').namespace('b')` for composable key prefixes with namespace-scoped metrics
-- **Custom layers** — implement the 5-method `CacheLayer` interface to plug in Memcached, DynamoDB, or anything else
-- **Edge-safe entry point** — `layercache/edge` exports the non-Node helpers for Worker-style runtimes
-- **ESM + CJS** — works with both module systems, Node.js ≥ 20
-
----
+- Express, Fastify, Hono, GraphQL, tRPC, and NestJS integrations
+- Redis-backed distributed tag index and invalidation bus support
+- Admin CLI for stats, key inspection, and invalidation
+- Edge-safe entry point for Worker-style runtimes
 
 ## Installation
 
@@ -170,6 +173,8 @@ await cache.set('user:123', user, {
   tags: ['user', 'user:123']
 })
 ```
+
+## Invalidation & freshness
 
 ### `cache.invalidateByTag(tag): Promise<void>`
 
@@ -763,9 +768,11 @@ cache.on('error', ({ event, context }) => logger.error(event, context))
 
 ---
 
-## Framework integrations
+## Integrations & tooling
 
-### Express
+### Framework integrations
+
+#### Express
 
 ```ts
 import { CacheStack, MemoryLayer, createExpressCacheMiddleware } from 'layercache'
@@ -785,7 +792,7 @@ app.get('/api/user/:id', createExpressCacheMiddleware(cache, {
 }), handler)
 ```
 
-### tRPC
+#### tRPC
 
 ```ts
 import { createTrpcCacheMiddleware } from 'layercache/integrations/trpc'
@@ -795,7 +802,7 @@ const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60 })
 export const cachedProcedure = t.procedure.use(cacheMiddleware)
 ```
 
-### GraphQL
+#### GraphQL
 
 ```ts
 import { cacheGraphqlResolver } from 'layercache/integrations/graphql'
@@ -812,7 +819,7 @@ const resolvers = {
 
 ---
 
-## Admin CLI
+### Admin CLI
 
 Inspect and manage a Redis-backed cache without writing code.
 
@@ -1046,15 +1053,20 @@ new CacheStack([...], {
 
 ## Contributing
 
+Contributions are welcome, whether that means bug fixes, documentation improvements, performance work, new adapters, or issue reports.
+
 ```bash
 git clone https://github.com/flyingsquirrel0419/layercache
 cd layercache
 npm install
+npm run lint
 npm test          # vitest
 npm run build:all # esm + cjs + nestjs package
 ```
 
-PRs and issues welcome.
+- Read the [contribution guide](./CONTRIBUTING.md) before opening a PR.
+- Participation in the project is covered by the [Code of Conduct](./CODE_OF_CONDUCT.md).
+- If you are filing an issue, include reproduction steps, expected behavior, and runtime details when relevant.
 
 ---
 
