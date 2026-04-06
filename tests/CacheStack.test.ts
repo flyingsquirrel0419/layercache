@@ -1,5 +1,5 @@
 import Redis from 'ioredis-mock'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
@@ -34,6 +34,10 @@ class RecordingLayer implements CacheLayer {
   async clear(): Promise<void> {
     this.values.clear()
   }
+}
+
+class RemoteLayerWithoutKeys extends RecordingLayer {
+  readonly isLocal = false
 }
 
 class InMemoryInvalidationBus implements InvalidationBus {
@@ -300,5 +304,22 @@ describe('CacheStack', () => {
 
     await expect(cache.get('user:1')).rejects.toThrow(/disconnecting/i)
     await expect(cache.set('user:1', { id: 1 })).rejects.toThrow(/disconnecting/i)
+  })
+
+  it('warns when shared layers without keys() rely on the default tag index', () => {
+    const logger = { warn: vi.fn() }
+
+    new CacheStack([new RemoteLayerWithoutKeys('remote')], { logger })
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'default in-memory TagIndex with a shared cache layer only tracks keys seen by this process'
+      )
+    )
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'does not implement keys() can leave invalidateByPattern() and invalidateByPrefix() incomplete'
+      )
+    )
   })
 })

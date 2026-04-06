@@ -31,4 +31,16 @@ describe('TagIndex', () => {
 
     expect((await index.matchPattern('user:*')).sort()).toEqual(['user:1', 'user:2'])
   })
+
+  it('resets trie node ids when cleared', async () => {
+    const index = new TagIndex()
+
+    await index.touch('user:1')
+    await index.clear()
+    await index.touch('post:1')
+
+    expect(await index.keysForPrefix('post:')).toEqual(['post:1'])
+    expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeGreaterThan(1)
+    expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeLessThan(10)
+  })
 })

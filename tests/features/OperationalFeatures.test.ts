@@ -204,6 +204,40 @@ describe('operational features', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
+  it('does not leak late background refresh rejections after a timeout', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      backgroundRefreshTimeoutMs: 20
+    })
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    let rejectFetch!: (reason?: unknown) => void
+    const fetcher = vi.fn(
+      () =>
+        new Promise<{ version: number }>((_, reject) => {
+          rejectFetch = reject
+        })
+    )
+    const unhandled = vi.fn()
+    const listener = (reason: unknown) => {
+      unhandled(reason)
+    }
+    process.on('unhandledRejection', listener)
+
+    try {
+      await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+      await new Promise((resolve) => setTimeout(resolve, 35))
+
+      rejectFetch(new Error('late failure'))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      expect(unhandled).not.toHaveBeenCalled()
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    } finally {
+      process.off('unhandledRejection', listener)
+    }
+  })
+
   it('returns stale values when refresh fails inside stale-if-error window', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })

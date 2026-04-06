@@ -6,7 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/layercache)](https://www.npmjs.com/package/layercache)
 [![license](https://img.shields.io/npm/l/layercache)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue)](https://www.typescriptlang.org/)
-[![test coverage](https://img.shields.io/badge/tests-177%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
+[![test coverage](https://img.shields.io/badge/tests-180%20passing-brightgreen)](https://github.com/flyingsquirrel0419/layercache)
 
 ```
 L1 hit  ~0.01 ms  ← served from memory, zero network
@@ -173,7 +173,7 @@ await cache.set('user:123', user, {
 
 ### `cache.invalidateByTag(tag): Promise<void>`
 
-Deletes every key that was stored with this tag across all layers.
+Deletes every key that was stored with this tag across all layers. In multi-instance deployments, this is only complete when every instance shares the same tag index implementation (for example `RedisTagIndex`).
 
 ```ts
 await cache.set('user:123',       user,  { tags: ['user:123'] })
@@ -199,7 +199,7 @@ Glob-style deletion against the tracked key set, plus any layer that can enumera
 await cache.invalidateByPattern('user:*') // deletes user:1, user:2, …
 ```
 
-For multi-instance deployments, prefer a shared `RedisTagIndex`. Without it, pattern invalidation still scans real layer keys when available, but tag tracking itself remains process-local.
+For multi-instance deployments, prefer a shared `RedisTagIndex`. Without it, pattern invalidation still scans real layer keys when available, but that fallback only helps on layers that implement `keys()`, and tag tracking itself remains process-local.
 
 ### `cache.invalidateByPrefix(prefix): Promise<void>`
 
@@ -290,6 +290,8 @@ const cache = new CacheStack([...], {
   generationCleanup: { batchSize: 500 }
 })
 ```
+
+`bumpGeneration()` only rotates future reads and writes by default. Enable `generationCleanup` when you want previous generations to be pruned automatically instead of aging out by TTL.
 
 ### OpenTelemetry note
 
@@ -521,7 +523,7 @@ const cache = new CacheStack(
 
 Now `invalidateByTag('user:123')` on any server deletes every tagged key, regardless of which server originally wrote it.
 
-The same recommendation applies to `invalidateByPattern()` and `invalidateByPrefix()` in distributed deployments: a shared tag index gives the most complete view of known keys, while layer key scans act as a fallback when the layer exposes `keys()`.
+The same recommendation applies to `invalidateByPattern()` and `invalidateByPrefix()` in distributed deployments: a shared tag index gives the most complete view of known keys, while layer key scans act as a fallback only when the shared layer exposes `keys()`.
 
 ### Safe Redis clearing
 

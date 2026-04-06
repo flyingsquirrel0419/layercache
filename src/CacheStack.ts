@@ -167,6 +167,11 @@ export class CacheStack extends EventEmitter {
         'Using the default in-memory TagIndex with a shared cache layer only tracks keys seen by this process. Use RedisTagIndex for cross-instance tag invalidation.'
       )
     }
+    if (!options.tagIndex && layers.some((layer) => layer.isLocal === false && !layer.keys)) {
+      this.logger.warn?.(
+        'Using the default in-memory TagIndex with a shared cache layer that does not implement keys() can leave invalidateByPattern() and invalidateByPrefix() incomplete after restarts. Use RedisTagIndex or implement keys() on the shared layer.'
+      )
+    }
     if (
       options.invalidationBus &&
       options.broadcastL1Invalidation === undefined &&
@@ -646,6 +651,11 @@ export class CacheStack extends EventEmitter {
     )
   }
 
+  /**
+   * Rotates the active generation prefix used for all future cache keys.
+   * Previous-generation keys remain in the underlying layers until they expire,
+   * unless `generationCleanup` is enabled to prune them in the background.
+   */
   bumpGeneration(nextGeneration?: number): number {
     const current = this.currentGeneration ?? 0
     const previousGeneration = this.currentGeneration
@@ -1336,14 +1346,25 @@ export class CacheStack extends EventEmitter {
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined
+    const observedPromise = promise.then(
+      (value) => ({ kind: 'value' as const, value }),
+      (error) => ({ kind: 'error' as const, error })
+    )
     try {
-      return await Promise.race([
-        promise,
+      const result = await Promise.race([
+        observedPromise,
         new Promise<T>((_, reject) => {
           timer = setTimeout(() => reject(onTimeout()), timeoutMs)
           timer.unref?.()
         })
       ])
+      if (result && typeof result === 'object' && 'kind' in result) {
+        if (result.kind === 'error') {
+          throw result.error
+        }
+        return result.value
+      }
+      return result
     } finally {
       if (timer) {
         clearTimeout(timer)

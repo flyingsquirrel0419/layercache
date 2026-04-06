@@ -92,6 +92,7 @@ export class TagIndex implements CacheTagIndex {
     this.knownKeys.clear()
     this.root.children.clear()
     this.root.terminal = false
+    this.nextNodeId = this.root.id + 1
   }
 
   private createTrieNode(): TrieNode {
