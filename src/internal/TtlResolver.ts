@@ -158,15 +158,14 @@ export class TtlResolver {
       return
     }
 
-    // Remove oldest 10% of entries
+    // Remove least recently accessed 10% of entries
     const toRemove = Math.ceil(this.maxProfileEntries * 0.1)
-    let removed = 0
-    for (const key of this.accessProfiles.keys()) {
-      if (removed >= toRemove) {
-        break
+    const sorted = [...this.accessProfiles.entries()].sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt)
+    for (let i = 0; i < toRemove && i < sorted.length; i++) {
+      const entry = sorted[i]
+      if (entry) {
+        this.accessProfiles.delete(entry[0])
       }
-      this.accessProfiles.delete(key)
-      removed += 1
     }
   }
 }

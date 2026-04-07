@@ -52,6 +52,7 @@ const DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS = 5_000
 const DEFAULT_SINGLE_FLIGHT_POLL_MS = 50
 const DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
 const MAX_CACHE_KEY_LENGTH = 1_024
+const MAX_PATTERN_LENGTH = 1_024
 const DEFAULT_MAX_PROFILE_ENTRIES = 100_000
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
@@ -594,6 +595,7 @@ export class CacheStack extends EventEmitter {
   }
 
   async invalidateByPattern(pattern: string): Promise<void> {
+    this.validatePattern(pattern)
     await this.awaitStartup('invalidateByPattern')
     const keys = await this.keyDiscovery.collectKeysMatchingPattern(this.qualifyPattern(pattern))
     await this.deleteKeys(keys)
@@ -1721,6 +1723,20 @@ export class CacheStack extends EventEmitter {
     return key
   }
 
+  private validatePattern(pattern: string): void {
+    if (pattern.length === 0) {
+      throw new Error('Pattern must not be empty.')
+    }
+
+    if (pattern.length > MAX_PATTERN_LENGTH) {
+      throw new Error(`Pattern length must be at most ${MAX_PATTERN_LENGTH} characters.`)
+    }
+
+    if (/[\u0000-\u001F\u007F]/.test(pattern)) {
+      throw new Error('Pattern contains unsupported control characters.')
+    }
+  }
+
   private validateTtlPolicy(name: string, policy: CacheTtlPolicy | undefined): void {
     if (!policy || typeof policy === 'function' || policy === 'until-midnight' || policy === 'next-hour') {
       return
@@ -1944,5 +1960,18 @@ export class CacheStack extends EventEmitter {
 }
 
 function createInstanceId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `layercache-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+
+  // Fallback: use crypto.getRandomValues if available, otherwise Math.random
+  const bytes = new Uint8Array(16)
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256)
+    }
+  }
+  return `layercache-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`
 }

@@ -15,6 +15,8 @@ interface TrieNode {
   children: Map<string, TrieNode>
 }
 
+const MAX_PATTERN_RECURSION_DEPTH = 500
+
 export class TagIndex implements CacheTagIndex {
   private readonly tagToKeys = new Map<string, Set<string>>()
   private readonly keyToTags = new Map<string, Set<string>>()
@@ -82,7 +84,7 @@ export class TagIndex implements CacheTagIndex {
 
   async matchPattern(pattern: string): Promise<string[]> {
     const matches = new Set<string>()
-    this.collectPatternMatches(this.root, '', pattern, 0, matches, new Set<string>())
+    this.collectPatternMatches(this.root, '', pattern, 0, matches, new Set<string>(), 0)
     return [...matches]
   }
 
@@ -149,8 +151,13 @@ export class TagIndex implements CacheTagIndex {
     pattern: string,
     patternIndex: number,
     matches: Set<string>,
-    visited: Set<string>
+    visited: Set<string>,
+    depth: number
   ): void {
+    if (depth > MAX_PATTERN_RECURSION_DEPTH) {
+      return
+    }
+
     const stateKey = `${node.id}:${patternIndex}`
     if (visited.has(stateKey)) {
       return
@@ -169,23 +176,39 @@ export class TagIndex implements CacheTagIndex {
       return
     }
     if (patternChar === '*') {
-      this.collectPatternMatches(node, prefix, pattern, patternIndex + 1, matches, visited)
+      this.collectPatternMatches(node, prefix, pattern, patternIndex + 1, matches, visited, depth + 1)
       for (const [character, child] of node.children) {
-        this.collectPatternMatches(child, `${prefix}${character}`, pattern, patternIndex, matches, visited)
+        this.collectPatternMatches(child, `${prefix}${character}`, pattern, patternIndex, matches, visited, depth + 1)
       }
       return
     }
 
     if (patternChar === '?') {
       for (const [character, child] of node.children) {
-        this.collectPatternMatches(child, `${prefix}${character}`, pattern, patternIndex + 1, matches, visited)
+        this.collectPatternMatches(
+          child,
+          `${prefix}${character}`,
+          pattern,
+          patternIndex + 1,
+          matches,
+          visited,
+          depth + 1
+        )
       }
       return
     }
 
     const child = node.children.get(patternChar)
     if (child) {
-      this.collectPatternMatches(child, `${prefix}${patternChar}`, pattern, patternIndex + 1, matches, visited)
+      this.collectPatternMatches(
+        child,
+        `${prefix}${patternChar}`,
+        pattern,
+        patternIndex + 1,
+        matches,
+        visited,
+        depth + 1
+      )
     }
   }
 

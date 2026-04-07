@@ -253,9 +253,11 @@ export class RedisLayer implements CacheLayer {
     }
 
     try {
-      await this.client.del(this.withPrefix(key)).catch(() => undefined)
-    } catch {
-      // ignore delete failures after deserialization failure
+      await this.client.del(this.withPrefix(key))
+    } catch (deleteError) {
+      // Log but don't throw — the original deserialization failure is the primary issue.
+      // The corrupted key will be retried on next access.
+      console.warn(`[layercache] RedisLayer: failed to delete corrupted key "${key}"`, deleteError)
     }
     return null
   }

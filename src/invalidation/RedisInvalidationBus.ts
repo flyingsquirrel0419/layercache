@@ -63,7 +63,7 @@ export class RedisInvalidationBus implements InvalidationBus {
     let message: InvalidationMessage
 
     try {
-      const parsed = JSON.parse(payload)
+      const parsed = sanitizeJsonValue(JSON.parse(payload))
       if (!this.isInvalidationMessage(parsed)) {
         throw new Error('Invalid invalidation payload shape.')
       }
@@ -118,4 +118,24 @@ export class RedisInvalidationBus implements InvalidationBus {
 
     console.error(`[layercache] ${message}`, error)
   }
+}
+
+const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeJsonValue)
+  }
+
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = Object.create(null)
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      if (!DANGEROUS_KEYS.has(key)) {
+        result[key] = sanitizeJsonValue((value as Record<string, unknown>)[key])
+      }
+    }
+    return result
+  }
+
+  return value
 }

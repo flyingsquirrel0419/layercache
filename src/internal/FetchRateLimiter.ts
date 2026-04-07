@@ -23,6 +23,8 @@ interface NormalizedRateLimitOptions extends CacheRateLimitOptions {
   scope: 'global' | 'key' | 'fetcher'
 }
 
+const MAX_BUCKETS = 10_000
+
 export class FetchRateLimiter {
   private readonly buckets = new Map<string, BucketState>()
   private readonly queuesByBucket = new Map<string, Array<QueueItem<unknown>>>()
@@ -226,9 +228,26 @@ export class FetchRateLimiter {
       return existing
     }
 
+    if (this.buckets.size >= MAX_BUCKETS) {
+      this.evictIdleBuckets()
+    }
+
     const bucket: BucketState = { active: 0, startedAt: [] }
     this.buckets.set(bucketKey, bucket)
     return bucket
+  }
+
+  private evictIdleBuckets(): void {
+    for (const [key, bucket] of this.buckets.entries()) {
+      if (this.buckets.size <= MAX_BUCKETS * 0.9) {
+        break
+      }
+      if (bucket.active === 0 && bucket.startedAt.length === 0 && !this.queuesByBucket.has(key)) {
+        this.buckets.delete(key)
+        this.queuesByBucket.delete(key)
+        this.pendingBuckets.delete(key)
+      }
+    }
   }
 
   private cleanupBucket(bucketKey: string, bucket: BucketState, intervalMs: number | undefined): void {

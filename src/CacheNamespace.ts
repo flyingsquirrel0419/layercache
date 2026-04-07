@@ -151,6 +151,7 @@ export class CacheNamespace {
    * ```
    */
   namespace(childPrefix: string): CacheNamespace {
+    validateNamespaceKey(childPrefix)
     return new CacheNamespace(this.cache, `${this.prefix}:${childPrefix}`)
   }
 
@@ -290,4 +291,18 @@ function addMap(base: Record<string, number>, delta: Record<string, number>): Re
     result[key] = (base[key] ?? 0) + (delta[key] ?? 0)
   }
   return result
+}
+
+function validateNamespaceKey(key: string): void {
+  if (key.length === 0) {
+    throw new Error('Namespace prefix must not be empty.')
+  }
+
+  if (key.length > 256) {
+    throw new Error('Namespace prefix must be at most 256 characters.')
+  }
+
+  if (/[\u0000-\u001F\u007F]/.test(key)) {
+    throw new Error('Namespace prefix contains unsupported control characters.')
+  }
 }
