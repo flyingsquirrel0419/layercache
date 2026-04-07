@@ -98,7 +98,7 @@ function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url, 'http://localhost')
     parsed.searchParams.sort()
-    return decodeURIComponent(parsed.pathname) + parsed.search
+    return parsed.pathname + parsed.search
   } catch {
     return url
   }

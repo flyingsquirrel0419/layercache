@@ -24,9 +24,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   const redisUrl = validateRedisUrl(args.redisUrl)
   if (!redisUrl) {
-    process.stderr.write(
-      `Error: invalid Redis URL "${maskRedisUrl(args.redisUrl)}". Expected format: redis://[user:password@]host[:port][/db]\n`
-    )
+    process.stderr.write('Error: invalid Redis URL. Expected format: redis://[user:password@]host[:port][/db]\n')
     process.exitCode = 1
     return
   }
@@ -40,7 +38,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   try {
     await redis.connect().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to connect to Redis at "${maskRedisUrl(redisUrl)}": ${message}`)
+      throw new Error(`Failed to connect to Redis: ${message}`)
     })
 
     if (args.command === 'stats') {

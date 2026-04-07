@@ -3,6 +3,7 @@ import type { CacheCircuitBreakerOptions } from '../types'
 interface CircuitBreakerState {
   failures: number
   openUntil: number | null
+  createdAt: number
 }
 
 interface CircuitBreakerManagerOptions {
@@ -29,9 +30,7 @@ export class CircuitBreakerManager {
 
     const now = Date.now()
     if (state.openUntil <= now) {
-      state.openUntil = null
-      state.failures = 0
-      this.breakers.set(key, state)
+      this.breakers.delete(key)
       return
     }
 
@@ -45,9 +44,11 @@ export class CircuitBreakerManager {
       return
     }
 
+    this.pruneIfNeeded()
+
     const failureThreshold = options.failureThreshold ?? 3
     const cooldownMs = options.cooldownMs ?? 30_000
-    const state = this.breakers.get(key) ?? { failures: 0, openUntil: null }
+    const state = this.breakers.get(key) ?? { failures: 0, openUntil: null, createdAt: Date.now() }
     state.failures += 1
 
     if (state.failures >= failureThreshold) {
@@ -55,7 +56,6 @@ export class CircuitBreakerManager {
     }
 
     this.breakers.set(key, state)
-    this.pruneIfNeeded()
   }
 
   recordSuccess(key: string): void {
@@ -68,8 +68,7 @@ export class CircuitBreakerManager {
       return false
     }
     if (state.openUntil <= Date.now()) {
-      state.openUntil = null
-      state.failures = 0
+      this.breakers.delete(key)
       return false
     }
     return true
@@ -98,18 +97,25 @@ export class CircuitBreakerManager {
       return
     }
 
-    // Prune entries whose circuit is already closed (failures > 0 but not open)
+    const now = Date.now()
+
+    // First pass: remove expired entries (cooldown elapsed)
     for (const [key, state] of this.breakers.entries()) {
       if (this.breakers.size <= this.maxEntries) {
-        break
+        return
       }
-      if (!state.openUntil || state.openUntil <= Date.now()) {
+      if (!state.openUntil || state.openUntil <= now) {
         this.breakers.delete(key)
       }
     }
 
-    // If still over limit, remove oldest entries
-    for (const key of this.breakers.keys()) {
+    if (this.breakers.size <= this.maxEntries) {
+      return
+    }
+
+    // Second pass: remove oldest entries by createdAt (LRU)
+    const sorted = [...this.breakers.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)
+    for (const [key] of sorted) {
       if (this.breakers.size <= this.maxEntries) {
         break
       }
