@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `README.md` now reflects the current validation baseline with **328 passing tests**.
+- `CacheStack` now delegates key validation, key serialization, and snapshot path/file handling to dedicated internal helpers (`CacheStackValidation`, `CacheKeySerialization`, `CacheSnapshotFile`), reducing class sprawl and making targeted testing easier.
 
 ### Fixed
 - `tests/internal/TtlResolver.test.ts` no longer hard-codes Asia/Seoul-specific `until-midnight` expectations, so the validation workflow passes consistently on GitHub Actions runners in UTC.
@@ -17,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `snapshotMaxEntries` and `invalidationMaxKeys` safeguards to cap large snapshot exports and wildcard/tag-based invalidation scans before they fan out across the whole cache.
 - Visitor-style key iteration hooks on built-in layers and tag indexes so export and invalidation flows can stream keys instead of materializing full key lists first.
 - `DiskLayer.maxEntryBytes` to reject oversized on-disk cache entries before deserialization.
-- Additional regression coverage for snapshot restore/export hardening, namespace isolation, serializer sanitization, invalidation safety, and large-keyspace management; the suite currently passes with **223 tests**.
+- Additional regression coverage for snapshot restore/export hardening, namespace isolation, serializer sanitization, invalidation safety, large-keyspace management, and refactored `CacheStack` internals; the suite currently passes with **328 tests**.
 
 ### Changed
 - `persistToFile()` now writes snapshots through a validated temp file in the snapshot directory and streams entries to disk instead of building the full JSON payload in memory first.
