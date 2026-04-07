@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] — 2026-04-07
+
 ### Changed
 - Nested namespace creation now validates child prefixes up front, matching the cache key restrictions more closely and rejecting empty or control-character prefixes earlier.
 - `invalidateByPattern()` now validates pattern length and control characters before scanning tracked keys.
