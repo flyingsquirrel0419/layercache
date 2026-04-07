@@ -259,16 +259,16 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 layercache is built for multi-instance production environments:
 
 ```
-  ┌─────────┐     ┌─────────┐     ┌─────────┐
-  │ Server A │     │ Server B │     │ Server C │
-  │ [Memory] │     │ [Memory] │     │ [Memory] │
-  └────┬─────┘     └────┬─────┘     └────┬─────┘
-       │                │                │
-       └───── Redis Pub/Sub ─────────────┘   <-- L1 invalidation bus
-                    │
-              ┌─────┴─────┐
-              │   Redis    │   <-- shared L2 + tag index + single-flight
-              └────────────┘
+  ┌──────────┐    ┌──────────┐    ┌──────────┐
+  │ Server A  │    │ Server B  │    │ Server C  │
+  │ [Memory]  │    │ [Memory]  │    │ [Memory]  │
+  └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
+        │                │                │
+        └──── Redis Pub/Sub ──────────────┘  <-- L1 invalidation bus
+                     │
+               ┌─────┴─────┐
+               │   Redis    │  <-- shared L2 + tag index + single-flight
+               └────────────┘
 ```
 
 - **Redis single-flight** - dedup misses across instances with distributed locks
@@ -413,7 +413,7 @@ See the [Contributing Guide](./CONTRIBUTING.md) and [Code of Conduct](./CODE_OF_
 
 ## License
 
-[MIT](./LICENSE) - use it freely in personal and commercial projects.
+[Apache 2.0](./LICENSE) - use it freely in personal and commercial projects.
 
 ---
 
