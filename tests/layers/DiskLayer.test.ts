@@ -165,4 +165,18 @@ describe('DiskLayer', () => {
     await expect(layer.get('weird-key')).resolves.toBeNull()
     await expect(fs.stat(join(dir, `${hash}.lc`))).rejects.toThrow()
   })
+
+  it('treats oversized disk entries as cache misses and removes them', async () => {
+    const boundedLayer = new DiskLayer({ directory: dir, maxEntryBytes: 32 })
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const hash = createHash('sha256').update('huge-key').digest('hex')
+    await fs.writeFile(
+      join(dir, `${hash}.lc`),
+      JSON.stringify({ key: 'huge-key', value: 'x'.repeat(512), expiresAt: null })
+    )
+
+    await expect(boundedLayer.get('huge-key')).resolves.toBeNull()
+    await expect(fs.stat(join(dir, `${hash}.lc`))).rejects.toThrow()
+  })
 })

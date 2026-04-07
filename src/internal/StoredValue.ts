@@ -34,21 +34,54 @@ export function isStoredValueEnvelope(value: unknown): value is StoredValueEnvel
     return false
   }
 
-  if (v.freshUntil !== null && typeof v.freshUntil !== 'number') {
+  if (v.freshUntil !== null && (!Number.isFinite(v.freshUntil) || typeof v.freshUntil !== 'number')) {
     return false
   }
 
-  if (v.staleUntil !== null && typeof v.staleUntil !== 'number') {
+  if (v.staleUntil !== null && (!Number.isFinite(v.staleUntil) || typeof v.staleUntil !== 'number')) {
     return false
   }
 
-  if (v.errorUntil !== null && typeof v.errorUntil !== 'number') {
+  if (v.errorUntil !== null && (!Number.isFinite(v.errorUntil) || typeof v.errorUntil !== 'number')) {
     return false
   }
 
   // Reject unreasonably large timestamps (> 10 years from now)
   const maxTimestamp = Date.now() + 10 * 365 * 24 * 60 * 60 * 1_000
   if (typeof v.freshUntil === 'number' && v.freshUntil > maxTimestamp) {
+    return false
+  }
+  if (typeof v.staleUntil === 'number' && v.staleUntil > maxTimestamp) {
+    return false
+  }
+  if (typeof v.errorUntil === 'number' && v.errorUntil > maxTimestamp) {
+    return false
+  }
+
+  if (v.freshUntil === null && (v.staleUntil !== null || v.errorUntil !== null)) {
+    return false
+  }
+
+  if (typeof v.freshUntil === 'number' && typeof v.staleUntil === 'number' && v.staleUntil < v.freshUntil) {
+    return false
+  }
+
+  if (typeof v.freshUntil === 'number' && typeof v.errorUntil === 'number' && v.errorUntil < v.freshUntil) {
+    return false
+  }
+
+  const maxTtlSeconds = 10 * 365 * 24 * 60 * 60
+  if (!isValidEnvelopeTtlSeconds(v.freshTtlSeconds, maxTtlSeconds)) {
+    return false
+  }
+  if (!isValidEnvelopeTtlSeconds(v.staleWhileRevalidateSeconds, maxTtlSeconds)) {
+    return false
+  }
+  if (!isValidEnvelopeTtlSeconds(v.staleIfErrorSeconds, maxTtlSeconds)) {
+    return false
+  }
+
+  if (v.freshTtlSeconds == null && (v.staleWhileRevalidateSeconds != null || v.staleIfErrorSeconds != null)) {
     return false
   }
 
@@ -181,4 +214,12 @@ function normalizePositiveSeconds(value: number | undefined): number | undefined
   }
 
   return value
+}
+
+function isValidEnvelopeTtlSeconds(value: unknown, maxTtlSeconds: number): boolean {
+  if (value == null) {
+    return true
+  }
+
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= maxTtlSeconds
 }

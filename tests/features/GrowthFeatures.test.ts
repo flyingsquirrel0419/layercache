@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Redis from 'ioredis-mock'
@@ -97,6 +97,14 @@ describe('growth features', () => {
     }
   })
 
+  it('rejects snapshot exports that exceed snapshotMaxEntries', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotMaxEntries: 1 })
+    await cache.set('user:1', { id: 1 })
+    await cache.set('user:2', { id: 2 })
+
+    await expect(cache.exportState()).rejects.toThrow(/snapshotMaxEntries/i)
+  })
+
   it('rejects invalid snapshot files before import', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-invalid-'))
     const filePath = join(dir, 'snapshot.json')
@@ -136,6 +144,71 @@ describe('growth features', () => {
 
       await expect(cache.get('user:1')).resolves.toEqual({ safe: 1 })
       expect({}.polluted).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects snapshot values that exceed the JSON sanitization depth', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-depth-'))
+    const filePath = join(dir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+
+    let nested: unknown = 'leaf'
+    for (let index = 0; index < 220; index += 1) {
+      nested = { value: nested }
+    }
+
+    try {
+      await writeFile(filePath, JSON.stringify([{ key: 'user:1', value: nested }]), 'utf8')
+      await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/max depth/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects oversized snapshot files before parsing them', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-size-'))
+    const filePath = join(dir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      snapshotBaseDir: dir,
+      snapshotMaxBytes: 32
+    })
+
+    try {
+      await writeFile(filePath, JSON.stringify([{ key: 'user:1', value: 'x'.repeat(256) }]), 'utf8')
+      await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/snapshotMaxBytes/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects snapshot entries with invalid cache keys before importing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-invalid-key-'))
+    const filePath = join(dir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      snapshotBaseDir: dir
+    })
+
+    try {
+      await writeFile(filePath, JSON.stringify([{ key: 'bad\u0000key', value: 1 }]), 'utf8')
+      await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/Cache key/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects oversized snapshot files based on the opened file handle', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-open-limit-'))
+    const filePath = join(dir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      snapshotBaseDir: dir,
+      snapshotMaxBytes: 32
+    })
+
+    try {
+      await writeFile(filePath, JSON.stringify([{ key: 'user:1', value: 'x'.repeat(256) }]), 'utf8')
+      await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/snapshotMaxBytes/i)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -227,7 +300,7 @@ describe('growth features', () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     await cache.set('stats:key', { ok: true })
 
-    const handler = createCacheStatsHandler(cache)
+    const handler = createCacheStatsHandler(cache, { allowPublicAccess: true })
     let body = ''
     await handler(
       {},
@@ -240,6 +313,28 @@ describe('growth features', () => {
     )
 
     expect(body).toContain('"sets": 1')
+  })
+
+  it('rejects snapshot symlink escapes outside the allowed base directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-link-'))
+    const outsideDir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-outside-'))
+    const linkedDir = join(dir, 'linked')
+    const linkedFile = join(linkedDir, 'snapshot.json')
+    const outsideFile = join(outsideDir, 'snapshot.json')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+
+    try {
+      await mkdir(linkedDir, { recursive: true })
+      await rm(linkedDir, { recursive: true, force: true })
+      await symlink(outsideDir, linkedDir, 'dir')
+      await writeFile(outsideFile, '[]', 'utf8')
+
+      await expect(cache.persistToFile(linkedFile)).rejects.toThrow(/outside the allowed snapshot directory/i)
+      await expect(cache.restoreFromFile(linkedFile)).rejects.toThrow(/outside the allowed snapshot directory/i)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(outsideDir, { recursive: true, force: true })
+    }
   })
 
   it('creates cache-backed method decorators', async () => {
@@ -369,7 +464,9 @@ describe('growth features', () => {
 
   it('does not invoke tRPC next twice when the result is null', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    const middleware = createTrpcCacheMiddleware(cache, 'trpc')
+    const middleware = createTrpcCacheMiddleware(cache, 'trpc', {
+      keyResolver: (input: { id: number }) => String(input.id)
+    })
     const next = vi.fn(async () => null as unknown as { ok: boolean; data?: null })
 
     await expect(

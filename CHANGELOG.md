@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `snapshotMaxEntries` and `invalidationMaxKeys` safeguards to cap large snapshot exports and wildcard/tag-based invalidation scans before they fan out across the whole cache.
+- Visitor-style key iteration hooks on built-in layers and tag indexes so export and invalidation flows can stream keys instead of materializing full key lists first.
+- `DiskLayer.maxEntryBytes` to reject oversized on-disk cache entries before deserialization.
+- Additional regression coverage for snapshot restore/export hardening, namespace isolation, serializer sanitization, invalidation safety, and large-keyspace management; the suite currently passes with **223 tests**.
+
+### Changed
+- `persistToFile()` now writes snapshots through a validated temp file in the snapshot directory and streams entries to disk instead of building the full JSON payload in memory first.
+- `restoreFromFile()` now reads snapshots through a bounded file-handle path with `snapshotMaxBytes` enforcement and batched import fan-out, reducing memory spikes during restore.
+- Built-in invalidation key discovery now prefers streaming key visitors from `MemoryLayer`, `DiskLayer`, `RedisLayer`, `TagIndex`, and `RedisTagIndex` before falling back to array-returning APIs.
+- `RedisLayer.size()` now counts keys without first collecting the entire prefixed key list, and `DiskLayer` key scans/deletes now run with bounded concurrency.
+- Express and Hono middleware now require explicit opt-in or a custom `keyResolver` before URL-only implicit response caching is enabled.
+- Namespace-scoped tags are now prefixed and validated consistently so nested namespaces isolate tag invalidation the same way they isolate keys.
+
+### Fixed
+- Cluster-wide and key-level invalidation now prevent stale background refreshes and queued write-behind work from repopulating entries after a clear/delete/invalidate operation.
+- Remote invalidation now clears per-key circuit-breaker state on other nodes as well, keeping distributed delete/invalidate behavior aligned with local operations.
+- Snapshot restore now validates imported keys with the same cache-key rules as normal writes, and import/export paths now fail fast when entry limits are exceeded.
+- Hono cached-hit responses now return the framework `Response`, and the Fastify stats route no longer mixes `reply.send()` with returned bodies.
+- `StoredValueEnvelope` validation now rejects invalid TTL metadata and unrealistic timestamp combinations that could otherwise extend stale or negative cache lifetimes.
+
+### Security
+- `RedisLayer` now enforces decompression limits while streaming gzip/brotli payloads so compressed cache bombs are rejected before they consume unbounded memory.
+- `JsonSerializer`, `MsgpackSerializer`, and `RedisInvalidationBus` now enforce both recursion-depth and total-node limits while stripping dangerous prototype-pollution keys from decoded payloads.
+- Snapshot persistence/restore paths now harden against symlink-based escapes and validate namespace prefixes, tags, and restored envelope metadata before data reaches backing layers.
+- Stats endpoints now default to protected mode and require explicit public exposure or request authorization before returning cache internals.
+
 ## [1.2.5] — 2026-04-07
 
 ### Changed

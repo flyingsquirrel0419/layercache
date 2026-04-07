@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { CacheNamespace } from './CacheNamespace'
+import { CacheNamespace, validateNamespaceKey } from './CacheNamespace'
 import { CacheKeyDiscovery } from './internal/CacheKeyDiscovery'
 import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
 import { FetchRateLimiter } from './internal/FetchRateLimiter'
@@ -51,8 +51,13 @@ const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
 const DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS = 5_000
 const DEFAULT_SINGLE_FLIGHT_POLL_MS = 50
 const DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
+const DEFAULT_SNAPSHOT_MAX_BYTES = 16 * 1_024 * 1_024
+const DEFAULT_SNAPSHOT_MAX_ENTRIES = 10_000
+const DEFAULT_SNAPSHOT_IMPORT_BATCH_SIZE = 50
+const DEFAULT_INVALIDATION_MAX_KEYS = 10_000
 const MAX_CACHE_KEY_LENGTH = 1_024
 const MAX_PATTERN_LENGTH = 1_024
+const MAX_TAGS_PER_OPERATION = 128
 const DEFAULT_MAX_PROFILE_ENTRIES = 100_000
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
@@ -127,6 +132,7 @@ export class CacheStack extends EventEmitter {
   private readonly snapshotSerializer = new JsonSerializer()
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
   private readonly layerDegradedUntil = new Map<string, number>()
+  private readonly keyEpochs = new Map<string, number>()
   private readonly ttlResolver: TtlResolver
   private readonly circuitBreakerManager: CircuitBreakerManager
   private currentGeneration?: number
@@ -134,6 +140,7 @@ export class CacheStack extends EventEmitter {
   private writeBehindTimer?: ReturnType<typeof setInterval>
   private writeBehindFlushPromise?: Promise<void>
   private generationCleanupPromise?: Promise<void>
+  private clearEpoch = 0
   private isDisconnecting = false
   private disconnectPromise?: Promise<void>
 
@@ -371,6 +378,7 @@ export class CacheStack extends EventEmitter {
 
   async clear(): Promise<void> {
     await this.awaitStartup('clear')
+    this.beginClearEpoch()
     await Promise.all(this.layers.map((layer) => layer.clear()))
     await this.tagIndex.clear()
     this.ttlResolver.clearProfiles()
@@ -571,12 +579,14 @@ export class CacheStack extends EventEmitter {
    * `prefix:`. Useful for multi-tenant or module-level isolation.
    */
   namespace(prefix: string): CacheNamespace {
+    validateNamespaceKey(prefix)
     return new CacheNamespace(this, prefix)
   }
 
   async invalidateByTag(tag: string): Promise<void> {
+    this.validateTag(tag)
     await this.awaitStartup('invalidateByTag')
-    const keys = await this.tagIndex.keysForTag(tag)
+    const keys = await this.collectKeysForTag(tag)
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -586,9 +596,11 @@ export class CacheStack extends EventEmitter {
       return
     }
 
+    this.validateTags(tags)
     await this.awaitStartup('invalidateByTags')
-    const keysByTag = await Promise.all(tags.map((tag) => this.tagIndex.keysForTag(tag)))
+    const keysByTag = await Promise.all(tags.map((tag) => this.collectKeysForTag(tag)))
     const keys = mode === 'all' ? this.intersectKeys(keysByTag) : [...new Set(keysByTag.flat())]
+    this.assertWithinInvalidationKeyLimit(keys.length)
 
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
@@ -597,7 +609,10 @@ export class CacheStack extends EventEmitter {
   async invalidateByPattern(pattern: string): Promise<void> {
     this.validatePattern(pattern)
     await this.awaitStartup('invalidateByPattern')
-    const keys = await this.keyDiscovery.collectKeysMatchingPattern(this.qualifyPattern(pattern))
+    const keys = await this.keyDiscovery.collectKeysMatchingPattern(
+      this.qualifyPattern(pattern),
+      this.invalidationMaxKeys()
+    )
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -605,7 +620,7 @@ export class CacheStack extends EventEmitter {
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.awaitStartup('invalidateByPrefix')
     const qualifiedPrefix = this.qualifyKey(this.validateCacheKey(prefix))
-    const keys = await this.keyDiscovery.collectKeysWithPrefix(qualifiedPrefix)
+    const keys = await this.keyDiscovery.collectKeysWithPrefix(qualifiedPrefix, this.invalidationMaxKeys())
     await this.deleteKeys(keys)
     await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
   }
@@ -743,58 +758,88 @@ export class CacheStack extends EventEmitter {
 
   async exportState(): Promise<CacheSnapshotEntry[]> {
     await this.awaitStartup('exportState')
-    const exported = new Map<string, CacheSnapshotEntry>()
-
-    for (const layer of this.layers) {
-      if (!layer.keys) {
-        continue
-      }
-
-      const keys = await layer.keys()
-      for (const key of keys) {
-        const exportedKey = this.stripQualifiedKey(key)
-        if (exported.has(exportedKey)) {
-          continue
-        }
-
-        const stored = await this.readLayerEntry(layer, key)
-        if (stored === null) {
-          continue
-        }
-
-        exported.set(exportedKey, {
-          key: exportedKey,
-          value: stored,
-          ttl: remainingStoredTtlSeconds(stored)
-        })
-      }
-    }
-
-    return [...exported.values()]
+    const entries: CacheSnapshotEntry[] = []
+    await this.visitExportEntries(this.snapshotMaxEntries(), async (entry) => {
+      entries.push(entry)
+    })
+    return entries
   }
 
   async importState(entries: CacheSnapshotEntry[]): Promise<void> {
     await this.awaitStartup('importState')
-    await Promise.all(
-      entries.map(async (entry) => {
-        const qualifiedKey = this.qualifyKey(entry.key)
-        await Promise.all(this.layers.map((layer) => layer.set(qualifiedKey, entry.value, entry.ttl)))
-        await this.tagIndex.touch(qualifiedKey)
-      })
-    )
+    const normalizedEntries = entries.map((entry) => ({
+      key: this.qualifyKey(this.validateCacheKey(entry.key)),
+      value: entry.value,
+      ttl: entry.ttl
+    }))
+
+    for (let index = 0; index < normalizedEntries.length; index += DEFAULT_SNAPSHOT_IMPORT_BATCH_SIZE) {
+      const batch = normalizedEntries.slice(index, index + DEFAULT_SNAPSHOT_IMPORT_BATCH_SIZE)
+      await Promise.all(
+        batch.map(async (entry) => {
+          await Promise.all(this.layers.map((layer) => layer.set(entry.key, entry.value, entry.ttl)))
+          await this.tagIndex.touch(entry.key)
+        })
+      )
+    }
   }
 
   async persistToFile(filePath: string): Promise<void> {
     this.assertActive('persistToFile')
-    const snapshot = await this.exportState()
     const { promises: fs } = await import('node:fs')
-    await fs.writeFile(await this.validateSnapshotFilePath(filePath), JSON.stringify(snapshot, null, 2), 'utf8')
+    const path = await import('node:path')
+    const targetPath = await this.validateSnapshotFilePath(filePath, 'write')
+    const tempPath = path.join(
+      path.dirname(targetPath),
+      `.layercache-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`
+    )
+    let handle: import('node:fs/promises').FileHandle | undefined
+
+    try {
+      handle = await fs.open(tempPath, 'wx')
+      const openedHandle = handle
+      await openedHandle.writeFile('[', 'utf8')
+
+      let wroteAny = false
+      await this.visitExportEntries(this.snapshotMaxEntries(), async (entry) => {
+        await openedHandle.writeFile(wroteAny ? ',\n' : '\n', 'utf8')
+        await openedHandle.writeFile(JSON.stringify(entry, null, 2), 'utf8')
+        wroteAny = true
+      })
+
+      await openedHandle.writeFile(wroteAny ? '\n]' : ']', 'utf8')
+      await openedHandle.close()
+      handle = undefined
+      await fs.rename(tempPath, targetPath)
+    } catch (error) {
+      await handle?.close().catch(() => undefined)
+      await fs.unlink(tempPath).catch(() => undefined)
+      throw error
+    }
   }
 
   async restoreFromFile(filePath: string): Promise<void> {
     this.assertActive('restoreFromFile')
-    const { promises: fs } = await import('node:fs')
-    const raw = await fs.readFile(await this.validateSnapshotFilePath(filePath), 'utf8')
+    const { promises: fs, constants } = await import('node:fs')
+    const validatedPath = await this.validateSnapshotFilePath(filePath, 'read')
+    const handle = await fs.open(validatedPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    const snapshotMaxBytes = this.snapshotMaxBytes()
+    let raw: string
+    try {
+      if (snapshotMaxBytes !== false) {
+        const stat = await handle.stat()
+        if (stat.size > snapshotMaxBytes) {
+          throw new Error(
+            `Snapshot file exceeds snapshotMaxBytes limit (${stat.size} bytes > ${snapshotMaxBytes} bytes).`
+          )
+        }
+      }
+
+      raw = await this.readUtf8HandleWithLimit(handle, snapshotMaxBytes)
+    } finally {
+      await handle.close()
+    }
+
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
@@ -846,7 +891,9 @@ export class CacheStack extends EventEmitter {
   private async fetchWithGuards<T>(
     key: string,
     fetcher: () => Promise<T>,
-    options?: CacheGetOptions
+    options?: CacheGetOptions,
+    expectedClearEpoch?: number,
+    expectedKeyEpoch?: number
   ): Promise<T | null> {
     const fetchTask = async (): Promise<T | null> => {
       const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
@@ -855,7 +902,7 @@ export class CacheStack extends EventEmitter {
         return secondHit.value
       }
 
-      return this.fetchAndPopulate(key, fetcher, options)
+      return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
     }
 
     const singleFlightTask = async (): Promise<T | null> => {
@@ -864,7 +911,7 @@ export class CacheStack extends EventEmitter {
       }
 
       return this.options.singleFlightCoordinator.execute(key, this.resolveSingleFlightOptions(), fetchTask, () =>
-        this.waitForFreshValue(key, fetcher, options)
+        this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
       )
     }
 
@@ -878,7 +925,9 @@ export class CacheStack extends EventEmitter {
   private async waitForFreshValue<T>(
     key: string,
     fetcher: () => Promise<T>,
-    options?: CacheGetOptions
+    options?: CacheGetOptions,
+    expectedClearEpoch?: number,
+    expectedKeyEpoch?: number
   ): Promise<T | null> {
     const timeoutMs = this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS
     const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
@@ -896,13 +945,15 @@ export class CacheStack extends EventEmitter {
       await this.sleep(pollIntervalMs)
     }
 
-    return this.fetchAndPopulate(key, fetcher, options)
+    return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
   }
 
   private async fetchAndPopulate<T>(
     key: string,
     fetcher: () => Promise<T>,
-    options?: CacheGetOptions
+    options?: CacheGetOptions,
+    expectedClearEpoch?: number,
+    expectedKeyEpoch?: number
   ): Promise<T | null> {
     this.circuitBreakerManager.assertClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
     this.metricsCollector.increment('fetches')
@@ -927,6 +978,17 @@ export class CacheStack extends EventEmitter {
         return null
       }
 
+      if (this.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
+        this.logger.debug?.('skip-negative-store-after-invalidation', {
+          key,
+          expectedClearEpoch,
+          clearEpoch: this.clearEpoch,
+          expectedKeyEpoch,
+          keyEpoch: this.currentKeyEpoch(key)
+        })
+        return null
+      }
+
       await this.storeEntry(key, 'empty', null, options)
       return null
     }
@@ -942,6 +1004,17 @@ export class CacheStack extends EventEmitter {
       }
     }
 
+    if (this.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
+      this.logger.debug?.('skip-store-after-invalidation', {
+        key,
+        expectedClearEpoch,
+        clearEpoch: this.clearEpoch,
+        expectedKeyEpoch,
+        keyEpoch: this.currentKeyEpoch(key)
+      })
+      return fetched
+    }
+
     await this.storeEntry(key, 'value', fetched, options)
     return fetched
   }
@@ -952,7 +1025,12 @@ export class CacheStack extends EventEmitter {
     value: unknown,
     options?: CacheWriteOptions
   ): Promise<void> {
+    const clearEpoch = this.clearEpoch
+    const keyEpoch = this.currentKeyEpoch(key)
     await this.writeAcrossLayers(key, kind, value, options)
+    if (this.isWriteOutdated(key, clearEpoch, keyEpoch)) {
+      return
+    }
     if (options?.tags) {
       await this.tagIndex.track(key, options.tags)
     } else {
@@ -971,6 +1049,8 @@ export class CacheStack extends EventEmitter {
     entries: Array<{ key: string; value: unknown; options?: CacheWriteOptions }>
   ): Promise<void> {
     const now = Date.now()
+    const clearEpoch = this.clearEpoch
+    const entryEpochs = new Map(entries.map((entry) => [entry.key, this.currentKeyEpoch(entry.key)]))
     const entriesByLayer = new Map<CacheLayer, CacheLayerSetManyEntry[]>()
     const immediateOperations: Array<() => Promise<void>> = []
     const deferredOperations: Array<() => Promise<void>> = []
@@ -990,13 +1070,22 @@ export class CacheStack extends EventEmitter {
 
     for (const [layer, layerEntries] of entriesByLayer.entries()) {
       const operation = async () => {
+        if (clearEpoch !== this.clearEpoch) {
+          return
+        }
+        const activeEntries = layerEntries.filter(
+          (entry) => (entryEpochs.get(entry.key) ?? 0) === this.currentKeyEpoch(entry.key)
+        )
+        if (activeEntries.length === 0) {
+          return
+        }
         try {
           if (layer.setMany) {
-            await layer.setMany(layerEntries)
+            await layer.setMany(activeEntries)
             return
           }
 
-          await Promise.all(layerEntries.map((entry) => layer.set(entry.key, entry.value, entry.ttl)))
+          await Promise.all(activeEntries.map((entry) => layer.set(entry.key, entry.value, entry.ttl)))
         } catch (error) {
           await this.handleLayerFailure(layer, 'write', error)
         }
@@ -1011,8 +1100,14 @@ export class CacheStack extends EventEmitter {
 
     await this.executeLayerOperations(immediateOperations, { key: 'batch', action: 'mset' })
     await Promise.all(deferredOperations.map((operation) => this.enqueueWriteBehind(operation)))
+    if (clearEpoch !== this.clearEpoch) {
+      return
+    }
 
     for (const entry of entries) {
+      if (this.isWriteOutdated(entry.key, clearEpoch, entryEpochs.get(entry.key))) {
+        continue
+      }
       if (entry.options?.tags) {
         await this.tagIndex.track(entry.key, entry.options.tags)
       } else {
@@ -1142,11 +1237,16 @@ export class CacheStack extends EventEmitter {
     options?: CacheWriteOptions
   ): Promise<void> {
     const now = Date.now()
+    const clearEpoch = this.clearEpoch
+    const keyEpoch = this.currentKeyEpoch(key)
     const immediateOperations: Array<() => Promise<void>> = []
     const deferredOperations: Array<() => Promise<void>> = []
 
     for (const layer of this.layers) {
       const operation = async () => {
+        if (this.isWriteOutdated(key, clearEpoch, keyEpoch)) {
+          return
+        }
         if (this.shouldSkipLayer(layer)) {
           return
         }
@@ -1237,10 +1337,12 @@ export class CacheStack extends EventEmitter {
       return
     }
 
+    const clearEpoch = this.clearEpoch
+    const keyEpoch = this.currentKeyEpoch(key)
     const refresh = (async () => {
       this.metricsCollector.increment('refreshes')
       try {
-        await this.runBackgroundRefresh(key, fetcher, options)
+        await this.runBackgroundRefresh(key, fetcher, options, clearEpoch, keyEpoch)
       } catch (error) {
         this.metricsCollector.increment('refreshErrors')
         this.logger.debug?.('refresh-error', { key, error: this.formatError(error) })
@@ -1255,7 +1357,9 @@ export class CacheStack extends EventEmitter {
   private async runBackgroundRefresh<T>(
     key: string,
     fetcher: () => Promise<T>,
-    options?: CacheGetOptions
+    options?: CacheGetOptions,
+    expectedClearEpoch?: number,
+    expectedKeyEpoch?: number
   ): Promise<void> {
     const timeoutMs = this.options.backgroundRefreshTimeoutMs ?? DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS
     await this.fetchWithGuards(
@@ -1264,7 +1368,9 @@ export class CacheStack extends EventEmitter {
         this.withTimeout(fetcher(), timeoutMs, () => {
           return new Error(`Background refresh timed out after ${timeoutMs}ms for key "${key}".`)
         }),
-      options
+      options,
+      expectedClearEpoch,
+      expectedKeyEpoch
     )
   }
 
@@ -1282,6 +1388,7 @@ export class CacheStack extends EventEmitter {
       return
     }
 
+    this.bumpKeyEpochs(keys)
     await this.deleteKeysFromLayers(this.layers, keys)
 
     for (const key of keys) {
@@ -1310,24 +1417,24 @@ export class CacheStack extends EventEmitter {
     }
 
     const localLayers = this.layers.filter((layer) => layer.isLocal)
-    if (localLayers.length === 0) {
-      return
-    }
-
     if (message.scope === 'clear') {
+      this.beginClearEpoch()
       await Promise.all(localLayers.map((layer) => layer.clear()))
       await this.tagIndex.clear()
       this.ttlResolver.clearProfiles()
+      this.circuitBreakerManager.clear()
       return
     }
 
     const keys = message.keys ?? []
+    this.bumpKeyEpochs(keys)
     await this.deleteKeysFromLayers(localLayers, keys)
 
     if (message.operation !== 'write') {
       for (const key of keys) {
         await this.tagIndex.remove(key)
         this.ttlResolver.deleteProfile(key)
+        this.circuitBreakerManager.delete(key)
       }
     }
   }
@@ -1452,6 +1559,34 @@ export class CacheStack extends EventEmitter {
 
   private shouldWriteBehind(layer: CacheLayer): boolean {
     return this.options.writeStrategy === 'write-behind' && !layer.isLocal
+  }
+
+  private beginClearEpoch(): void {
+    this.clearEpoch += 1
+    this.keyEpochs.clear()
+    this.writeBehindQueue.length = 0
+  }
+
+  private currentKeyEpoch(key: string): number {
+    return this.keyEpochs.get(key) ?? 0
+  }
+
+  private bumpKeyEpochs(keys: string[]): void {
+    for (const key of keys) {
+      this.keyEpochs.set(key, this.currentKeyEpoch(key) + 1)
+    }
+  }
+
+  private isWriteOutdated(key: string, expectedClearEpoch?: number, expectedKeyEpoch?: number): boolean {
+    if (expectedClearEpoch !== undefined && expectedClearEpoch !== this.clearEpoch) {
+      return true
+    }
+
+    if (expectedKeyEpoch !== undefined && expectedKeyEpoch !== this.currentKeyEpoch(key)) {
+      return true
+    }
+
+    return false
   }
 
   private async enqueueWriteBehind(operation: () => Promise<void>): Promise<void> {
@@ -1622,6 +1757,15 @@ export class CacheStack extends EventEmitter {
     this.validatePositiveNumber('singleFlightPollMs', this.options.singleFlightPollMs)
     this.validatePositiveNumber('singleFlightRenewIntervalMs', this.options.singleFlightRenewIntervalMs)
     this.validatePositiveNumber('backgroundRefreshTimeoutMs', this.options.backgroundRefreshTimeoutMs)
+    if (this.options.snapshotMaxBytes !== false) {
+      this.validatePositiveNumber('snapshotMaxBytes', this.options.snapshotMaxBytes)
+    }
+    if (this.options.snapshotMaxEntries !== false) {
+      this.validatePositiveNumber('snapshotMaxEntries', this.options.snapshotMaxEntries)
+    }
+    if (this.options.invalidationMaxKeys !== false) {
+      this.validatePositiveNumber('invalidationMaxKeys', this.options.invalidationMaxKeys)
+    }
     this.validateRateLimitOptions('fetcherRateLimit', this.options.fetcherRateLimit)
     this.validateAdaptiveTtlOptions(this.options.adaptiveTtl)
     this.validateCircuitBreakerOptions(this.options.circuitBreaker)
@@ -1648,6 +1792,7 @@ export class CacheStack extends EventEmitter {
     this.validateAdaptiveTtlOptions(options.adaptiveTtl)
     this.validateCircuitBreakerOptions(options.circuitBreaker)
     this.validateRateLimitOptions('options.fetcherRateLimit', options.fetcherRateLimit)
+    this.validateTags(options.tags)
   }
 
   private validateLayerNumberOption(name: string, value: number | LayerTtlMap | undefined): void {
@@ -1721,6 +1866,40 @@ export class CacheStack extends EventEmitter {
     }
 
     return key
+  }
+
+  private validateTag(tag: string): string {
+    if (tag.length === 0) {
+      throw new Error('Cache tag must not be empty.')
+    }
+
+    if (tag.length > MAX_CACHE_KEY_LENGTH) {
+      throw new Error(`Cache tag length must be at most ${MAX_CACHE_KEY_LENGTH} characters.`)
+    }
+
+    if (/[\u0000-\u001F\u007F]/.test(tag)) {
+      throw new Error('Cache tag contains unsupported control characters.')
+    }
+
+    if (/[\uD800-\uDFFF]/.test(tag)) {
+      throw new Error('Cache tag contains unsupported surrogate code points.')
+    }
+
+    return tag
+  }
+
+  private validateTags(tags: string[] | undefined): void {
+    if (!tags) {
+      return
+    }
+
+    if (tags.length > MAX_TAGS_PER_OPERATION) {
+      throw new Error(`options.tags must contain at most ${MAX_TAGS_PER_OPERATION} tags.`)
+    }
+
+    for (const tag of tags) {
+      this.validateTag(tag)
+    }
   }
 
   private validatePattern(pattern: string): void {
@@ -1914,7 +2093,7 @@ export class CacheStack extends EventEmitter {
     return this.snapshotSerializer.deserialize(this.snapshotSerializer.serialize(value))
   }
 
-  private async validateSnapshotFilePath(filePath: string): Promise<string> {
+  private async validateSnapshotFilePath(filePath: string, mode: 'read' | 'write'): Promise<string> {
     if (filePath.length === 0) {
       throw new Error('filePath must not be empty.')
     }
@@ -1923,19 +2102,211 @@ export class CacheStack extends EventEmitter {
       throw new Error('filePath must not contain null bytes.')
     }
 
+    const { promises: fs } = await import('node:fs')
     const path = await import('node:path')
     const resolved = path.resolve(filePath)
     const baseDir =
       this.options.snapshotBaseDir === false ? false : path.resolve(this.options.snapshotBaseDir ?? process.cwd())
 
-    if (baseDir !== false) {
-      const relative = path.relative(baseDir, resolved)
-      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-        throw new Error(`filePath is outside the allowed snapshot directory: ${baseDir}`)
+    if (baseDir === false) {
+      return resolved
+    }
+
+    await fs.mkdir(baseDir, { recursive: true })
+    const realBaseDir = await fs.realpath(baseDir)
+    if (!this.isWithinSnapshotBase(realBaseDir, resolved, path.sep, path)) {
+      throw new Error(`filePath is outside the allowed snapshot directory: ${realBaseDir}`)
+    }
+
+    if (mode === 'read') {
+      const realTarget = await fs.realpath(resolved)
+      if (!this.isWithinSnapshotBase(realBaseDir, realTarget, path.sep, path)) {
+        throw new Error(`filePath is outside the allowed snapshot directory: ${realBaseDir}`)
+      }
+      return realTarget
+    }
+
+    const parentDir = path.dirname(resolved)
+    const existingAncestor = await this.findExistingAncestor(parentDir, fs, path)
+    const realExistingAncestor = await fs.realpath(existingAncestor)
+    if (!this.isWithinSnapshotBase(realBaseDir, realExistingAncestor, path.sep, path)) {
+      throw new Error(`filePath is outside the allowed snapshot directory: ${realBaseDir}`)
+    }
+
+    await fs.mkdir(parentDir, { recursive: true })
+    const realParentDir = await fs.realpath(parentDir)
+    if (!this.isWithinSnapshotBase(realBaseDir, realParentDir, path.sep, path)) {
+      throw new Error(`filePath is outside the allowed snapshot directory: ${realBaseDir}`)
+    }
+
+    const targetPath = path.join(realParentDir, path.basename(resolved))
+
+    try {
+      const existing = await fs.lstat(targetPath)
+      if (existing.isSymbolicLink()) {
+        throw new Error('filePath must not point to a symbolic link.')
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
       }
     }
 
-    return resolved
+    return targetPath
+  }
+
+  private async findExistingAncestor(
+    directory: string,
+    fs: typeof import('node:fs/promises'),
+    path: typeof import('node:path')
+  ): Promise<string> {
+    let current = directory
+    while (true) {
+      try {
+        await fs.lstat(current)
+        return current
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error
+        }
+      }
+
+      const parent = path.dirname(current)
+      if (parent === current) {
+        return current
+      }
+      current = parent
+    }
+  }
+
+  private isWithinSnapshotBase(
+    realBaseDir: string,
+    candidatePath: string,
+    pathSeparator: string,
+    path: typeof import('node:path')
+  ): boolean {
+    const relative = path.relative(realBaseDir, candidatePath)
+    return !(relative === '..' || relative.startsWith(`..${pathSeparator}`) || path.isAbsolute(relative))
+  }
+
+  private snapshotMaxBytes(): number | false {
+    return this.options.snapshotMaxBytes === false
+      ? false
+      : (this.options.snapshotMaxBytes ?? DEFAULT_SNAPSHOT_MAX_BYTES)
+  }
+
+  private snapshotMaxEntries(): number | false {
+    return this.options.snapshotMaxEntries === false
+      ? false
+      : (this.options.snapshotMaxEntries ?? DEFAULT_SNAPSHOT_MAX_ENTRIES)
+  }
+
+  private invalidationMaxKeys(): number | false {
+    return this.options.invalidationMaxKeys === false
+      ? false
+      : (this.options.invalidationMaxKeys ?? DEFAULT_INVALIDATION_MAX_KEYS)
+  }
+
+  private async collectKeysForTag(tag: string): Promise<string[]> {
+    const keys = new Set<string>()
+
+    if (this.tagIndex.forEachKeyForTag) {
+      await this.tagIndex.forEachKeyForTag(tag, async (key) => {
+        keys.add(key)
+        this.assertWithinInvalidationKeyLimit(keys.size)
+      })
+      return [...keys]
+    }
+
+    for (const key of await this.tagIndex.keysForTag(tag)) {
+      keys.add(key)
+      this.assertWithinInvalidationKeyLimit(keys.size)
+    }
+
+    return [...keys]
+  }
+
+  private assertWithinInvalidationKeyLimit(size: number): void {
+    const maxKeys = this.invalidationMaxKeys()
+    if (maxKeys !== false && size > maxKeys) {
+      throw new Error(`Invalidation matched too many keys (${size} > ${maxKeys}).`)
+    }
+  }
+
+  private async visitExportEntries(
+    maxEntries: number | false,
+    visitor: (entry: CacheSnapshotEntry) => Promise<void> | void
+  ): Promise<void> {
+    const exported = new Set<string>()
+
+    for (const layer of this.layers) {
+      if (!layer.keys && !layer.forEachKey) {
+        continue
+      }
+
+      const visitKey = async (key: string): Promise<void> => {
+        const exportedKey = this.stripQualifiedKey(key)
+        if (exported.has(exportedKey)) {
+          return
+        }
+
+        const stored = await this.readLayerEntry(layer, key)
+        if (stored === null) {
+          return
+        }
+
+        exported.add(exportedKey)
+        if (maxEntries !== false && exported.size > maxEntries) {
+          throw new Error(`Snapshot export exceeds snapshotMaxEntries limit (${exported.size} > ${maxEntries}).`)
+        }
+        await visitor({
+          key: exportedKey,
+          value: stored,
+          ttl: remainingStoredTtlSeconds(stored)
+        })
+      }
+
+      if (layer.forEachKey) {
+        await layer.forEachKey(visitKey)
+        continue
+      }
+
+      const keys = await layer.keys?.()
+      for (const key of keys ?? []) {
+        await visitKey(key)
+      }
+    }
+  }
+
+  private async readUtf8HandleWithLimit(
+    handle: import('node:fs/promises').FileHandle,
+    byteLimit: number | false
+  ): Promise<string> {
+    if (byteLimit === false) {
+      return handle.readFile({ encoding: 'utf8' })
+    }
+
+    const chunks: Buffer[] = []
+    let totalBytes = 0
+    let position = 0
+
+    while (true) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, byteLimit - totalBytes + 1))
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position)
+      if (bytesRead === 0) {
+        break
+      }
+
+      totalBytes += bytesRead
+      if (totalBytes > byteLimit) {
+        throw new Error(`Snapshot file exceeds snapshotMaxBytes limit (${totalBytes} bytes > ${byteLimit} bytes).`)
+      }
+
+      chunks.push(buffer.subarray(0, bytesRead))
+      position += bytesRead
+    }
+
+    return Buffer.concat(chunks).toString('utf8')
   }
 
   private normalizeForSerialization(value: unknown): unknown {

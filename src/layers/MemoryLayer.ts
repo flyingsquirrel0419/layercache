@@ -173,6 +173,13 @@ export class MemoryLayer implements CacheLayer {
     return [...this.entries.keys()]
   }
 
+  async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
+    this.pruneExpired()
+    for (const key of this.entries.keys()) {
+      await visitor(key)
+    }
+  }
+
   exportState(): MemoryLayerSnapshotEntry[] {
     this.pruneExpired()
     return [...this.entries.entries()].map(([key, entry]) => ({

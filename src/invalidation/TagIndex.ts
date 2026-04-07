@@ -67,6 +67,12 @@ export class TagIndex implements CacheTagIndex {
     return [...(this.tagToKeys.get(tag) ?? new Set<string>())]
   }
 
+  async forEachKeyForTag(tag: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    for (const key of this.tagToKeys.get(tag) ?? new Set<string>()) {
+      await visitor(key)
+    }
+  }
+
   async keysForPrefix(prefix: string): Promise<string[]> {
     const node = this.findNode(prefix)
     if (!node) {
@@ -78,6 +84,15 @@ export class TagIndex implements CacheTagIndex {
     return matches
   }
 
+  async forEachKeyForPrefix(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    const node = this.findNode(prefix)
+    if (!node) {
+      return
+    }
+
+    await this.visitFromNode(node, prefix, visitor)
+  }
+
   async tagsForKey(key: string): Promise<string[]> {
     return [...(this.keyToTags.get(key) ?? new Set<string>())]
   }
@@ -86,6 +101,13 @@ export class TagIndex implements CacheTagIndex {
     const matches = new Set<string>()
     this.collectPatternMatches(this.root, '', pattern, 0, matches, new Set<string>(), 0)
     return [...matches]
+  }
+
+  async forEachKeyMatchingPattern(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    const matches = await this.matchPattern(pattern)
+    for (const key of matches) {
+      await visitor(key)
+    }
   }
 
   async clear(): Promise<void> {
@@ -142,6 +164,20 @@ export class TagIndex implements CacheTagIndex {
 
     for (const [character, child] of node.children) {
       this.collectFromNode(child, `${prefix}${character}`, matches)
+    }
+  }
+
+  private async visitFromNode(
+    node: TrieNode,
+    prefix: string,
+    visitor: (key: string) => void | Promise<void>
+  ): Promise<void> {
+    if (node.terminal) {
+      await visitor(prefix)
+    }
+
+    for (const [character, child] of node.children) {
+      await this.visitFromNode(child, `${prefix}${character}`, visitor)
     }
   }
 

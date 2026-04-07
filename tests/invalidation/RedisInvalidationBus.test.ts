@@ -147,4 +147,79 @@ describe('RedisInvalidationBus', () => {
     publisher.disconnect()
     subscriber.disconnect()
   })
+
+  it('rejects excessively nested invalidation payloads before they reach handlers', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { error: vi.fn() }
+    const bus = new RedisInvalidationBus({
+      publisher,
+      subscriber,
+      channel: 'layercache:test:nested-payload',
+      logger
+    })
+    const handler = vi.fn()
+
+    const unsubscribe = await bus.subscribe(handler)
+
+    let nested: unknown = 'leaf'
+    for (let index = 0; index < 80; index += 1) {
+      nested = { value: nested }
+    }
+
+    await publisher.publish(
+      'layercache:test:nested-payload',
+      JSON.stringify({
+        scope: 'key',
+        sourceId: 'inst',
+        keys: ['user:1'],
+        operation: 'delete',
+        nested
+      })
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler).not.toHaveBeenCalled()
+    expect(logger.error).toHaveBeenCalled()
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('rejects excessively wide invalidation payloads before they reach handlers', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { error: vi.fn() }
+    const bus = new RedisInvalidationBus({
+      publisher,
+      subscriber,
+      channel: 'layercache:test:wide-payload',
+      logger
+    })
+    const handler = vi.fn()
+
+    const unsubscribe = await bus.subscribe(handler)
+    const keys = Array.from({ length: 10_500 }, (_, index) => `user:${index}`)
+
+    await publisher.publish(
+      'layercache:test:wide-payload',
+      JSON.stringify({
+        scope: 'keys',
+        sourceId: 'inst',
+        keys,
+        operation: 'delete'
+      })
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler).not.toHaveBeenCalled()
+    expect(logger.error).toHaveBeenCalled()
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
 })

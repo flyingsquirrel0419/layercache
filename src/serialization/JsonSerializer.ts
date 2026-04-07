@@ -1,6 +1,7 @@
 import type { CacheSerializer } from '../types'
 
 const DANGEROUS_JSON_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const MAX_SANITIZE_NODES = 10_000
 
 export class JsonSerializer implements CacheSerializer {
   serialize(value: unknown): string {
@@ -9,19 +10,24 @@ export class JsonSerializer implements CacheSerializer {
 
   deserialize<T>(payload: string | Buffer): T {
     const normalized = Buffer.isBuffer(payload) ? payload.toString('utf8') : payload
-    return sanitizeJsonValue(JSON.parse(normalized), 0) as T
+    return sanitizeJsonValue(JSON.parse(normalized), 0, { count: 0 }) as T
   }
 }
 
 const MAX_SANITIZE_DEPTH = 200
 
-function sanitizeJsonValue(value: unknown, depth: number): unknown {
+function sanitizeJsonValue(value: unknown, depth: number, state: { count: number }): unknown {
+  state.count += 1
+  if (state.count > MAX_SANITIZE_NODES) {
+    throw new Error(`JSON payload exceeds max node count of ${MAX_SANITIZE_NODES}.`)
+  }
+
   if (depth > MAX_SANITIZE_DEPTH) {
-    return value
+    throw new Error(`JSON payload exceeds max depth of ${MAX_SANITIZE_DEPTH}.`)
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeJsonValue(entry, depth + 1))
+    return value.map((entry) => sanitizeJsonValue(entry, depth + 1, state))
   }
 
   if (!isPlainObject(value)) {
@@ -34,7 +40,7 @@ function sanitizeJsonValue(value: unknown, depth: number): unknown {
       continue
     }
 
-    sanitized[key] = sanitizeJsonValue(entry, depth + 1)
+    sanitized[key] = sanitizeJsonValue(entry, depth + 1, state)
   }
 
   return sanitized

@@ -1,5 +1,6 @@
+import { Readable, type Transform } from 'node:stream'
 import { promisify } from 'node:util'
-import { brotliCompress, brotliDecompress, gunzip, gzip } from 'node:zlib'
+import { brotliCompress, createBrotliDecompress, createGunzip, gzip } from 'node:zlib'
 import type Redis from 'ioredis'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
@@ -10,9 +11,7 @@ type CompressionAlgorithm = 'gzip' | 'brotli'
 const BATCH_DELETE_SIZE = 500
 
 const gzipAsync = promisify(gzip)
-const gunzipAsync = promisify(gunzip)
 const brotliCompressAsync = promisify(brotliCompress)
-const brotliDecompressAsync = promisify(brotliDecompress)
 
 interface RedisLayerOptions {
   client: Redis
@@ -163,8 +162,21 @@ export class RedisLayer implements CacheLayer {
   }
 
   async size(): Promise<number> {
-    const keys = await this.keys()
-    return keys.length
+    if (!this.prefix) {
+      return this.client.dbsize()
+    }
+
+    const pattern = `${this.prefix}*`
+    let cursor = '0'
+    let count = 0
+
+    do {
+      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      cursor = nextCursor
+      count += keys.length
+    } while (cursor !== '0')
+
+    return count
   }
 
   async ping(): Promise<boolean> {
@@ -220,6 +232,20 @@ export class RedisLayer implements CacheLayer {
     return keys.map((key) => key.slice(this.prefix.length))
   }
 
+  async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
+    const pattern = `${this.prefix}*`
+    let cursor = '0'
+
+    do {
+      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      cursor = nextCursor
+
+      for (const key of keys) {
+        await visitor(this.prefix ? key.slice(this.prefix.length) : key)
+      }
+    } while (cursor !== '0')
+  }
+
   private async scanKeys(pattern: string): Promise<string[]> {
     const matches: string[] = []
     let cursor = '0'
@@ -238,7 +264,13 @@ export class RedisLayer implements CacheLayer {
   }
 
   private async deserializeOrDelete<T>(key: string, payload: string | Buffer): Promise<T | null> {
-    const decodedPayload = await this.decodePayload(payload)
+    let decodedPayload: string | Buffer
+    try {
+      decodedPayload = await this.decodePayload(payload)
+    } catch {
+      await this.deleteCorruptedKey(key)
+      return null
+    }
 
     for (const serializer of this.serializers) {
       try {
@@ -252,6 +284,11 @@ export class RedisLayer implements CacheLayer {
       }
     }
 
+    await this.deleteCorruptedKey(key)
+    return null
+  }
+
+  private async deleteCorruptedKey(key: string): Promise<void> {
     try {
       await this.client.del(this.withPrefix(key))
     } catch (deleteError) {
@@ -259,7 +296,6 @@ export class RedisLayer implements CacheLayer {
       // The corrupted key will be retried on next access.
       console.warn(`[layercache] RedisLayer: failed to delete corrupted key "${key}"`, deleteError)
     }
-    return null
   }
 
   private async rewriteWithPrimarySerializer(key: string, value: unknown): Promise<void> {
@@ -316,25 +352,73 @@ export class RedisLayer implements CacheLayer {
     }
 
     if (payload.subarray(0, 10).toString() === 'LCZ1:gzip:') {
-      const decompressed = await gunzipAsync(payload.subarray(10))
-      if (decompressed.byteLength > this.decompressionMaxBytes) {
-        throw new Error(
-          `Decompressed payload (${decompressed.byteLength} bytes) exceeds decompressionMaxBytes limit (${this.decompressionMaxBytes} bytes).`
-        )
-      }
-      return decompressed
+      return this.decompressWithLimit(createGunzip(), payload.subarray(10))
     }
 
     if (payload.subarray(0, 12).toString() === 'LCZ1:brotli:') {
-      const decompressed = await brotliDecompressAsync(payload.subarray(12))
-      if (decompressed.byteLength > this.decompressionMaxBytes) {
-        throw new Error(
-          `Decompressed payload (${decompressed.byteLength} bytes) exceeds decompressionMaxBytes limit (${this.decompressionMaxBytes} bytes).`
-        )
-      }
-      return decompressed
+      return this.decompressWithLimit(createBrotliDecompress(), payload.subarray(12))
     }
 
     return payload
+  }
+
+  private async decompressWithLimit(decompressor: Transform, payload: Buffer): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      const source = Readable.from(payload)
+      const chunks: Buffer[] = []
+      let totalBytes = 0
+      let settled = false
+
+      const cleanup = (): void => {
+        decompressor.removeAllListeners()
+      }
+
+      const fail = (error: Error): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        cleanup()
+        source.unpipe(decompressor)
+        source.destroy()
+        decompressor.destroy()
+        reject(error)
+      }
+
+      decompressor.on('data', (chunk: Buffer | string) => {
+        const normalized = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        totalBytes += normalized.byteLength
+        if (totalBytes > this.decompressionMaxBytes) {
+          fail(
+            new Error(
+              `Decompressed payload (${totalBytes} bytes) exceeds decompressionMaxBytes limit (${this.decompressionMaxBytes} bytes).`
+            )
+          )
+          return
+        }
+
+        chunks.push(normalized)
+      })
+
+      decompressor.once('error', (error) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        cleanup()
+        reject(error)
+      })
+
+      decompressor.once('end', () => {
+        if (settled) {
+          return
+        }
+        settled = true
+        cleanup()
+        resolve(Buffer.concat(chunks))
+      })
+
+      source.pipe(decompressor)
+    })
   }
 }

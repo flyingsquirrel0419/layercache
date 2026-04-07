@@ -121,17 +121,28 @@ export class RedisInvalidationBus implements InvalidationBus {
 }
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const MAX_SANITIZE_DEPTH = 64
+const MAX_SANITIZE_NODES = 10_000
 
-function sanitizeJsonValue(value: unknown): unknown {
+function sanitizeJsonValue(value: unknown, depth = 0, state = { count: 0 }): unknown {
+  state.count += 1
+  if (state.count > MAX_SANITIZE_NODES) {
+    throw new Error(`Invalidation payload exceeds max node count of ${MAX_SANITIZE_NODES}.`)
+  }
+
+  if (depth > MAX_SANITIZE_DEPTH) {
+    throw new Error(`Invalidation payload exceeds max depth of ${MAX_SANITIZE_DEPTH}.`)
+  }
+
   if (Array.isArray(value)) {
-    return value.map(sanitizeJsonValue)
+    return value.map((entry) => sanitizeJsonValue(entry, depth + 1, state))
   }
 
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = Object.create(null)
     for (const key of Object.keys(value as Record<string, unknown>)) {
       if (!DANGEROUS_KEYS.has(key)) {
-        result[key] = sanitizeJsonValue((value as Record<string, unknown>)[key])
+        result[key] = sanitizeJsonValue((value as Record<string, unknown>)[key], depth + 1, state)
       }
     }
     return result

@@ -238,6 +238,72 @@ describe('operational features', () => {
     }
   })
 
+  it('does not repopulate cleared keys from in-flight background refreshes', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    let releaseFetch!: () => void
+    const fetcher = vi.fn(
+      () =>
+        new Promise<{ version: number }>((resolve) => {
+          releaseFetch = () => resolve({ version: 2 })
+        })
+    )
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await cache.clear()
+    releaseFetch()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    await expect(cache.get('user:1')).resolves.toBeNull()
+  })
+
+  it('does not repopulate deleted keys from in-flight background refreshes', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    let releaseFetch!: () => void
+    const fetcher = vi.fn(
+      () =>
+        new Promise<{ version: number }>((resolve) => {
+          releaseFetch = () => resolve({ version: 2 })
+        })
+    )
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await cache.delete('user:1')
+    releaseFetch()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    await expect(cache.get('user:1')).resolves.toBeNull()
+  })
+
+  it('does not repopulate deleted keys with negative-cache markers after refresh completes', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      negativeCaching: true
+    })
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    let releaseFetch!: () => void
+    const fetcher = vi.fn(
+      () =>
+        new Promise<null>((resolve) => {
+          releaseFetch = () => resolve(null)
+        })
+    )
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await cache.delete('user:1')
+    releaseFetch()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    await expect(cache.get('user:1')).resolves.toBeNull()
+    expect(cache.getMetrics().negativeCacheHits).toBe(0)
+  })
+
   it('returns stale values when refresh fails inside stale-if-error window', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })
@@ -364,6 +430,22 @@ describe('operational features', () => {
         __layercache: 1
       })
     )
+  })
+
+  it('does not let queued write-behind operations repopulate keys after clear', async () => {
+    const memory = new MemoryLayer({ ttl: 60 })
+    const remote = new BulkLayer()
+    ;(remote as { isLocal?: boolean }).isLocal = false
+    const cache = new CacheStack([memory, remote], {
+      writeStrategy: 'write-behind',
+      writeBehind: { batchSize: 10, flushIntervalMs: 1_000 }
+    })
+
+    await cache.set('user:1', { id: 1 })
+    await cache.clear()
+    await cache.disconnect()
+
+    await expect(remote.get('user:1')).resolves.toBeNull()
   })
 
   it('rate-limits fetchers when configured', async () => {

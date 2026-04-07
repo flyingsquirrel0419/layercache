@@ -39,11 +39,13 @@ jobs:
         id: tests
         run: npm run test:coverage
 
-      - name: Upload coverage to Codecov
+      - name: Upload coverage to Coveralls
         if: matrix.node-version == 20
-        uses: codecov/codecov-action@v4
+        uses: coverallsapp/github-action@v2
         with:
-          fail_ci_if_error: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage/lcov.info
+          fail-on-error: false
 
       - name: Build packages
         id: build

@@ -7,6 +7,8 @@ interface ExpressLikeRequest {
   originalUrl?: string
   path?: string
   query?: Record<string, unknown>
+  headers?: Headers | Record<string, unknown>
+  get?: (name: string) => string | undefined | null
 }
 
 interface ExpressLikeResponse {
@@ -28,6 +30,8 @@ interface ExpressCacheMiddlewareOptions extends CacheGetOptions {
    * Only cache responses for these HTTP methods. Defaults to `['GET']`.
    */
   methods?: string[]
+  /** Explicitly allow URL-only implicit cache keys. Disabled by default. */
+  allowPrivateCaching?: boolean
 }
 
 /**
@@ -52,6 +56,11 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
     try {
       const method = (req.method ?? 'GET').toUpperCase()
       if (!allowedMethods.has(method)) {
+        next()
+        return
+      }
+
+      if (!options.keyResolver && options.allowPrivateCaching !== true) {
         next()
         return
       }

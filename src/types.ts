@@ -76,6 +76,7 @@ export interface CacheLayer {
   clear(): Promise<void>
   deleteMany?(keys: string[]): Promise<void>
   keys?(): Promise<string[]>
+  forEachKey?(visitor: (key: string) => void | Promise<void>): Promise<void>
   ping?(): Promise<boolean>
   dispose?(): Promise<void>
   /**
@@ -156,10 +157,13 @@ export interface CacheTagIndex {
   track(key: string, tags: string[]): Promise<void>
   remove(key: string): Promise<void>
   keysForTag(tag: string): Promise<string[]>
+  forEachKeyForTag?(tag: string, visitor: (key: string) => void | Promise<void>): Promise<void>
   keysForPrefix?(prefix: string): Promise<string[]>
+  forEachKeyForPrefix?(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void>
   /** Returns the tags associated with a specific key, or an empty array. */
   tagsForKey?(key: string): Promise<string[]>
   matchPattern(pattern: string): Promise<string[]>
+  forEachKeyMatchingPattern?(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void>
   clear(): Promise<void>
 }
 
@@ -230,6 +234,9 @@ export interface CacheStackOptions {
   singleFlightPollMs?: number
   singleFlightRenewIntervalMs?: number
   snapshotBaseDir?: string | false
+  snapshotMaxBytes?: number | false
+  snapshotMaxEntries?: number | false
+  invalidationMaxKeys?: number | false
   /**
    * Maximum number of entries in `accessProfiles` and `circuitBreakers` maps
    * before the oldest entries are pruned. Prevents unbounded memory growth.

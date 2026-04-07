@@ -69,6 +69,19 @@ describe('RedisLayer', () => {
     await expect(otherLayer.get('user:1')).resolves.toEqual({ id: 2 })
   })
 
+  it('counts prefixed keys without materializing the full key list', async () => {
+    const client = new Redis()
+    const prefixedLayer = new RedisLayer({ client, prefix: 'cache:' })
+    const otherLayer = new RedisLayer({ client, prefix: 'other:' })
+
+    await prefixedLayer.set('user:1', { id: 1 })
+    await prefixedLayer.set('user:2', { id: 2 })
+    await otherLayer.set('user:1', { id: 3 })
+
+    await expect(prefixedLayer.size()).resolves.toBe(2)
+    await expect(otherLayer.size()).resolves.toBe(1)
+  })
+
   it('can deserialize with fallback serializers and rewrite using the primary serializer', async () => {
     const client = new Redis()
     const json = new JsonSerializer()
@@ -82,5 +95,20 @@ describe('RedisLayer', () => {
     const raw = await client.getBuffer('legacy')
     expect(raw).not.toBeNull()
     expect(() => msgpack.deserialize(raw as Buffer)).not.toThrow()
+  })
+
+  it('treats oversized decompressed payloads as cache misses and removes the key', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({
+      client,
+      compression: 'gzip',
+      compressionThreshold: 1,
+      decompressionMaxBytes: 64
+    })
+
+    await layer.set('compressed-bomb', 'x'.repeat(2_048))
+
+    await expect(layer.get('compressed-bomb')).resolves.toBeNull()
+    await expect(client.getBuffer('compressed-bomb')).resolves.toBeNull()
   })
 })

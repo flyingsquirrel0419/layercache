@@ -16,6 +16,12 @@ interface DiskLayerOptions {
    * Defaults to unlimited.
    */
   maxFiles?: number
+  /**
+   * Maximum size, in bytes, of a single cache file that this layer will read.
+   * Oversized entries are treated as corrupted and removed. Defaults to 16 MiB.
+   * Set to `false` to disable the limit.
+   */
+  maxEntryBytes?: number | false
 }
 
 interface DiskEntry {
@@ -24,6 +30,8 @@ interface DiskEntry {
   value: unknown
   expiresAt: number | null
 }
+
+const FILE_SCAN_CONCURRENCY = 32
 
 /**
  * A file-system backed cache layer.
@@ -44,6 +52,7 @@ export class DiskLayer implements CacheLayer {
   private readonly directory: string
   private readonly serializer: CacheSerializer
   private readonly maxFiles: number | undefined
+  private readonly maxEntryBytes: number | false
   private writeQueue = Promise.resolve()
 
   constructor(options: DiskLayerOptions) {
@@ -52,6 +61,7 @@ export class DiskLayer implements CacheLayer {
     this.name = options.name ?? 'disk'
     this.serializer = options.serializer ?? new JsonSerializer()
     this.maxFiles = this.normalizeMaxFiles(options.maxFiles)
+    this.maxEntryBytes = this.normalizeMaxEntryBytes(options.maxEntryBytes)
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -60,10 +70,8 @@ export class DiskLayer implements CacheLayer {
 
   async getEntry<T = unknown>(key: string): Promise<T | null> {
     const filePath = this.keyToPath(key)
-    let raw: Buffer
-    try {
-      raw = await fs.readFile(filePath)
-    } catch {
+    const raw = await this.readEntryFile(filePath)
+    if (raw === null) {
       return null
     }
 
@@ -123,10 +131,8 @@ export class DiskLayer implements CacheLayer {
 
   async ttl(key: string): Promise<number | null> {
     const filePath = this.keyToPath(key)
-    let raw: Buffer
-    try {
-      raw = await fs.readFile(filePath)
-    } catch {
+    const raw = await this.readEntryFile(filePath)
+    if (raw === null) {
       return null
     }
 
@@ -155,7 +161,7 @@ export class DiskLayer implements CacheLayer {
 
   async deleteMany(keys: string[]): Promise<void> {
     await this.enqueueWrite(async () => {
-      await Promise.all(keys.map((key) => this.safeDelete(this.keyToPath(key))))
+      await this.deletePathsWithConcurrency(keys.map((key) => this.keyToPath(key)))
     })
   }
 
@@ -168,8 +174,8 @@ export class DiskLayer implements CacheLayer {
         return
       }
 
-      await Promise.all(
-        entries.filter((name) => name.endsWith('.lc')).map((name) => this.safeDelete(join(this.directory, name)))
+      await this.deletePathsWithConcurrency(
+        entries.filter((name) => name.endsWith('.lc')).map((name) => join(this.directory, name))
       )
     })
   }
@@ -179,49 +185,25 @@ export class DiskLayer implements CacheLayer {
    * Expired entries are skipped and cleaned up during the scan.
    */
   async keys(): Promise<string[]> {
-    let entries: string[]
-    try {
-      entries = await fs.readdir(this.directory)
-    } catch {
-      return []
-    }
-
-    const lcFiles = entries.filter((name) => name.endsWith('.lc'))
     const keys: string[] = []
-
-    await Promise.all(
-      lcFiles.map(async (name) => {
-        const filePath = join(this.directory, name)
-        let raw: Buffer
-        try {
-          raw = await fs.readFile(filePath)
-        } catch {
-          return
-        }
-
-        let entry: DiskEntry
-        try {
-          entry = this.deserializeEntry(raw)
-        } catch {
-          await this.safeDelete(filePath)
-          return
-        }
-
-        if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
-          await this.safeDelete(filePath)
-          return
-        }
-
-        keys.push(entry.key)
-      })
-    )
-
+    await this.scanEntries(async (entry) => {
+      keys.push(entry.key)
+    })
     return keys
   }
 
+  async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
+    await this.scanEntries(async (entry) => {
+      await visitor(entry.key)
+    })
+  }
+
   async size(): Promise<number> {
-    const keys = await this.keys()
-    return keys.length
+    let count = 0
+    await this.scanEntries(async () => {
+      count += 1
+    })
+    return count
   }
 
   async ping(): Promise<boolean> {
@@ -263,6 +245,134 @@ export class DiskLayer implements CacheLayer {
     }
 
     return maxFiles
+  }
+
+  private normalizeMaxEntryBytes(maxEntryBytes: number | false | undefined): number | false {
+    if (maxEntryBytes === false) {
+      return false
+    }
+
+    const normalized = maxEntryBytes ?? 16 * 1_024 * 1_024
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      throw new Error('DiskLayer.maxEntryBytes must be a positive number or false.')
+    }
+
+    return normalized
+  }
+
+  private async readEntryFile(filePath: string): Promise<Buffer | null> {
+    let handle: fs.FileHandle | undefined
+    try {
+      handle = await fs.open(filePath, 'r')
+      return await this.readHandleWithLimit(handle)
+    } catch {
+      await this.safeDelete(filePath)
+      return null
+    } finally {
+      await handle?.close().catch(() => undefined)
+    }
+  }
+
+  private async readHandleWithLimit(handle: fs.FileHandle): Promise<Buffer> {
+    if (this.maxEntryBytes === false) {
+      return handle.readFile()
+    }
+
+    const stat = await handle.stat()
+    if (stat.size > this.maxEntryBytes) {
+      throw new Error(`DiskLayer entry exceeds maxEntryBytes limit (${stat.size} bytes > ${this.maxEntryBytes} bytes).`)
+    }
+
+    const chunks: Buffer[] = []
+    let totalBytes = 0
+    let position = 0
+
+    while (true) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, this.maxEntryBytes - totalBytes + 1))
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position)
+      if (bytesRead === 0) {
+        break
+      }
+
+      totalBytes += bytesRead
+      if (totalBytes > this.maxEntryBytes) {
+        throw new Error(
+          `DiskLayer entry exceeds maxEntryBytes limit (${totalBytes} bytes > ${this.maxEntryBytes} bytes).`
+        )
+      }
+
+      chunks.push(buffer.subarray(0, bytesRead))
+      position += bytesRead
+    }
+
+    return Buffer.concat(chunks)
+  }
+
+  private async scanEntries(visitor: (entry: DiskEntry) => Promise<void> | void): Promise<void> {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(this.directory)
+    } catch {
+      return
+    }
+
+    const lcFiles = entries.filter((name) => name.endsWith('.lc'))
+    let nextIndex = 0
+    const workerCount = Math.min(FILE_SCAN_CONCURRENCY, lcFiles.length)
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const currentIndex = nextIndex
+          nextIndex += 1
+          const name = lcFiles[currentIndex]
+          if (name === undefined) {
+            return
+          }
+
+          const filePath = join(this.directory, name)
+          const raw = await this.readEntryFile(filePath)
+          if (raw === null) {
+            continue
+          }
+
+          let entry: DiskEntry
+          try {
+            entry = this.deserializeEntry(raw)
+          } catch {
+            await this.safeDelete(filePath)
+            continue
+          }
+
+          if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
+            await this.safeDelete(filePath)
+            continue
+          }
+
+          await visitor(entry)
+        }
+      })
+    )
+  }
+
+  private async deletePathsWithConcurrency(paths: string[]): Promise<void> {
+    let nextIndex = 0
+    const workerCount = Math.min(FILE_SCAN_CONCURRENCY, paths.length)
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const currentIndex = nextIndex
+          nextIndex += 1
+          const filePath = paths[currentIndex]
+          if (filePath === undefined) {
+            return
+          }
+
+          await this.safeDelete(filePath)
+        }
+      })
+    )
   }
 
   private deserializeEntry(raw: Buffer): DiskEntry {

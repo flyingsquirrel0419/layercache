@@ -15,8 +15,8 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
-  <img src="https://img.shields.io/badge/tests-180%2B_passing-brightgreen" alt="tests">
-  <img src="https://img.shields.io/badge/2_deps-grey" alt="minimal dependencies">
+  <img src="https://img.shields.io/badge/tests-223%2B_passing-brightgreen" alt="tests">
+  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main" alt="Coveralls"></a>
 </p>
 
 <p align="center">

@@ -21,6 +21,11 @@ describe('CacheNamespace', () => {
     expect(ns.qualify('42')).toBe('posts:42')
   })
 
+  it('rejects invalid top-level namespace prefixes', () => {
+    const cache = makeCache()
+    expect(() => cache.namespace('bad\u0000ns')).toThrow(/Namespace prefix/i)
+  })
+
   it('delete removes the qualified key', async () => {
     const cache = makeCache()
     const ns = cache.namespace('orders')
@@ -110,6 +115,33 @@ describe('CacheNamespace', () => {
 
     await expect(ns.getOrThrow('key')).resolves.toBe(1)
     expect(ns.getMetrics().hits).toBeGreaterThanOrEqual(1)
+  })
+
+  it('isolates tags between namespaces', async () => {
+    const cache = makeCache()
+    const tenantA = cache.namespace('tenant-a')
+    const tenantB = cache.namespace('tenant-b')
+
+    await tenantA.set('user:1', { id: 1 }, { tags: ['user'] })
+    await tenantB.set('user:1', { id: 2 }, { tags: ['user'] })
+
+    await tenantA.invalidateByTag('user')
+
+    await expect(tenantA.get('user:1')).resolves.toBeNull()
+    await expect(tenantB.get('user:1')).resolves.toEqual({ id: 2 })
+  })
+
+  it('strips namespace prefixes from inspect tags', async () => {
+    const cache = makeCache()
+    const ns = cache.namespace('tenant-a')
+
+    await ns.set('user:1', { id: 1 }, { tags: ['user', 'profile'] })
+
+    await expect(ns.inspect('user:1')).resolves.toEqual(
+      expect.objectContaining({
+        tags: ['user', 'profile']
+      })
+    )
   })
 
   it('does not serialize namespace metrics across different cache stacks', async () => {

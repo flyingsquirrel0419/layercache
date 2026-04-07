@@ -11,23 +11,47 @@ interface CacheKeyDiscoveryOptions {
 export class CacheKeyDiscovery {
   constructor(private readonly options: CacheKeyDiscoveryOptions) {}
 
-  async collectKeysWithPrefix(prefix: string): Promise<string[]> {
+  async collectKeysWithPrefix(prefix: string, maxMatches: number | false = false): Promise<string[]> {
     const { tagIndex } = this.options
-    const matches = new Set(
-      tagIndex.keysForPrefix ? await tagIndex.keysForPrefix(prefix) : await tagIndex.matchPattern(`${prefix}*`)
-    )
+    const matches = new Set<string>()
+
+    if (tagIndex.forEachKeyForPrefix) {
+      await tagIndex.forEachKeyForPrefix(prefix, async (key) => {
+        matches.add(key)
+        this.assertWithinMatchLimit(matches, maxMatches)
+      })
+    } else {
+      const initialMatches = tagIndex.keysForPrefix
+        ? await tagIndex.keysForPrefix(prefix)
+        : await tagIndex.matchPattern(`${prefix}*`)
+      for (const key of initialMatches) {
+        matches.add(key)
+        this.assertWithinMatchLimit(matches, maxMatches)
+      }
+    }
 
     await Promise.all(
       this.options.layers.map(async (layer) => {
-        if (!layer.keys || this.options.shouldSkipLayer(layer)) {
+        if ((!layer.keys && !layer.forEachKey) || this.options.shouldSkipLayer(layer)) {
           return
         }
 
         try {
-          const keys = await layer.keys()
-          for (const key of keys) {
+          if (layer.forEachKey) {
+            await layer.forEachKey(async (key) => {
+              if (key.startsWith(prefix)) {
+                matches.add(key)
+                this.assertWithinMatchLimit(matches, maxMatches)
+              }
+            })
+            return
+          }
+
+          const keys = await layer.keys?.()
+          for (const key of keys ?? []) {
             if (key.startsWith(prefix)) {
               matches.add(key)
+              this.assertWithinMatchLimit(matches, maxMatches)
             }
           }
         } catch (error) {
@@ -39,20 +63,43 @@ export class CacheKeyDiscovery {
     return [...matches]
   }
 
-  async collectKeysMatchingPattern(pattern: string): Promise<string[]> {
-    const matches = new Set(await this.options.tagIndex.matchPattern(pattern))
+  async collectKeysMatchingPattern(pattern: string, maxMatches: number | false = false): Promise<string[]> {
+    const matches = new Set<string>()
+
+    if (this.options.tagIndex.forEachKeyMatchingPattern) {
+      await this.options.tagIndex.forEachKeyMatchingPattern(pattern, async (key) => {
+        matches.add(key)
+        this.assertWithinMatchLimit(matches, maxMatches)
+      })
+    } else {
+      for (const key of await this.options.tagIndex.matchPattern(pattern)) {
+        matches.add(key)
+        this.assertWithinMatchLimit(matches, maxMatches)
+      }
+    }
 
     await Promise.all(
       this.options.layers.map(async (layer) => {
-        if (!layer.keys || this.options.shouldSkipLayer(layer)) {
+        if ((!layer.keys && !layer.forEachKey) || this.options.shouldSkipLayer(layer)) {
           return
         }
 
         try {
-          const keys = await layer.keys()
-          for (const key of keys) {
+          if (layer.forEachKey) {
+            await layer.forEachKey(async (key) => {
+              if (PatternMatcher.matches(pattern, key)) {
+                matches.add(key)
+                this.assertWithinMatchLimit(matches, maxMatches)
+              }
+            })
+            return
+          }
+
+          const keys = await layer.keys?.()
+          for (const key of keys ?? []) {
             if (PatternMatcher.matches(pattern, key)) {
               matches.add(key)
+              this.assertWithinMatchLimit(matches, maxMatches)
             }
           }
         } catch (error) {
@@ -62,5 +109,11 @@ export class CacheKeyDiscovery {
     )
 
     return [...matches]
+  }
+
+  private assertWithinMatchLimit(matches: Set<string>, maxMatches: number | false): void {
+    if (maxMatches !== false && matches.size > maxMatches) {
+      throw new Error(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
+    }
   }
 }

@@ -6,6 +6,8 @@ interface HonoLikeRequest {
   url?: string
   path?: string
   query?: Record<string, unknown>
+  headers?: Headers | Record<string, unknown>
+  header?: (name: string) => string | undefined
 }
 
 interface HonoLikeContext {
@@ -17,14 +19,20 @@ interface HonoLikeContext {
 interface HonoCacheMiddlewareOptions extends CacheGetOptions {
   keyResolver?: (request: HonoLikeRequest) => string
   methods?: string[]
+  allowPrivateCaching?: boolean
 }
 
 export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheMiddlewareOptions = {}) {
   const allowedMethods = new Set((options.methods ?? ['GET']).map((method) => method.toUpperCase()))
 
-  return async (context: HonoLikeContext, next: () => Promise<void>): Promise<void> => {
+  return async (context: HonoLikeContext, next: () => Promise<void>): Promise<unknown> => {
     const method = (context.req.method ?? 'GET').toUpperCase()
     if (!allowedMethods.has(method)) {
+      await next()
+      return
+    }
+
+    if (!options.keyResolver && options.allowPrivateCaching !== true) {
       await next()
       return
     }
@@ -36,8 +44,7 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     if (cached !== null) {
       context.header?.('x-cache', 'HIT')
       context.header?.('content-type', 'application/json; charset=utf-8')
-      context.json(cached)
-      return
+      return context.json(cached)
     }
 
     const originalJson = context.json.bind(context)

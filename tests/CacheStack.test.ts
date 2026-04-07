@@ -90,6 +90,31 @@ describe('CacheStack', () => {
     await expect(cache.get('user:1:posts')).resolves.toBeNull()
   })
 
+  it('rejects invalid tag input', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(cache.set('user:1', { id: 1 }, { tags: ['bad\u0000tag'] })).rejects.toThrow(/Cache tag/i)
+    await expect(cache.invalidateByTag('bad\u0000tag')).rejects.toThrow(/Cache tag/i)
+  })
+
+  it('rejects tag invalidation when too many keys match', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+
+    await cache.set('user:1', { id: 1 }, { tags: ['users'] })
+    await cache.set('user:2', { id: 2 }, { tags: ['users'] })
+
+    await expect(cache.invalidateByTag('users')).rejects.toThrow(/too many keys/i)
+  })
+
+  it('rejects multi-tag invalidation when too many keys match', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+
+    await cache.set('user:1', { id: 1 }, { tags: ['users', 'tenant:a'] })
+    await cache.set('user:2', { id: 2 }, { tags: ['users'] })
+
+    await expect(cache.invalidateByTags(['users', 'tenant:a'], 'any')).rejects.toThrow(/too many keys/i)
+  })
+
   it('invalidates by wildcard pattern', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -103,6 +128,17 @@ describe('CacheStack', () => {
     await expect(cache.get('user:1')).resolves.toBeNull()
     await expect(cache.get('user:2')).resolves.toBeNull()
     await expect(cache.get('post:1')).resolves.toEqual({ id: 1 })
+  })
+
+  it('rejects wildcard invalidation when too many keys match', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+
+    await cache.mset([
+      { key: 'user:1', value: { id: 1 } },
+      { key: 'user:2', value: { id: 2 } }
+    ])
+
+    await expect(cache.invalidateByPattern('user:*')).rejects.toThrow(/too many keys/i)
   })
 
   it('invalidates by wildcard pattern using actual layer keys after tag-index state is lost', async () => {
@@ -135,6 +171,17 @@ describe('CacheStack', () => {
     await expect(redisLayer.get('user:1:profile')).resolves.toBeNull()
     await expect(redisLayer.get('user:1:posts')).resolves.toBeNull()
     await expect(redisLayer.get('user:2:profile')).resolves.toEqual({ id: 2 })
+  })
+
+  it('rejects prefix invalidation when too many keys match', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+
+    await cache.mset([
+      { key: 'user:1:profile', value: { id: 1 } },
+      { key: 'user:1:posts', value: [{ id: 1 }] }
+    ])
+
+    await expect(cache.invalidateByPrefix('user:1:')).rejects.toThrow(/too many keys/i)
   })
 
   it('tracks cache metrics', async () => {
@@ -240,6 +287,58 @@ describe('CacheStack', () => {
     await expect(cacheA.get('user:1')).resolves.toBeNull()
     await expect(cacheB.get('user:1:posts')).resolves.toBeNull()
     await expect(memoryB.get('user:1')).resolves.toBeNull()
+
+    await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
+  })
+
+  it('clears remote circuit-breaker state on distributed clear', async () => {
+    const bus = new InMemoryInvalidationBus()
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
+    const cacheB = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
+    const breaker = { failureThreshold: 1, cooldownMs: 60_000 }
+
+    const failingFetcher = vi.fn(async () => {
+      throw new Error('upstream unavailable')
+    })
+
+    await expect(cacheB.get('user:1', failingFetcher, { circuitBreaker: breaker })).rejects.toThrow(
+      /upstream unavailable/i
+    )
+    await expect(cacheB.get('user:1', failingFetcher, { circuitBreaker: breaker })).rejects.toThrow(
+      /Circuit breaker is open/i
+    )
+
+    await cacheA.clear()
+
+    const succeedingFetcher = vi.fn(async () => ({ id: 1 }))
+    await expect(cacheB.get('user:1', succeedingFetcher, { circuitBreaker: breaker })).resolves.toEqual({ id: 1 })
+    expect(succeedingFetcher).toHaveBeenCalledTimes(1)
+
+    await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
+  })
+
+  it('clears remote circuit-breaker state on distributed key deletion', async () => {
+    const bus = new InMemoryInvalidationBus()
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
+    const cacheB = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
+    const breaker = { failureThreshold: 1, cooldownMs: 60_000 }
+
+    const failingFetcher = vi.fn(async () => {
+      throw new Error('upstream unavailable')
+    })
+
+    await expect(cacheB.get('user:1', failingFetcher, { circuitBreaker: breaker })).rejects.toThrow(
+      /upstream unavailable/i
+    )
+    await expect(cacheB.get('user:1', failingFetcher, { circuitBreaker: breaker })).rejects.toThrow(
+      /Circuit breaker is open/i
+    )
+
+    await cacheA.delete('user:1')
+
+    const succeedingFetcher = vi.fn(async () => ({ id: 1 }))
+    await expect(cacheB.get('user:1', succeedingFetcher, { circuitBreaker: breaker })).resolves.toEqual({ id: 1 })
+    expect(succeedingFetcher).toHaveBeenCalledTimes(1)
 
     await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
   })

@@ -68,6 +68,19 @@ export class RedisTagIndex implements CacheTagIndex {
     return this.client.smembers(this.tagKeysKey(tag))
   }
 
+  async forEachKeyForTag(tag: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    let cursor = '0'
+    const tagKey = this.tagKeysKey(tag)
+
+    do {
+      const [nextCursor, keys] = await this.client.sscan(tagKey, cursor, 'COUNT', this.scanCount)
+      cursor = nextCursor
+      for (const key of keys) {
+        await visitor(key)
+      }
+    } while (cursor !== '0')
+  }
+
   async keysForPrefix(prefix: string): Promise<string[]> {
     const matches: string[] = []
     for (const knownKeysKey of this.knownKeysKeys()) {
@@ -81,6 +94,22 @@ export class RedisTagIndex implements CacheTagIndex {
     }
 
     return matches
+  }
+
+  async forEachKeyForPrefix(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    for (const knownKeysKey of this.knownKeysKeys()) {
+      let cursor = '0'
+
+      do {
+        const [nextCursor, keys] = await this.client.sscan(knownKeysKey, cursor, 'COUNT', this.scanCount)
+        cursor = nextCursor
+        for (const key of keys) {
+          if (key.startsWith(prefix)) {
+            await visitor(key)
+          }
+        }
+      } while (cursor !== '0')
+    }
   }
 
   async tagsForKey(key: string): Promise<string[]> {
@@ -107,6 +136,29 @@ export class RedisTagIndex implements CacheTagIndex {
     }
 
     return matches
+  }
+
+  async forEachKeyMatchingPattern(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    for (const knownKeysKey of this.knownKeysKeys()) {
+      let cursor = '0'
+
+      do {
+        const [nextCursor, keys] = await this.client.sscan(
+          knownKeysKey,
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          this.scanCount
+        )
+        cursor = nextCursor
+        for (const key of keys) {
+          if (PatternMatcher.matches(pattern, key)) {
+            await visitor(key)
+          }
+        }
+      } while (cursor !== '0')
+    }
   }
 
   async clear(): Promise<void> {

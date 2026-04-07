@@ -20,21 +20,23 @@ export class CacheNamespace {
   constructor(
     private readonly cache: CacheStack,
     private readonly prefix: string
-  ) {}
+  ) {
+    validateNamespaceKey(prefix)
+  }
 
   async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
-    return this.trackMetrics(() => this.cache.get(this.qualify(key), fetcher, options))
+    return this.trackMetrics(() => this.cache.get(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
   async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
-    return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, options))
+    return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
   /**
    * Like `get()`, but throws `CacheMissError` instead of returning `null`.
    */
   async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
-    return this.trackMetrics(() => this.cache.getOrThrow(this.qualify(key), fetcher, options))
+    return this.trackMetrics(() => this.cache.getOrThrow(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
   async has(key: string): Promise<boolean> {
@@ -46,7 +48,7 @@ export class CacheNamespace {
   }
 
   async set<T>(key: string, value: T, options?: CacheWriteOptions): Promise<void> {
-    await this.trackMetrics(() => this.cache.set(this.qualify(key), value, options))
+    await this.trackMetrics(() => this.cache.set(this.qualify(key), value, this.qualifyWriteOptions(options)))
   }
 
   async delete(key: string): Promise<void> {
@@ -66,7 +68,8 @@ export class CacheNamespace {
       this.cache.mget(
         entries.map((entry) => ({
           ...entry,
-          key: this.qualify(entry.key)
+          key: this.qualify(entry.key),
+          options: this.qualifyGetOptions(entry.options)
         }))
       )
     )
@@ -77,18 +80,24 @@ export class CacheNamespace {
       this.cache.mset(
         entries.map((entry) => ({
           ...entry,
-          key: this.qualify(entry.key)
+          key: this.qualify(entry.key),
+          options: this.qualifyWriteOptions(entry.options)
         }))
       )
     )
   }
 
   async invalidateByTag(tag: string): Promise<void> {
-    await this.trackMetrics(() => this.cache.invalidateByTag(tag))
+    await this.trackMetrics(() => this.cache.invalidateByTag(this.qualifyTag(tag)))
   }
 
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
-    await this.trackMetrics(() => this.cache.invalidateByTags(tags, mode))
+    await this.trackMetrics(() =>
+      this.cache.invalidateByTags(
+        tags.map((tag) => this.qualifyTag(tag)),
+        mode
+      )
+    )
   }
 
   async invalidateByPattern(pattern: string): Promise<void> {
@@ -103,7 +112,17 @@ export class CacheNamespace {
    * Returns detailed metadata about a single cache key within this namespace.
    */
   async inspect(key: string): Promise<CacheInspectResult | null> {
-    return this.cache.inspect(this.qualify(key))
+    const result = await this.cache.inspect(this.qualify(key))
+    if (result === null) {
+      return null
+    }
+
+    return {
+      ...result,
+      tags: result.tags
+        .filter((tag) => tag.startsWith(`${this.prefix}:`))
+        .map((tag) => tag.slice(this.prefix.length + 1))
+    }
   }
 
   wrap<TArgs extends unknown[], TResult>(
@@ -111,14 +130,15 @@ export class CacheNamespace {
     fetcher: (...args: TArgs) => Promise<TResult>,
     options?: CacheWrapOptions<TArgs>
   ): (...args: TArgs) => Promise<TResult | null> {
-    return this.cache.wrap(`${this.prefix}:${keyPrefix}`, fetcher, options)
+    return this.cache.wrap(`${this.prefix}:${keyPrefix}`, fetcher, this.qualifyWrapOptions(options))
   }
 
   warm(entries: CacheWarmEntry[], options?: CacheWarmOptions): Promise<void> {
     return this.cache.warm(
       entries.map((entry) => ({
         ...entry,
-        key: this.qualify(entry.key)
+        key: this.qualify(entry.key),
+        options: this.qualifyGetOptions(entry.options)
       })),
       options
     )
@@ -157,6 +177,31 @@ export class CacheNamespace {
 
   qualify(key: string): string {
     return `${this.prefix}:${key}`
+  }
+
+  private qualifyTag(tag: string): string {
+    return `${this.prefix}:${tag}`
+  }
+
+  private qualifyGetOptions(options: CacheGetOptions | undefined): CacheGetOptions | undefined {
+    return this.qualifyWriteOptions(options)
+  }
+
+  private qualifyWrapOptions<TArgs extends unknown[]>(
+    options: CacheWrapOptions<TArgs> | undefined
+  ): CacheWrapOptions<TArgs> | undefined {
+    return this.qualifyWriteOptions(options) as CacheWrapOptions<TArgs> | undefined
+  }
+
+  private qualifyWriteOptions<T extends CacheWriteOptions | CacheGetOptions | undefined>(options: T): T {
+    if (!options?.tags || options.tags.length === 0) {
+      return options
+    }
+
+    return {
+      ...options,
+      tags: options.tags.map((tag) => this.qualifyTag(tag))
+    } as T
   }
 
   private async trackMetrics<T>(operation: () => Promise<T>): Promise<T> {
@@ -293,7 +338,7 @@ function addMap(base: Record<string, number>, delta: Record<string, number>): Re
   return result
 }
 
-function validateNamespaceKey(key: string): void {
+export function validateNamespaceKey(key: string): void {
   if (key.length === 0) {
     throw new Error('Namespace prefix must not be empty.')
   }
@@ -304,5 +349,9 @@ function validateNamespaceKey(key: string): void {
 
   if (/[\u0000-\u001F\u007F]/.test(key)) {
     throw new Error('Namespace prefix contains unsupported control characters.')
+  }
+
+  if (/[\uD800-\uDFFF]/.test(key)) {
+    throw new Error('Namespace prefix contains unsupported surrogate code points.')
   }
 }

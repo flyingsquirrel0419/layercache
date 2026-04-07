@@ -1,3 +1,4 @@
+import { encode } from '@msgpack/msgpack'
 import { describe, expect, it } from 'vitest'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
@@ -37,6 +38,20 @@ describe('JsonSerializer', () => {
     expect(parsed).toEqual({ safe: 1 })
     expect({}.polluted).toBeUndefined()
   })
+
+  it('rejects excessively nested payloads during deserialize', () => {
+    let nested: unknown = 'leaf'
+    for (let index = 0; index < 220; index += 1) {
+      nested = { value: nested }
+    }
+
+    expect(() => serializer.deserialize(JSON.stringify(nested))).toThrow(/max depth/i)
+  })
+
+  it('rejects excessively wide payloads during deserialize', () => {
+    const wide = Array.from({ length: 10_500 }, (_, index) => ({ [`k${index}`]: index }))
+    expect(() => serializer.deserialize(JSON.stringify(wide))).toThrow(/max node count/i)
+  })
 })
 
 describe('MsgpackSerializer', () => {
@@ -68,5 +83,19 @@ describe('MsgpackSerializer', () => {
     const jsonSize = JSON.stringify(value).length
     const msgpackSize = (serializer.serialize(value) as Buffer).byteLength
     expect(msgpackSize).toBeLessThan(jsonSize)
+  })
+
+  it('rejects excessively nested payloads during deserialize', () => {
+    let nested: unknown = 'leaf'
+    for (let index = 0; index < 80; index += 1) {
+      nested = { value: nested }
+    }
+
+    expect(() => serializer.deserialize(Buffer.from(encode(nested)))).toThrow(/max depth/i)
+  })
+
+  it('rejects excessively wide payloads during deserialize', () => {
+    const wide = Array.from({ length: 10_500 }, (_, index) => ({ [`k${index}`]: index }))
+    expect(() => serializer.deserialize(Buffer.from(encode(wide)))).toThrow(/max node count/i)
   })
 })
