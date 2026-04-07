@@ -12,11 +12,11 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/layercache"><img src="https://img.shields.io/npm/v/layercache?color=cb3837&label=npm" alt="npm version"></a>
   <a href="https://www.npmjs.com/package/layercache"><img src="https://img.shields.io/npm/dw/layercache?color=blue" alt="npm downloads"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/layercache?color=green" alt="license"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
   <img src="https://img.shields.io/badge/tests-180%2B_passing-brightgreen" alt="tests">
-  <img src="https://img.shields.io/badge/zero_dependencies*-grey" alt="zero runtime deps">
+  <img src="https://img.shields.io/badge/2_deps-grey" alt="minimal dependencies">
 </p>
 
 <p align="center">
@@ -47,20 +47,20 @@ Hand-rolled hybrid   --> Works... until you need stampede prevention, invalidati
 **layercache** gives you a unified multi-layer cache with production-grade features built in:
 
 ```
-                    ┌──────────────────────────────────────────┐
-  your app -------->│            layercache                    │
-                    │                                          │
-                    │   L1 Memory     ~0.01ms   (per-process)  │
-                    │       |                                   │
-                    │   L2 Redis      ~0.5ms    (shared)       │
-                    │       |                                   │
-                    │   L3 Disk       ~2ms      (persistent)   │
-                    │       |                                   │
-                    │   Fetcher       ~20ms     (runs once)    │
-                    └──────────────────────────────────────────┘
+              ┌───────────────────────────────────────┐
+your app ---->│             layercache                 │
+              │                                       │
+              │  L1 Memory    ~0.01ms  (per-process)  │
+              │      |                                │
+              │  L2 Redis     ~0.5ms   (shared)       │
+              │      |                                │
+              │  L3 Disk      ~2ms     (persistent)   │
+              │      |                                │
+              │  Fetcher      ~20ms    (runs once)    │
+              └───────────────────────────────────────┘
 
-  On a hit  --> serves the fastest layer, backfills the rest
-  On a miss --> fetcher runs ONCE (even under 100x concurrency)
+On a hit  --> serves the fastest layer, backfills the rest
+On a miss --> fetcher runs ONCE (even under 100x concurrency)
 ```
 
 ---
@@ -392,7 +392,7 @@ The [`examples/`](./examples) directory contains ready-to-run projects:
 - **TypeScript** >= 5.0 (optional - fully typed, ships `.d.ts`)
 - **ioredis** >= 5 (optional - only needed for Redis features)
 
-<sub>* `async-mutex` and `@msgpack/msgpack` are the only runtime dependencies</sub>
+<sub>Runtime dependencies: `async-mutex` and `@msgpack/msgpack`</sub>
 
 ---
 
