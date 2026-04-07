@@ -1,0 +1,721 @@
+import { describe, expect, it, vi } from 'vitest'
+import { CacheStack } from '../../src/CacheStack'
+import { createStoredValueEnvelope } from '../../src/internal/StoredValue'
+import { MemoryLayer } from '../../src/layers/MemoryLayer'
+import type { CacheLayer } from '../../src/types'
+
+function makeLayer(name: string, overrides: Partial<CacheLayer> = {}): CacheLayer {
+  return {
+    name,
+    get: async () => null,
+    set: async () => undefined,
+    delete: async () => undefined,
+    clear: async () => undefined,
+    ...overrides
+  }
+}
+
+describe('CacheStack internals', () => {
+  it('uses the internal debug logger with and without context and respects disabled logging', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    try {
+      const enabled = new CacheStack([new MemoryLayer({ ttl: 60 })], { logger: true })
+      ;(enabled as { logger: { info: (message: string, context?: Record<string, unknown>) => void } }).logger.info(
+        'hello',
+        { ok: true }
+      )
+      ;(enabled as { logger: { info: (message: string, context?: Record<string, unknown>) => void } }).logger.info(
+        'plain'
+      )
+
+      const disabled = new CacheStack([new MemoryLayer({ ttl: 60 })], { logger: false })
+      ;(disabled as { logger: { info: (message: string, context?: Record<string, unknown>) => void } }).logger.info(
+        'quiet',
+        { ignored: true }
+      )
+
+      expect(infoSpy).toHaveBeenNthCalledWith(1, '[layercache] hello {"ok":true}')
+      expect(infoSpy).toHaveBeenNthCalledWith(2, '[layercache] plain')
+      expect(infoSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
+  it('falls back to layer.get in has() and tolerates recoverable failures', async () => {
+    const errorListener = vi.fn()
+    const nullLayer = makeLayer('null-layer', { get: vi.fn(async () => null) })
+    const valueLayer = makeLayer('value-layer', { get: vi.fn(async () => 'hit') })
+    const throwingLayer = makeLayer('throwing-layer', {
+      get: vi.fn(async () => {
+        throw new Error('boom')
+      })
+    })
+
+    const missCache = new CacheStack([nullLayer])
+    await expect(missCache.has('user:1')).resolves.toBe(false)
+
+    const hitCache = new CacheStack([nullLayer, valueLayer])
+    await expect(hitCache.has('user:1')).resolves.toBe(true)
+
+    const degradedCache = new CacheStack([throwingLayer, valueLayer], { gracefulDegradation: true })
+    degradedCache.on('error', errorListener)
+    await expect(degradedCache.has('user:1')).resolves.toBe(true)
+    expect(errorListener).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'has', degraded: true, layer: 'throwing-layer' })
+    )
+  })
+
+  it('sorts warm entries by priority and can either continue or stop on error', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const order: string[] = []
+    const progress: Array<{ key: string; success: boolean }> = []
+
+    await cache.warm(
+      [
+        {
+          key: 'low',
+          priority: 1,
+          fetcher: async () => {
+            order.push('low')
+            return 'low'
+          }
+        },
+        {
+          key: 'high',
+          priority: 10,
+          fetcher: async () => {
+            order.push('high')
+            throw new Error('nope')
+          }
+        },
+        {
+          key: 'mid',
+          priority: 5,
+          fetcher: async () => {
+            order.push('mid')
+            return 'mid'
+          }
+        }
+      ],
+      {
+        concurrency: 1,
+        continueOnError: true,
+        onProgress: (entry) => progress.push({ key: entry.key, success: entry.success })
+      }
+    )
+
+    expect(order).toEqual(['high', 'mid', 'low'])
+    expect(progress).toEqual([
+      { key: 'high', success: false },
+      { key: 'mid', success: true },
+      { key: 'low', success: true }
+    ])
+
+    await expect(
+      cache.warm(
+        [
+          {
+            key: 'boom',
+            fetcher: async () => {
+              throw new Error('stop')
+            }
+          }
+        ],
+        { concurrency: 0 }
+      )
+    ).rejects.toThrow('stop')
+  })
+
+  it('handles generation prefixes and invalidation key limits through internal helpers', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { generation: 2, invalidationMaxKeys: false })
+
+    expect((cache as { generationPrefix: () => string }).generationPrefix()).toBe('v2:')
+    expect((cache as { stripQualifiedKey: (key: string) => string }).stripQualifiedKey('v2:user:1')).toBe('user:1')
+    expect((cache as { stripQualifiedKey: (key: string) => string }).stripQualifiedKey('user:1')).toBe('user:1')
+    expect((cache as { invalidationMaxKeys: () => number | false }).invalidationMaxKeys()).toBe(false)
+
+    const limited = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    expect(() =>
+      (limited as { assertWithinInvalidationKeyLimit: (size: number) => void }).assertWithinInvalidationKeyLimit(2)
+    ).toThrow(/too many keys/i)
+  })
+
+  it('routes recoverable failures through degraded and non-degraded paths', async () => {
+    const degradedErrors: unknown[] = []
+    const degraded = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      gracefulDegradation: { retryAfterMs: 50 }
+    })
+    degraded.on('error', (event) => degradedErrors.push(event))
+
+    await expect(
+      (
+        degraded as {
+          reportRecoverableLayerFailure: (layer: CacheLayer, operation: string, error: unknown) => Promise<void>
+        }
+      ).reportRecoverableLayerFailure(makeLayer('memory'), 'read', new Error('fail'))
+    ).resolves.toBeUndefined()
+    expect(degradedErrors).toEqual([expect.objectContaining({ operation: 'read', degraded: true })])
+
+    const plainWarnings: unknown[] = []
+    const plain = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      logger: { warn: (...args: unknown[]) => plainWarnings.push(args) }
+    })
+    plain.on('error', (event) => degradedErrors.push(event))
+
+    await expect(
+      (
+        plain as {
+          reportRecoverableLayerFailure: (layer: CacheLayer, operation: string, error: unknown) => Promise<void>
+        }
+      ).reportRecoverableLayerFailure(makeLayer('memory'), 'read', new Error('fail'))
+    ).resolves.toBeUndefined()
+    expect(plainWarnings).toHaveLength(1)
+    expect(degradedErrors).toContainEqual(expect.objectContaining({ operation: 'read', degraded: false }))
+  })
+
+  it('reads layer entries through getEntry/get and exports only distinct non-null entries', async () => {
+    const layerWithEntry = makeLayer('entry-layer', {
+      forEachKey: async (visitor) => {
+        await visitor('v3:user:1')
+        await visitor('v3:user:1')
+        await visitor('v3:missing')
+      }
+    })
+    const layerWithKeys = makeLayer('keys-layer', {
+      keys: async () => ['v3:user:2']
+    })
+    const cache = new CacheStack([layerWithEntry, layerWithKeys], { generation: 3 })
+    const readLayerEntry = vi
+      .spyOn(
+        cache as object as { readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null> },
+        'readLayerEntry'
+      )
+      .mockImplementation(async (_layer, key) => {
+        if (key.endsWith('missing')) {
+          return null
+        }
+        return { kind: 'value', value: key }
+      })
+
+    const exported: Array<{ key: string; value: unknown }> = []
+    await (
+      cache as {
+        visitExportEntries: (
+          maxEntries: number | false,
+          visitor: (entry: { key: string; value: unknown; ttl?: number }) => Promise<void> | void
+        ) => Promise<void>
+      }
+    ).visitExportEntries(false, (entry) => {
+      exported.push({ key: entry.key, value: entry.value })
+    })
+
+    expect(exported).toEqual([
+      { key: 'user:1', value: { kind: 'value', value: 'v3:user:1' } },
+      { key: 'user:2', value: { kind: 'value', value: 'v3:user:2' } }
+    ])
+    expect(readLayerEntry).toHaveBeenCalled()
+    readLayerEntry.mockRestore()
+  })
+
+  it('uses snapshot and invalidation defaults unless explicitly disabled', () => {
+    const defaults = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    expect((defaults as { snapshotMaxBytes: () => number | false }).snapshotMaxBytes()).toBe(16 * 1_024 * 1_024)
+    expect((defaults as { snapshotMaxEntries: () => number | false }).snapshotMaxEntries()).toBe(10_000)
+    expect((defaults as { invalidationMaxKeys: () => number | false }).invalidationMaxKeys()).toBe(10_000)
+
+    const disabled = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      snapshotMaxBytes: false,
+      snapshotMaxEntries: false,
+      invalidationMaxKeys: false
+    })
+    expect((disabled as { snapshotMaxBytes: () => number | false }).snapshotMaxBytes()).toBe(false)
+    expect((disabled as { snapshotMaxEntries: () => number | false }).snapshotMaxEntries()).toBe(false)
+    expect((disabled as { invalidationMaxKeys: () => number | false }).invalidationMaxKeys()).toBe(false)
+  })
+
+  it('validates constructor configuration and emits warning branches for risky setups', async () => {
+    expect(() => new CacheStack([])).toThrow(/at least one cache layer/i)
+
+    expect(
+      () =>
+        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+          broadcastL1Invalidation: true,
+          publishSetInvalidation: false
+        })
+    ).toThrow(/cannot conflict/i)
+
+    expect(
+      () =>
+        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+          stampedePrevention: false,
+          singleFlightCoordinator: { execute: vi.fn() } as never
+        })
+    ).toThrow(/stampedePrevention/i)
+
+    const warn = vi.fn()
+    const bus = {
+      subscribe: vi.fn(async () => () => undefined),
+      publish: vi.fn(async () => undefined)
+    }
+    const cache = new CacheStack(
+      [
+        makeLayer('remote-layer', {
+          isLocal: false
+        })
+      ],
+      {
+        logger: { warn },
+        invalidationBus: bus
+      }
+    )
+
+    await cache.disconnect()
+
+    const messages = warn.mock.calls.map(([message]) => String(message))
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          'default in-memory TagIndex with a shared cache layer only tracks keys seen by this process'
+        ),
+        expect.stringContaining(
+          'does not implement keys() can leave invalidateByPattern() and invalidateByPrefix() incomplete'
+        ),
+        expect.stringContaining('broadcastL1Invalidation defaults to false')
+      ])
+    )
+  })
+
+  it('covers ttl, healthCheck, and inspect branches across skipped, failing, and ttl-less layers', async () => {
+    const skippedLayer = makeLayer('skipped', {
+      ttl: vi.fn(async () => 99)
+    })
+    const throwingLayer = makeLayer('throwing', {
+      ttl: vi.fn(async () => {
+        throw new Error('ttl failed')
+      }),
+      ping: vi.fn(async () => {
+        throw new Error('down')
+      })
+    })
+    const valueLayer = makeLayer('value', {
+      ttl: vi.fn(async () => 12)
+    })
+    const cache = new CacheStack([skippedLayer, throwingLayer, valueLayer], {
+      gracefulDegradation: true
+    })
+    ;(cache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set('skipped', Date.now() + 1_000)
+
+    await expect(cache.ttl('user:1')).resolves.toBe(12)
+
+    const health = await cache.healthCheck()
+    expect(health).toEqual([
+      expect.objectContaining({ layer: 'skipped', healthy: true }),
+      expect.objectContaining({ layer: 'throwing', healthy: false, error: 'down' }),
+      expect.objectContaining({ layer: 'value', healthy: true })
+    ])
+
+    const staleEnvelope = createStoredValueEnvelope({
+      kind: 'value',
+      value: { id: 1 },
+      freshTtlSeconds: 1,
+      staleWhileRevalidateSeconds: 10,
+      staleIfErrorSeconds: 15,
+      now: Date.now() - 2_000
+    })
+    const inspectCache = new CacheStack([makeLayer('inspect-layer')])
+    const readLayerEntry = vi
+      .spyOn(
+        inspectCache as unknown as {
+          readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null>
+        },
+        'readLayerEntry'
+      )
+      .mockResolvedValueOnce(staleEnvelope)
+      .mockResolvedValueOnce(staleEnvelope)
+
+    await expect(inspectCache.inspect('user:1')).resolves.toEqual(
+      expect.objectContaining({
+        key: 'user:1',
+        foundInLayers: ['inspect-layer'],
+        isStale: true,
+        tags: []
+      })
+    )
+
+    readLayerEntry.mockRestore()
+  })
+
+  it('covers empty deletes, mget edge cases, and read-layer fallbacks', async () => {
+    const deleteSpy = vi.fn(async () => undefined)
+    const getManyLayer = makeLayer('bulk', {
+      getMany: vi.fn(async () => [
+        createStoredValueEnvelope({
+          kind: 'value',
+          value: 'expired',
+          freshTtlSeconds: 1,
+          now: Date.now() - 5_000
+        }),
+        null
+      ]),
+      delete: deleteSpy
+    })
+    const cache = new CacheStack([getManyLayer])
+
+    await expect(cache.mdelete([])).resolves.toBeUndefined()
+    await expect(cache.mget([])).resolves.toEqual([])
+    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual([null, null])
+    expect(deleteSpy).toHaveBeenCalledWith('a')
+
+    await expect(
+      cache.mget([
+        { key: 'same', fetch: async () => 'a' },
+        { key: 'same', fetch: async () => 'b' }
+      ])
+    ).rejects.toThrow(/conflicting entries/i)
+
+    const entryLayer = makeLayer('entry', {
+      getEntry: vi.fn(async () => {
+        throw new Error('entry-failed')
+      })
+    })
+    const plainLayer = makeLayer('plain', {
+      get: vi.fn(async () => {
+        throw new Error('plain-failed')
+      })
+    })
+    const degraded = new CacheStack([entryLayer, plainLayer], { gracefulDegradation: true })
+
+    await expect(
+      (degraded as { readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null> }).readLayerEntry(
+        entryLayer,
+        'user:1'
+      )
+    ).resolves.toBeNull()
+    await expect(
+      (degraded as { readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null> }).readLayerEntry(
+        plainLayer,
+        'user:2'
+      )
+    ).resolves.toBeNull()
+  })
+
+  it('covers background refresh, invalidation-message, write-behind, and timeout branches', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      writeStrategy: 'write-behind',
+      writeBehind: { batchSize: 2, maxQueueSize: 3 }
+    })
+
+    const refreshFetch = vi.fn(async () => 'fresh')
+    ;(cache as { isDisconnecting: boolean }).isDisconnecting = true
+    ;(
+      cache as {
+        scheduleBackgroundRefresh: <T>(key: string, fetcher: () => Promise<T>) => void
+      }
+    ).scheduleBackgroundRefresh('user:1', refreshFetch)
+    expect(refreshFetch).not.toHaveBeenCalled()
+    ;(cache as { isDisconnecting: boolean }).isDisconnecting = false
+    ;(cache as { backgroundRefreshes: Map<string, Promise<void>> }).backgroundRefreshes.set('user:1', Promise.resolve())
+    ;(
+      cache as {
+        scheduleBackgroundRefresh: <T>(key: string, fetcher: () => Promise<T>) => void
+      }
+    ).scheduleBackgroundRefresh('user:1', refreshFetch)
+    expect(refreshFetch).not.toHaveBeenCalled()
+    ;(cache as { backgroundRefreshes: Map<string, Promise<void>> }).backgroundRefreshes.clear()
+
+    await expect(
+      (
+        cache as { withTimeout: <T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error) => Promise<T> }
+      ).withTimeout(Promise.resolve('ok'), 0, () => new Error('timeout'))
+    ).resolves.toBe('ok')
+    await expect(
+      (
+        cache as { withTimeout: <T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error) => Promise<T> }
+      ).withTimeout(Promise.reject(new Error('boom')), 50, () => new Error('timeout'))
+    ).rejects.toThrow('boom')
+
+    const tagIndex = {
+      clear: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+      touch: vi.fn(async () => undefined),
+      matchPattern: vi.fn(async () => []),
+      keysForTag: vi.fn(async () => []),
+      track: vi.fn(async () => undefined)
+    }
+    const localLayer = makeLayer('local', { isLocal: true })
+    const remoteAware = new CacheStack([localLayer], { tagIndex: tagIndex as never })
+
+    await (
+      remoteAware as {
+        handleInvalidationMessage: (message: {
+          scope: 'clear' | 'key' | 'keys'
+          sourceId: string
+          operation?: 'write' | 'clear' | 'delete' | 'invalidate'
+          keys?: string[]
+        }) => Promise<void>
+      }
+    ).handleInvalidationMessage({
+      scope: 'key',
+      keys: ['user:1'],
+      sourceId: 'remote',
+      operation: 'write'
+    })
+    expect(tagIndex.remove).not.toHaveBeenCalled()
+
+    await (
+      remoteAware as {
+        handleInvalidationMessage: (message: {
+          scope: 'clear' | 'key' | 'keys'
+          sourceId: string
+          operation?: 'write' | 'clear' | 'delete' | 'invalidate'
+          keys?: string[]
+        }) => Promise<void>
+      }
+    ).handleInvalidationMessage({
+      scope: 'clear',
+      sourceId: 'remote',
+      operation: 'clear'
+    })
+    expect(tagIndex.clear).toHaveBeenCalled()
+
+    await (
+      remoteAware as {
+        handleInvalidationMessage: (message: {
+          scope: 'clear' | 'key' | 'keys'
+          sourceId: string
+          operation?: 'write' | 'clear' | 'delete' | 'invalidate'
+          keys?: string[]
+        }) => Promise<void>
+      }
+    ).handleInvalidationMessage({
+      scope: 'keys',
+      keys: ['user:1'],
+      sourceId: (remoteAware as { instanceId: string }).instanceId,
+      operation: 'invalidate'
+    })
+    expect(tagIndex.remove).toHaveBeenCalledTimes(0)
+
+    const writeBehind = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      writeStrategy: 'write-behind',
+      writeBehind: { batchSize: 2, maxQueueSize: 3 },
+      logger: true
+    })
+    const executed: string[] = []
+    await (writeBehind as { enqueueWriteBehind: (operation: () => Promise<void>) => Promise<void> }).enqueueWriteBehind(
+      async () => {
+        executed.push('first')
+      }
+    )
+    await (writeBehind as { enqueueWriteBehind: (operation: () => Promise<void>) => Promise<void> }).enqueueWriteBehind(
+      async () => {
+        executed.push('second')
+      }
+    )
+    expect(executed).toEqual(['first', 'second'])
+
+    const failingWriteBehind = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      writeStrategy: 'write-behind',
+      writeBehind: { batchSize: 1 }
+    })
+    const errorListener = vi.fn()
+    failingWriteBehind.on('error', errorListener)
+    await (
+      failingWriteBehind as { enqueueWriteBehind: (operation: () => Promise<void>) => Promise<void> }
+    ).enqueueWriteBehind(async () => {
+      throw new Error('flush-failed')
+    })
+    expect(errorListener).toHaveBeenCalledWith(expect.objectContaining({ operation: 'write-behind', failed: 1 }))
+  })
+
+  it('covers generation cleanup, key intersection, layer deletion, and fresh-read policy branches', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      generationCleanup: { batchSize: 2 }
+    })
+
+    await expect(
+      (cache as { cleanupGeneration: (generation: number) => Promise<void> }).cleanupGeneration(1)
+    ).resolves.toBeUndefined()
+
+    const warned: unknown[] = []
+    const failingCleanup = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      generationCleanup: { batchSize: 2 },
+      logger: { warn: (...args: unknown[]) => warned.push(args) }
+    })
+    ;(
+      failingCleanup as {
+        cleanupGeneration: (generation: number) => Promise<void>
+      }
+    ).cleanupGeneration = vi.fn(async () => {
+      throw new Error('cleanup failed')
+    })
+    ;(failingCleanup as { scheduleGenerationCleanup: (generation: number) => void }).scheduleGenerationCleanup(1)
+    await (failingCleanup as { generationCleanupPromise?: Promise<void> }).generationCleanupPromise
+    expect(warned).toHaveLength(1)
+
+    expect((cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([])).toEqual([])
+    expect(
+      (cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([['a', 'b', 'b'], ['b', 'c'], ['b']])
+    ).toEqual(['b'])
+
+    const deleteManyLayer = makeLayer('delete-many', {
+      deleteMany: vi.fn(async () => undefined)
+    })
+    const deleteOneLayer = makeLayer('delete-one', {
+      delete: vi.fn(async () => {
+        throw new Error('delete failed')
+      })
+    })
+    const deletionCache = new CacheStack([deleteManyLayer, deleteOneLayer], {
+      gracefulDegradation: true
+    })
+    ;(deletionCache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set(
+      'delete-many',
+      Date.now() + 1_000
+    )
+    await expect(
+      (
+        deletionCache as {
+          deleteKeysFromLayers: (layers: CacheLayer[], keys: string[]) => Promise<void>
+        }
+      ).deleteKeysFromLayers([deleteManyLayer, deleteOneLayer], ['user:1'])
+    ).resolves.toBeUndefined()
+
+    const policyCache = new CacheStack([makeLayer('policy', { set: vi.fn(async () => undefined) })])
+    const scheduleSpy = vi
+      .spyOn(
+        policyCache as object as { scheduleBackgroundRefresh: (key: string, fetcher: () => Promise<string>) => void },
+        'scheduleBackgroundRefresh'
+      )
+      .mockImplementation(() => undefined)
+    await (
+      policyCache as {
+        applyFreshReadPolicies: (
+          key: string,
+          hit: {
+            found: true
+            value: string
+            stored: unknown
+            state: 'fresh'
+            layerIndex: number
+            layerName: string
+          },
+          options: { refreshAhead?: number; slidingTtl?: boolean },
+          fetcher?: () => Promise<string>
+        ) => Promise<void>
+      }
+    ).applyFreshReadPolicies(
+      'user:1',
+      {
+        found: true,
+        value: 'value',
+        stored: createStoredValueEnvelope({
+          kind: 'value',
+          value: 'value',
+          freshTtlSeconds: 1
+        }),
+        state: 'fresh',
+        layerIndex: 0,
+        layerName: 'policy'
+      },
+      { refreshAhead: 5, slidingTtl: true },
+      async () => 'fresh'
+    )
+    expect(scheduleSpy).toHaveBeenCalled()
+    scheduleSpy.mockRestore()
+  })
+
+  it('covers circuit recording, error emission, snapshot validation, tag fallback, and export-key branches', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      circuitBreaker: { failureThreshold: 1, cooldownMs: 50 }
+    })
+    ;(
+      cache as {
+        recordCircuitFailure: (
+          key: string,
+          options: { failureThreshold: number; cooldownMs: number } | undefined,
+          error: unknown
+        ) => void
+      }
+    ).recordCircuitFailure('user:1', undefined, new Error('ignored'))
+    expect(cache.getMetrics().circuitBreakerTrips).toBe(0)
+    ;(
+      cache as {
+        recordCircuitFailure: (
+          key: string,
+          options: { failureThreshold: number; cooldownMs: number } | undefined,
+          error: unknown
+        ) => void
+      }
+    ).recordCircuitFailure('user:1', { failureThreshold: 1, cooldownMs: 50 }, new Error('boom'))
+    expect(cache.getMetrics().circuitBreakerTrips).toBe(1)
+
+    const emitted: unknown[] = []
+    cache.on('error', (event) => emitted.push(event))
+    ;(cache as { emitError: (operation: string, context: Record<string, unknown>) => void }).emitError('custom', {
+      reason: 'test'
+    })
+    expect(emitted).toEqual([expect.objectContaining({ operation: 'custom', reason: 'test' })])
+
+    expect(
+      (cache as { isCacheSnapshotEntries: (value: unknown) => boolean }).isCacheSnapshotEntries([
+        { key: 'ok', ttl: 1, value: { id: 1 } }
+      ])
+    ).toBe(true)
+    expect(
+      (cache as { isCacheSnapshotEntries: (value: unknown) => boolean }).isCacheSnapshotEntries([
+        { key: 'bad', ttl: -1 }
+      ])
+    ).toBe(false)
+    expect((cache as { isCacheSnapshotEntries: (value: unknown) => boolean }).isCacheSnapshotEntries([null])).toBe(
+      false
+    )
+
+    const tagIndex = {
+      keysForTag: vi.fn(async () => ['user:1']),
+      matchPattern: vi.fn(async () => []),
+      track: vi.fn(async () => undefined),
+      touch: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+      tagsForKey: vi.fn(async () => ['team:a'])
+    }
+    const tagCache = new CacheStack([makeLayer('layer')], { tagIndex: tagIndex as never })
+    await expect(
+      (tagCache as { collectKeysForTag: (tag: string) => Promise<string[]> }).collectKeysForTag('team:a')
+    ).resolves.toEqual(['user:1'])
+    await expect(
+      (tagCache as { getTagsForKey: (key: string) => Promise<string[]> }).getTagsForKey('user:1')
+    ).resolves.toEqual(['team:a'])
+
+    const exportCache = new CacheStack([
+      makeLayer('skip-layer'),
+      makeLayer('keys-layer', {
+        keys: vi.fn(async () => ['user:1'])
+      })
+    ])
+    const readSpy = vi
+      .spyOn(
+        exportCache as unknown as {
+          readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null>
+        },
+        'readLayerEntry'
+      )
+      .mockResolvedValue({ ok: true })
+
+    const entries: string[] = []
+    await (
+      exportCache as {
+        visitExportEntries: (
+          maxEntries: number | false,
+          visitor: (entry: { key: string; value: unknown }) => Promise<void> | void
+        ) => Promise<void>
+      }
+    ).visitExportEntries(false, (entry) => {
+      entries.push(entry.key)
+    })
+    expect(entries).toEqual(['user:1'])
+    readSpy.mockRestore()
+  })
+})

@@ -447,6 +447,134 @@ describe('growth features', () => {
     expect(responseBody).toEqual({ ok: true })
   })
 
+  it('records OpenTelemetry exceptions and restores original methods on uninstall', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const recordException = vi.fn()
+    const setAttribute = vi.fn()
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        setAttribute,
+        recordException,
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+
+    await expect(
+      cache.get('broken', async () => {
+        throw new Error('boom')
+      })
+    ).rejects.toThrow('boom')
+
+    expect(recordException).toHaveBeenCalled()
+    expect(setAttribute).toHaveBeenCalledWith('layercache.success', false)
+
+    plugin.uninstall()
+    const spanCallsBefore = tracer.startSpan.mock.calls.length
+    await cache.get('after-uninstall')
+    expect(tracer.startSpan).toHaveBeenCalledTimes(spanCallsBefore)
+  })
+
+  it('records null OpenTelemetry results and instruments invalidation methods', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const setAttribute = vi.fn()
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        setAttribute,
+        recordException: vi.fn(),
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    await cache.get('missing')
+    await cache.set('tagged', 1, { tags: ['group'] })
+    await cache.invalidateByTag('group')
+    plugin.uninstall()
+
+    expect(setAttribute).toHaveBeenCalledWith('layercache.result', 'null')
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_tag', expect.any(Object))
+  })
+
+  it('supports spans without optional methods and attaches key attributes to set/delete', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    await cache.set('otel:key', 1)
+    await cache.delete('otel:key')
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
+      attributes: { 'layercache.key': 'otel:key' }
+    })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.delete', {
+      attributes: { 'layercache.key': 'otel:key' }
+    })
+  })
+
+  it('normalizes missing keys in OpenTelemetry key attributes', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        setAttribute: vi.fn(),
+        recordException: vi.fn(),
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    await expect((cache as { get: (key: undefined) => Promise<unknown> }).get(undefined)).rejects.toThrow()
+    await expect(
+      (cache as { set: (key: undefined, value: unknown) => Promise<void> }).set(undefined, 'value')
+    ).rejects.toThrow()
+    await expect((cache as { delete: (key: undefined) => Promise<void> }).delete(undefined)).rejects.toThrow()
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.get', {
+      attributes: { 'layercache.key': '' }
+    })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
+      attributes: { 'layercache.key': '' }
+    })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.delete', {
+      attributes: { 'layercache.key': '' }
+    })
+  })
+
+  it('instruments bulk and pattern invalidation methods through the OpenTelemetry plugin', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        setAttribute: vi.fn(),
+        recordException: vi.fn(),
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    await cache.mset([
+      { key: 'a', value: 1 },
+      { key: 'b', value: 2 }
+    ])
+    await cache.mget([{ key: 'a' }, { key: 'b' }])
+    await cache.invalidateByTags(['missing'], 'any')
+    await cache.invalidateByPattern('user:*')
+    await cache.invalidateByPrefix('user:')
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.mset', { attributes: undefined })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.mget', { attributes: undefined })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_tags', { attributes: undefined })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_pattern', { attributes: undefined })
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_prefix', { attributes: undefined })
+  })
+
   it('cleans access profiles on delete and clear', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 

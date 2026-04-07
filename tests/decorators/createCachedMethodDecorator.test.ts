@@ -31,4 +31,16 @@ describe('createCachedMethodDecorator', () => {
     await expect(service.load(1)).resolves.toEqual({ id: 1 })
     expect(calls).toBe(1)
   })
+
+  it('throws when applied to a non-method descriptor', () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const descriptor = { value: 123 } as unknown as PropertyDescriptor
+
+    expect(() =>
+      createCachedMethodDecorator({
+        cache: () => cache,
+        prefix: 'service'
+      })({}, 'field', descriptor)
+    ).toThrow(/only be applied to methods/i)
+  })
 })

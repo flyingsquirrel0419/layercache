@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
+import { CacheMissError } from '../src/types'
 
 function makeCache() {
   return new CacheStack([new MemoryLayer({ ttl: 60 })])
@@ -183,5 +184,109 @@ describe('CacheNamespace', () => {
     const hr = ns.getHitRate()
     expect(hr).toHaveProperty('overall')
     expect(hr).toHaveProperty('byLayer')
+  })
+
+  it('computes per-layer hit rates from namespace-local metrics', async () => {
+    const ns = makeCache().namespace('rated')
+
+    await ns.set('hit', 1)
+    await ns.get('hit')
+    await ns.get('miss')
+
+    const hitRate = ns.getHitRate()
+    expect(hitRate.overall).toBeGreaterThan(0)
+    expect(hitRate.byLayer.memory).toBeGreaterThan(0)
+  })
+
+  it('supports nested namespaces plus invalidateByTags and invalidateByPattern', async () => {
+    const cache = makeCache()
+    const tenant = cache.namespace('tenant')
+    const posts = tenant.namespace('posts')
+
+    await posts.set('1', { id: 1 }, { tags: ['published', 'feed'] })
+    await posts.set('2', { id: 2 }, { tags: ['draft'] })
+
+    await posts.invalidateByTags(['published', 'feed'], 'all')
+    await expect(posts.get('1')).resolves.toBeNull()
+    await expect(posts.get('2')).resolves.toEqual({ id: 2 })
+
+    await posts.invalidateByPattern('*')
+    await expect(posts.get('2')).resolves.toBeNull()
+  })
+
+  it('supports invalidateByPrefix, warm, and inspect misses', async () => {
+    const ns = makeCache().namespace('catalog')
+
+    await ns.warm([{ key: 'top', fetcher: async () => ['sku-1'] }])
+    await expect(ns.get('top')).resolves.toEqual(['sku-1'])
+    await expect(ns.inspect('missing')).resolves.toBeNull()
+
+    await ns.set('prefix:a', 1)
+    await ns.set('prefix:b', 2)
+    await ns.invalidateByPrefix('prefix:')
+    await expect(ns.get('prefix:a')).resolves.toBeNull()
+    await expect(ns.get('prefix:b')).resolves.toBeNull()
+  })
+
+  it('throws CacheMissError through namespace getOrThrow and validates prefixes', async () => {
+    const ns = makeCache().namespace('strict')
+    await expect(ns.getOrThrow('missing')).rejects.toBeInstanceOf(CacheMissError)
+
+    expect(() => makeCache().namespace('')).toThrow(/must not be empty/i)
+    expect(() => makeCache().namespace('x'.repeat(257))).toThrow(/at most 256/i)
+    expect(() => makeCache().namespace('bad\uD800')).toThrow(/surrogate/i)
+  })
+
+  it('wrap qualifies tags and getMetrics returns cloned snapshots', async () => {
+    const cache = makeCache()
+    const ns = cache.namespace('tagged')
+    let calls = 0
+    const wrapped = ns.wrap('compute', async (id: number) => ({ id }), {
+      tags: ['users'],
+      keyResolver: (id) => String(id)
+    })
+
+    await wrapped(1)
+    await ns.invalidateByTag('users')
+    const wrappedAgain = ns.wrap(
+      'compute',
+      async (id: number) => {
+        calls += 1
+        return { id }
+      },
+      {
+        tags: ['users'],
+        keyResolver: (id) => String(id)
+      }
+    )
+    await wrappedAgain(1)
+    await wrappedAgain(1)
+    expect(calls).toBe(1)
+
+    const metrics = ns.getMetrics()
+    metrics.hits = 999
+    expect(ns.getMetrics().hits).not.toBe(999)
+  })
+
+  it('computes layer hit rates from collected namespace metrics', async () => {
+    const cache = makeCache()
+    const ns = cache.namespace('rates')
+    await ns.set('key', 1)
+    await ns.get('key')
+    await ns.get('missing')
+
+    const hitRate = ns.getHitRate()
+    expect(hitRate.overall).toBeGreaterThan(0)
+    expect(Object.keys(hitRate.byLayer).length).toBeGreaterThan(0)
+  })
+
+  it('reuses the per-cache metrics mutex for namespaces on the same stack', async () => {
+    const cache = makeCache()
+    const first = cache.namespace('a')
+    const second = cache.namespace('b')
+
+    expect((first as unknown as { getMetricsMutex: () => unknown }).getMetricsMutex()).toBe(
+      (second as unknown as { getMetricsMutex: () => unknown }).getMetricsMutex()
+    )
   })
 })

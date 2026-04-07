@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { isStoredValueEnvelope, resolveStoredValue } from '../../src/internal/StoredValue'
+import {
+  createStoredValueEnvelope,
+  isStoredValueEnvelope,
+  refreshStoredEnvelope,
+  remainingFreshTtlSeconds,
+  remainingStoredTtlSeconds,
+  resolveStoredValue,
+  unwrapStoredValue
+} from '../../src/internal/StoredValue'
 
 describe('StoredValue', () => {
   it('rejects envelopes with unbounded stale/error windows', () => {
@@ -95,5 +103,60 @@ describe('StoredValue', () => {
         staleWhileRevalidateSeconds: 30
       })
     ).toBe(false)
+  })
+
+  it('creates envelopes and resolves fresh stale error and expired states', () => {
+    const now = Date.now()
+    const fresh = createStoredValueEnvelope({
+      kind: 'value',
+      value: { id: 1 },
+      freshTtlSeconds: 10,
+      staleWhileRevalidateSeconds: 5,
+      staleIfErrorSeconds: 7,
+      now
+    })
+
+    expect(resolveStoredValue(fresh, now)).toEqual({
+      state: 'fresh',
+      value: { id: 1 },
+      stored: fresh,
+      envelope: fresh
+    })
+    expect(resolveStoredValue(fresh, now + 11_000).state).toBe('stale-while-revalidate')
+    expect(resolveStoredValue(fresh, now + 16_000).state).toBe('stale-if-error')
+    expect(resolveStoredValue(fresh, now + 18_000).state).toBe('expired')
+  })
+
+  it('unwraps empty envelopes and computes remaining ttl helpers', () => {
+    const now = Date.now()
+    const empty = createStoredValueEnvelope({
+      kind: 'empty',
+      freshTtlSeconds: 5,
+      staleWhileRevalidateSeconds: 5,
+      now
+    })
+
+    expect(unwrapStoredValue(empty)).toBeNull()
+    expect(remainingFreshTtlSeconds(empty, now)).toBe(5)
+    expect(remainingFreshTtlSeconds(empty, now + 6_000)).toBe(0)
+    expect(remainingStoredTtlSeconds(empty, now)).toBe(10)
+    expect(remainingStoredTtlSeconds(empty, now + 11_000)).toBe(1)
+    expect(remainingStoredTtlSeconds('plain')).toBeUndefined()
+  })
+
+  it('refreshes envelopes and leaves plain values untouched', () => {
+    const now = Date.now()
+    const envelope = createStoredValueEnvelope({
+      kind: 'value',
+      value: 'ok',
+      freshTtlSeconds: 5,
+      staleIfErrorSeconds: 5,
+      now
+    })
+
+    const refreshed = refreshStoredEnvelope(envelope, now + 10_000)
+    expect(isStoredValueEnvelope(refreshed)).toBe(true)
+    expect((refreshed as { freshUntil: number }).freshUntil).toBe(now + 15_000)
+    expect(refreshStoredEnvelope('plain')).toBe('plain')
   })
 })

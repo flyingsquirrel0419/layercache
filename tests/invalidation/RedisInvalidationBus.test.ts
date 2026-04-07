@@ -222,4 +222,26 @@ describe('RedisInvalidationBus', () => {
     publisher.disconnect()
     subscriber.disconnect()
   })
+
+  it('publishes through the bus API and rejects valid JSON with an invalid shape', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:shape' })
+    const handler = vi.fn()
+
+    const unsubscribe = await bus.subscribe(handler)
+
+    await bus.publish({ scope: 'key', sourceId: 'inst', keys: ['user:1'], operation: 'delete' })
+    await publisher.publish('layercache:test:shape', JSON.stringify(42))
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalled()
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
 })

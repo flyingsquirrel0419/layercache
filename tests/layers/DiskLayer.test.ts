@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiskLayer } from '../../src/layers/DiskLayer'
 
 describe('DiskLayer', () => {
@@ -178,5 +178,45 @@ describe('DiskLayer', () => {
 
     await expect(boundedLayer.get('huge-key')).resolves.toBeNull()
     await expect(fs.stat(join(dir, `${hash}.lc`))).rejects.toThrow()
+  })
+
+  it('supports forEachKey, setMany, and dispose', async () => {
+    await layer.setMany([
+      { key: 'a', value: 1, ttl: 10 },
+      { key: 'b', value: 2 }
+    ])
+
+    const visited: string[] = []
+    await layer.forEachKey(async (key) => {
+      visited.push(key)
+    })
+
+    expect(visited.sort()).toEqual(['a', 'b'])
+    await expect(layer.dispose()).resolves.toBeUndefined()
+  })
+
+  it('supports maxEntryBytes=false and removes expired files during scans', async () => {
+    const unlimited = new DiskLayer({ directory: dir, maxEntryBytes: false })
+    await unlimited.set('huge', 'x'.repeat(2_048))
+
+    await expect(unlimited.get('huge')).resolves.toBe('x'.repeat(2_048))
+
+    const shortTtlLayer = new DiskLayer({ directory: dir, ttl: 0.001 })
+    await shortTtlLayer.set('soon-expired', 'value')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    await expect(shortTtlLayer.keys()).resolves.not.toContain('soon-expired')
+    await expect(shortTtlLayer.size()).resolves.toBeGreaterThanOrEqual(1)
+  })
+
+  it('returns false from ping when the directory cannot be created', async () => {
+    const mkdirSpy = vi.spyOn(fs, 'mkdir').mockRejectedValueOnce(new Error('nope'))
+    await expect(layer.ping()).resolves.toBe(false)
+    mkdirSpy.mockRestore()
+  })
+
+  it('rejects invalid maxFiles and maxEntryBytes values early', () => {
+    expect(() => new DiskLayer({ directory: dir, maxFiles: 0 })).toThrow(/positive integer/i)
+    expect(() => new DiskLayer({ directory: dir, maxEntryBytes: 0 })).toThrow(/positive number/i)
   })
 })

@@ -66,4 +66,81 @@ describe('MemoryLayer', () => {
 
     expect(onEvict).toHaveBeenCalledWith('a', 1)
   })
+
+  it('supports fifo and lfu eviction strategies', async () => {
+    const fifo = new MemoryLayer({ maxSize: 2, evictionPolicy: 'fifo' })
+    await fifo.set('a', 1)
+    await fifo.set('b', 2)
+    await fifo.get('a')
+    await fifo.set('c', 3)
+    await expect(fifo.get('a')).resolves.toBeNull()
+    await expect(fifo.get('b')).resolves.toBe(2)
+
+    const lfu = new MemoryLayer({ maxSize: 2, evictionPolicy: 'lfu' })
+    await lfu.set('x', 1)
+    await lfu.set('y', 2)
+    await lfu.get('x')
+    await lfu.get('x')
+    await lfu.set('z', 3)
+    await expect(lfu.get('y')).resolves.toBeNull()
+    await expect(lfu.get('x')).resolves.toBe(1)
+  })
+
+  it('supports has ttl delete deleteMany keys forEachKey and ping', async () => {
+    vi.useFakeTimers()
+    const layer = new MemoryLayer({ ttl: 2 })
+    await layer.set('a', 1)
+    await layer.set('b', 2, 1)
+
+    await expect(layer.has('a')).resolves.toBe(true)
+    await expect(layer.ttl('a')).resolves.toBe(2)
+    await expect(layer.ping()).resolves.toBe(true)
+
+    const visited: string[] = []
+    await layer.forEachKey((key) => {
+      visited.push(key)
+    })
+    expect(visited).toEqual(['a', 'b'])
+    await expect(layer.keys()).resolves.toEqual(['a', 'b'])
+
+    vi.advanceTimersByTime(1_100)
+    await expect(layer.has('b')).resolves.toBe(false)
+    await expect(layer.ttl('b')).resolves.toBeNull()
+
+    await layer.delete('a')
+    await expect(layer.get('a')).resolves.toBeNull()
+
+    await layer.set('c', 3)
+    await layer.set('d', 4)
+    await layer.deleteMany(['c', 'd'])
+    await expect(layer.size()).resolves.toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('imports and exports snapshot state while skipping expired entries', async () => {
+    vi.useFakeTimers()
+    const now = new Date('2026-04-07T00:00:00Z')
+    vi.setSystemTime(now)
+
+    const layer = new MemoryLayer({ maxSize: 3 })
+    layer.importState([
+      { key: 'fresh', value: { ok: true }, expiresAt: now.getTime() + 10_000 },
+      { key: 'expired', value: { ok: false }, expiresAt: now.getTime() - 1_000 },
+      { key: 'forever', value: 1, expiresAt: null }
+    ])
+
+    await expect(layer.get('fresh')).resolves.toEqual({ ok: true })
+    await expect(layer.get('expired')).resolves.toBeNull()
+    expect(layer.exportState()).toEqual([
+      { key: 'forever', value: 1, expiresAt: null },
+      { key: 'fresh', value: { ok: true }, expiresAt: now.getTime() + 10_000 }
+    ])
+
+    vi.useRealTimers()
+  })
+
+  it('returns an empty bulk read for an empty key list', async () => {
+    const layer = new MemoryLayer()
+    await expect(layer.getMany([])).resolves.toEqual([])
+  })
 })

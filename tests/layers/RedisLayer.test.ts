@@ -1,5 +1,5 @@
 import Redis from 'ioredis-mock'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
@@ -14,6 +14,19 @@ describe('RedisLayer', () => {
     await expect(layer.get('user:1')).resolves.toEqual({ id: 1, name: 'Alice' })
   })
 
+  it('supports empty bulk operations and unprefixed dbsize counting', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client, allowUnprefixedClear: true })
+
+    await expect(layer.getMany([])).resolves.toEqual([])
+    await expect(layer.setMany([])).resolves.toBeUndefined()
+    await expect(layer.deleteMany([])).resolves.toBeUndefined()
+
+    await layer.set('a', 1)
+    await layer.set('b', 2)
+    await expect(layer.size()).resolves.toBe(await client.dbsize())
+  })
+
   it('supports alternate serializers', async () => {
     const client = new Redis()
     const layer = new RedisLayer({ client, serializer: new MsgpackSerializer() })
@@ -21,6 +34,31 @@ describe('RedisLayer', () => {
     await layer.set('numbers', [1, 2, 3])
 
     await expect(layer.get('numbers')).resolves.toEqual([1, 2, 3])
+  })
+
+  it('supports bulk set/get, key iteration, and ttl/has semantics', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client, prefix: 'cache:' })
+
+    await layer.setMany([
+      { key: 'a', value: 1, ttl: 10 },
+      { key: 'b', value: 2 }
+    ])
+
+    await expect(layer.getMany(['a', 'b'])).resolves.toEqual([1, 2])
+    await expect(layer.has('a')).resolves.toBe(true)
+    await expect(layer.ttl('a')).resolves.toBeGreaterThan(0)
+    await expect(layer.ttl('b')).resolves.toBeNull()
+    await expect(layer.ttl('missing')).resolves.toBeNull()
+
+    const keys = await layer.keys()
+    expect(keys.sort()).toEqual(['a', 'b'])
+
+    const visited: string[] = []
+    await layer.forEachKey(async (key) => {
+      visited.push(key)
+    })
+    expect(visited.sort()).toEqual(['a', 'b'])
   })
 
   it('treats deserialization failures as cache misses and removes the corrupted key', async () => {
@@ -110,5 +148,114 @@ describe('RedisLayer', () => {
 
     await expect(layer.get('compressed-bomb')).resolves.toBeNull()
     await expect(client.getBuffer('compressed-bomb')).resolves.toBeNull()
+  })
+
+  it('supports brotli compression and deleteMany on prefixed keys', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({
+      client,
+      prefix: 'brotli:',
+      compression: 'brotli',
+      compressionThreshold: 1
+    })
+
+    await layer.set('a', 'x'.repeat(2048))
+    await layer.set('b', 'y'.repeat(2048))
+    await expect(layer.get('a')).resolves.toBe('x'.repeat(2048))
+
+    await layer.deleteMany(['a', 'b'])
+    await expect(layer.get('a')).resolves.toBeNull()
+    await expect(layer.get('b')).resolves.toBeNull()
+  })
+
+  it('pings redis health and optionally disconnects on dispose', async () => {
+    const client = new Redis()
+    const disconnect = vi.spyOn(client, 'disconnect')
+    const layer = new RedisLayer({ client, disconnectOnDispose: true })
+
+    await expect(layer.ping()).resolves.toBe(true)
+    await layer.dispose()
+    expect(disconnect).toHaveBeenCalled()
+  })
+
+  it('returns false when ping throws', async () => {
+    const client = {
+      ping: vi.fn(async () => {
+        throw new Error('offline')
+      }),
+      disconnect: vi.fn()
+    } as unknown as Redis
+
+    const layer = new RedisLayer({ client })
+    await expect(layer.ping()).resolves.toBe(false)
+  })
+
+  it('can clear unprefixed keys when explicitly allowed', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client, allowUnprefixedClear: true })
+
+    await layer.set('user:1', { id: 1 })
+    await layer.clear()
+
+    await expect(layer.get('user:1')).resolves.toBeNull()
+  })
+
+  it('covers serializer, rewrite, and decompression helper branches', async () => {
+    const client = new Redis()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const layer = new RedisLayer({
+      client,
+      compression: 'gzip',
+      compressionThreshold: 1_000
+    })
+
+    await expect(
+      (
+        layer as {
+          encodePayload: (payload: string | Buffer) => Promise<string | Buffer>
+        }
+      ).encodePayload('small')
+    ).resolves.toBe('small')
+    await expect(
+      (
+        layer as {
+          decodePayload: (payload: string | Buffer) => Promise<string | Buffer>
+        }
+      ).decodePayload('plain')
+    ).resolves.toBe('plain')
+    await expect(
+      (
+        layer as {
+          decodePayload: (payload: string | Buffer) => Promise<string | Buffer>
+        }
+      ).decodePayload(Buffer.from('not-compressed'))
+    ).resolves.toEqual(Buffer.from('not-compressed'))
+
+    const ttlSpy = vi.spyOn(client, 'ttl').mockResolvedValueOnce(-1)
+    const setSpy = vi.spyOn(client, 'set')
+    await (
+      layer as {
+        rewriteWithPrimarySerializer: (key: string, value: unknown) => Promise<void>
+      }
+    ).rewriteWithPrimarySerializer('rewrite:key', { ok: true })
+    expect(ttlSpy).toHaveBeenCalled()
+    expect(setSpy).toHaveBeenCalled()
+
+    const delSpy = vi.spyOn(client, 'del').mockRejectedValueOnce(new Error('cannot delete'))
+    await (
+      layer as {
+        deleteCorruptedKey: (key: string) => Promise<void>
+      }
+    ).deleteCorruptedKey('broken')
+    expect(delSpy).toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalled()
+
+    const emptySerializerLayer = new RedisLayer({ client, serializer: [new JsonSerializer()] })
+    ;(emptySerializerLayer as { serializers: unknown[] }).serializers = []
+    expect(() => (emptySerializerLayer as { primarySerializer: () => unknown }).primarySerializer()).toThrow(
+      /at least one serializer/i
+    )
+
+    warnSpy.mockRestore()
   })
 })

@@ -43,4 +43,35 @@ describe('TagIndex', () => {
     expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeGreaterThan(1)
     expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeLessThan(10)
   })
+
+  it('supports tagsForKey, visitor helpers, and key removal', async () => {
+    const index = new TagIndex()
+
+    await index.track('user:1', ['users', 'admins'])
+    await index.track('user:2', [])
+
+    await expect(index.tagsForKey('user:1')).resolves.toEqual(['users', 'admins'])
+    await expect(index.tagsForKey('user:2')).resolves.toEqual([])
+
+    const byTag: string[] = []
+    await index.forEachKeyForTag('users', async (key) => {
+      byTag.push(key)
+    })
+    expect(byTag).toEqual(['user:1'])
+
+    const byPrefix: string[] = []
+    await index.forEachKeyForPrefix('user:', async (key) => {
+      byPrefix.push(key)
+    })
+    expect(byPrefix.sort()).toEqual(['user:1', 'user:2'])
+
+    const byPattern: string[] = []
+    await index.forEachKeyMatchingPattern('user:?', async (key) => {
+      byPattern.push(key)
+    })
+    expect(byPattern.sort()).toEqual(['user:1', 'user:2'])
+
+    await index.remove('user:1')
+    await expect(index.keysForTag('users')).resolves.toEqual([])
+  })
 })

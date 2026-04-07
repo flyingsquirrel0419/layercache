@@ -661,4 +661,39 @@ describe('operational features', () => {
     await expect(Promise.all([first, second])).resolves.toEqual(['value', 'value'])
     expect(fetches).toBe(1)
   })
+
+  it('falls back to the waiter when a redis single-flight lock is already held and skips invalid renewal intervals', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis })
+    const waiter = vi.fn(async () => 'waited')
+
+    await redis.set('layercache:singleflight:user%3A1', 'held', 'PX', 1_000)
+
+    await expect(
+      coordinator.execute(
+        'user:1',
+        { leaseMs: 100, renewIntervalMs: 100, waitTimeoutMs: 50, pollIntervalMs: 10 },
+        async () => 'worker',
+        waiter
+      )
+    ).resolves.toBe('waited')
+    expect(waiter).toHaveBeenCalledTimes(1)
+
+    expect(
+      (
+        coordinator as {
+          startLeaseRenewal: (
+            lockKey: string,
+            token: string,
+            options: { leaseMs: number; waitTimeoutMs: number; pollIntervalMs: number; renewIntervalMs?: number }
+          ) => ReturnType<typeof setInterval> | undefined
+        }
+      ).startLeaseRenewal('lock', 'token', {
+        leaseMs: 100,
+        renewIntervalMs: 0,
+        waitTimeoutMs: 50,
+        pollIntervalMs: 10
+      })
+    ).toBeUndefined()
+  })
 })
