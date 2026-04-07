@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `README.md` now reflects the current validation baseline with **328 passing tests**.
+
+### Fixed
+- `tests/internal/TtlResolver.test.ts` no longer hard-codes Asia/Seoul-specific `until-midnight` expectations, so the validation workflow passes consistently on GitHub Actions runners in UTC.
+
 ### Added
 - `snapshotMaxEntries` and `invalidationMaxKeys` safeguards to cap large snapshot exports and wildcard/tag-based invalidation scans before they fan out across the whole cache.
 - Visitor-style key iteration hooks on built-in layers and tag indexes so export and invalidation flows can stream keys instead of materializing full key lists first.

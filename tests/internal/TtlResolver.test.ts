@@ -24,7 +24,8 @@ describe('TtlResolver', () => {
 
   it('supports until-midnight and next-hour policies', () => {
     vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-04-05T10:05:10Z'))
+    const now = new Date('2026-04-05T10:05:10Z')
+    vi.setSystemTime(now)
     const resolver = new TtlResolver({ maxProfileEntries: 100 })
 
     const midnight = resolver.resolveFreshTtl(
@@ -37,8 +38,16 @@ describe('TtlResolver', () => {
     )
     const nextHour = resolver.resolveFreshTtl('hour', 'memory', 'value', { ttlPolicy: 'next-hour' }, 5, undefined)
 
-    expect(midnight).toBe(17_690)
-    expect(nextHour).toBe(3_290)
+    const nextMidnight = new Date(now)
+    nextMidnight.setHours(24, 0, 0, 0)
+    const expectedMidnight = Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1_000))
+
+    const expectedNextHour = new Date(now)
+    expectedNextHour.setMinutes(60, 0, 0)
+    const nextHourSeconds = Math.max(1, Math.ceil((expectedNextHour.getTime() - now.getTime()) / 1_000))
+
+    expect(midnight).toBe(expectedMidnight)
+    expect(nextHour).toBe(nextHourSeconds)
     vi.useRealTimers()
   })
 
