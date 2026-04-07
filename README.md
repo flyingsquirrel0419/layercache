@@ -48,7 +48,7 @@ Hand-rolled hybrid   --> Works... until you need stampede prevention, invalidati
 
 ```
               ┌───────────────────────────────────────┐
-your app ---->│             layercache                 │
+your app ---->│             layercache                │
               │                                       │
               │  L1 Memory    ~0.01ms  (per-process)  │
               │      |                                │
@@ -259,14 +259,14 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 layercache is built for multi-instance production environments:
 
 ```
-  ┌──────────┐    ┌──────────┐    ┌──────────┐
+  ┌───────────┐    ┌───────────┐    ┌───────────┐
   │ Server A  │    │ Server B  │    │ Server C  │
   │ [Memory]  │    │ [Memory]  │    │ [Memory]  │
   └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
         │                │                │
         └──── Redis Pub/Sub ──────────────┘  <-- L1 invalidation bus
                      │
-               ┌─────┴─────┐
+               ┌─────┴──────┐
                │   Redis    │  <-- shared L2 + tag index + single-flight
                └────────────┘
 ```
