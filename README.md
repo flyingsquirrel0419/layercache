@@ -203,6 +203,8 @@ Glob-style deletion against the tracked key set, plus any layer that can enumera
 await cache.invalidateByPattern('user:*') // deletes user:1, user:2, …
 ```
 
+Patterns must be non-empty, at most 1024 characters long, and free of control characters.
+
 For multi-instance deployments, prefer a shared `RedisTagIndex`. Without it, pattern invalidation still scans real layer keys when available, but that fallback only helps on layers that implement `keys()`, and tag tracking itself remains process-local.
 
 ### `cache.invalidateByPrefix(prefix): Promise<void>`
@@ -319,6 +321,8 @@ await cache.warm(
 ### `cache.namespace(prefix): CacheNamespace`
 
 Returns a scoped view with the same full API (`get`, `set`, `delete`, `clear`, `mget`, `wrap`, `warm`, `invalidateByTag`, `invalidateByPattern`, `getMetrics`). `clear()` only touches `prefix:*` keys, and namespace metrics are serialized per `CacheStack` instance so unrelated caches do not block each other while metrics are collected.
+
+Namespace prefixes must be non-empty, at most 256 characters long, and free of control characters.
 
 ```ts
 const users = cache.namespace('users')
@@ -711,6 +715,8 @@ const statsHandler = createCacheStatsHandler(cache)
 http.createServer(statsHandler).listen(9090)
 // GET / → JSON stats
 ```
+
+The built-in handler returns JSON with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` headers.
 
 Or use the Fastify plugin:
 

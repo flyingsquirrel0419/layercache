@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Nested namespace creation now validates child prefixes up front, matching the cache key restrictions more closely and rejecting empty or control-character prefixes earlier.
+- `invalidateByPattern()` now validates pattern length and control characters before scanning tracked keys.
+- Express and Hono cache middleware now derive cache keys from normalized URLs without decoding path segments, avoiding encoded-path aliasing.
+- `FetchRateLimiter` now evicts idle buckets when scoped throttling cardinality grows too high, and `TtlResolver` / `CircuitBreakerManager` prune state by recency instead of insertion order.
+- Cache stats HTTP responses now include `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
+
+### Fixed
+- `RedisInvalidationBus` now sanitizes parsed JSON payloads before shape validation, stripping prototype-pollution keys from invalidation messages.
+- `TagIndex` caps wildcard recursion depth to avoid pathological pattern scans from exhausting the stack.
+- `RedisLayer` now logs failed cleanup attempts when deleting a corrupted key after deserialization failure instead of silently swallowing the delete error.
+
 ## [1.2.4] — 2026-04-07
 
 ### Changed
