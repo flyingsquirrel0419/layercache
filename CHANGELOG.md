@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.6] — 2026-04-08
+
 ### Changed
 - `README.md` now reflects the current validation baseline with **328 passing tests**.
 - `CacheStack` now delegates key validation, key serialization, and snapshot path/file handling to dedicated internal helpers (`CacheStackValidation`, `CacheKeySerialization`, `CacheSnapshotFile`), reducing class sprawl and making targeted testing easier.
