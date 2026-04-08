@@ -8,12 +8,7 @@ export type { EvictionPolicy, MemoryLayerOptions, MemoryLayerSnapshotEntry } fro
 export { PatternMatcher } from './invalidation/PatternMatcher'
 export { TagIndex } from './invalidation/TagIndex'
 export { createHonoCacheMiddleware } from './integrations/hono'
-export const edgeExports = {
-  MemoryLayer,
-  PatternMatcher,
-  TagIndex,
-  createHonoCacheMiddleware
-} as const
+void [MemoryLayer, PatternMatcher, TagIndex, createHonoCacheMiddleware]
 export type {
   CacheGetOptions,
   CacheLayer,
