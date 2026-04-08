@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   planFreshReadPolicies,
   resolveRecoverableLayerFailure,
-  shouldSkipLayer
+  shouldSkipLayer,
+  shouldStartBackgroundRefresh
 } from '../../src/internal/CacheStackRuntimePolicy'
 import { createStoredValueEnvelope, remainingStoredTtlSeconds } from '../../src/internal/StoredValue'
 
@@ -11,6 +12,12 @@ describe('CacheStackRuntimePolicy', () => {
     expect(shouldSkipLayer(undefined, 1_000)).toBe(false)
     expect(shouldSkipLayer(999, 1_000)).toBe(false)
     expect(shouldSkipLayer(1_001, 1_000)).toBe(true)
+  })
+
+  it('blocks background refresh scheduling while disconnecting or when a refresh is already in flight', () => {
+    expect(shouldStartBackgroundRefresh({ isDisconnecting: true, hasRefreshInFlight: false })).toBe(false)
+    expect(shouldStartBackgroundRefresh({ isDisconnecting: false, hasRefreshInFlight: true })).toBe(false)
+    expect(shouldStartBackgroundRefresh({ isDisconnecting: false, hasRefreshInFlight: false })).toBe(true)
   })
 
   it('resolves recoverable layer failure plans for disabled, default, and custom degradation', () => {

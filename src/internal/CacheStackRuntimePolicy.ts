@@ -16,6 +16,16 @@ export function shouldSkipLayer(degradedUntil: number | undefined, now = Date.no
   return degradedUntil !== undefined && degradedUntil > now
 }
 
+export function shouldStartBackgroundRefresh({
+  isDisconnecting,
+  hasRefreshInFlight
+}: {
+  isDisconnecting: boolean
+  hasRefreshInFlight: boolean
+}): boolean {
+  return !isDisconnecting && !hasRefreshInFlight
+}
+
 export function resolveRecoverableLayerFailure(
   gracefulDegradation: boolean | CacheDegradationOptions | undefined,
   now = Date.now()

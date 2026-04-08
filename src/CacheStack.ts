@@ -20,7 +20,8 @@ import { CacheStackMaintenance } from './internal/CacheStackMaintenance'
 import {
   planFreshReadPolicies,
   resolveRecoverableLayerFailure,
-  shouldSkipLayer as shouldSkipDegradedLayer
+  shouldSkipLayer as shouldSkipDegradedLayer,
+  shouldStartBackgroundRefresh
 } from './internal/CacheStackRuntimePolicy'
 import {
   validateAdaptiveTtlOptions,
@@ -1357,7 +1358,12 @@ export class CacheStack extends EventEmitter {
   }
 
   private scheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
-    if (this.isDisconnecting || this.backgroundRefreshes.has(key)) {
+    if (
+      !shouldStartBackgroundRefresh({
+        isDisconnecting: this.isDisconnecting,
+        hasRefreshInFlight: this.backgroundRefreshes.has(key)
+      })
+    ) {
       return
     }
 

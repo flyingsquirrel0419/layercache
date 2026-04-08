@@ -290,6 +290,9 @@ describe('CacheStack internals', () => {
 
   it('covers ttl, healthCheck, and inspect branches across skipped, failing, and ttl-less layers', async () => {
     const skippedLayer = makeLayer('skipped', {
+      get: vi.fn(async () => {
+        throw new Error('skip me')
+      }),
       ttl: vi.fn(async () => 99)
     })
     const throwingLayer = makeLayer('throwing', {
@@ -306,7 +309,8 @@ describe('CacheStack internals', () => {
     const cache = new CacheStack([skippedLayer, throwingLayer, valueLayer], {
       gracefulDegradation: true
     })
-    ;(cache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set('skipped', Date.now() + 1_000)
+
+    await expect(cache.has('prime:skip')).resolves.toBe(false)
 
     await expect(cache.ttl('user:1')).resolves.toBe(12)
 
@@ -407,24 +411,6 @@ describe('CacheStack internals', () => {
       writeStrategy: 'write-behind',
       writeBehind: { batchSize: 2, maxQueueSize: 3 }
     })
-
-    const refreshFetch = vi.fn(async () => 'fresh')
-    ;(cache as { isDisconnecting: boolean }).isDisconnecting = true
-    ;(
-      cache as {
-        scheduleBackgroundRefresh: <T>(key: string, fetcher: () => Promise<T>) => void
-      }
-    ).scheduleBackgroundRefresh('user:1', refreshFetch)
-    expect(refreshFetch).not.toHaveBeenCalled()
-    ;(cache as { isDisconnecting: boolean }).isDisconnecting = false
-    ;(cache as { backgroundRefreshes: Map<string, Promise<void>> }).backgroundRefreshes.set('user:1', Promise.resolve())
-    ;(
-      cache as {
-        scheduleBackgroundRefresh: <T>(key: string, fetcher: () => Promise<T>) => void
-      }
-    ).scheduleBackgroundRefresh('user:1', refreshFetch)
-    expect(refreshFetch).not.toHaveBeenCalled()
-    ;(cache as { backgroundRefreshes: Map<string, Promise<void>> }).backgroundRefreshes.clear()
 
     await expect(
       (
@@ -539,56 +525,10 @@ describe('CacheStack internals', () => {
       (cache as { cleanupGeneration: (generation: number) => Promise<void> }).cleanupGeneration(1)
     ).resolves.toBeUndefined()
 
-    const warned: unknown[] = []
-    const failingCleanup = new CacheStack([new MemoryLayer({ ttl: 60 })], {
-      generationCleanup: { batchSize: 2 },
-      logger: { warn: (...args: unknown[]) => warned.push(args) }
-    })
-    ;(
-      failingCleanup as {
-        cleanupGeneration: (generation: number) => Promise<void>
-      }
-    ).cleanupGeneration = vi.fn(async () => {
-      throw new Error('cleanup failed')
-    })
-    ;(failingCleanup as { scheduleGenerationCleanup: (generation: number) => void }).scheduleGenerationCleanup(1)
-    await (
-      failingCleanup as { maintenance: { waitForGenerationCleanup: () => Promise<void> } }
-    ).maintenance.waitForGenerationCleanup()
-    expect(warned).toHaveLength(1)
-
     expect((cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([])).toEqual([])
     expect(
       (cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([['a', 'b', 'b'], ['b', 'c'], ['b']])
     ).toEqual(['b'])
-
-    const failingDeleteManyLayer = makeLayer('delete-many-fail', {
-      deleteMany: vi.fn(async () => {
-        throw new Error('delete many failed')
-      })
-    })
-    const deleteManyLayer = makeLayer('delete-many', {
-      deleteMany: vi.fn(async () => undefined)
-    })
-    const deleteOneLayer = makeLayer('delete-one', {
-      delete: vi.fn(async () => {
-        throw new Error('delete failed')
-      })
-    })
-    const deletionCache = new CacheStack([failingDeleteManyLayer, deleteManyLayer, deleteOneLayer], {
-      gracefulDegradation: true
-    })
-    ;(deletionCache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set(
-      'delete-many',
-      Date.now() + 1_000
-    )
-    await expect(
-      (
-        deletionCache as {
-          deleteKeysFromLayers: (layers: CacheLayer[], keys: string[]) => Promise<void>
-        }
-      ).deleteKeysFromLayers([failingDeleteManyLayer, deleteManyLayer, deleteOneLayer], ['user:1'])
-    ).resolves.toBeUndefined()
 
     const policyCache = new CacheStack([makeLayer('policy', { set: vi.fn(async () => undefined) })])
     const scheduleSpy = vi
@@ -632,54 +572,6 @@ describe('CacheStack internals', () => {
     )
     expect(scheduleSpy).toHaveBeenCalled()
     scheduleSpy.mockRestore()
-
-    const degradedSlidingLayer = makeLayer('degraded-policy', { set: vi.fn(async () => undefined) })
-    const failingSlidingLayer = makeLayer('failing-policy', {
-      set: vi.fn(async () => {
-        throw new Error('sliding ttl failed')
-      })
-    })
-    const slidingCache = new CacheStack([degradedSlidingLayer, failingSlidingLayer], {
-      gracefulDegradation: true
-    })
-    ;(slidingCache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set(
-      'degraded-policy',
-      Date.now() + 1_000
-    )
-    await expect(
-      (
-        slidingCache as {
-          applyFreshReadPolicies: (
-            key: string,
-            hit: {
-              found: true
-              value: string
-              stored: unknown
-              state: 'fresh'
-              layerIndex: number
-              layerName: string
-            },
-            options: { refreshAhead?: number; slidingTtl?: boolean },
-            fetcher?: () => Promise<string>
-          ) => Promise<void>
-        }
-      ).applyFreshReadPolicies(
-        'user:2',
-        {
-          found: true,
-          value: 'value',
-          stored: createStoredValueEnvelope({
-            kind: 'value',
-            value: 'value',
-            freshTtlSeconds: 20
-          }),
-          state: 'fresh',
-          layerIndex: 1,
-          layerName: 'failing-policy'
-        },
-        { refreshAhead: 0, slidingTtl: true }
-      )
-    ).resolves.toBeUndefined()
   })
 
   it('covers circuit recording, error emission, snapshot validation, tag fallback, and export-key branches', async () => {
