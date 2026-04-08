@@ -32,16 +32,22 @@ describe('TagIndex', () => {
     expect((await index.matchPattern('user:*')).sort()).toEqual(['user:1', 'user:2'])
   })
 
-  it('resets trie node ids when cleared', async () => {
+  it('resets public key indexes when cleared', async () => {
     const index = new TagIndex()
 
     await index.touch('user:1')
+    await index.track('user:2', ['users'])
     await index.clear()
-    await index.touch('post:1')
 
-    expect(await index.keysForPrefix('post:')).toEqual(['post:1'])
-    expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeGreaterThan(1)
-    expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeLessThan(10)
+    await expect(index.keysForPrefix('user:')).resolves.toEqual([])
+    await expect(index.matchPattern('user:*')).resolves.toEqual([])
+    await expect(index.tagsForKey('user:2')).resolves.toEqual([])
+
+    await index.touch('post:1')
+    await index.track('post:2', ['posts'])
+
+    expect(await index.keysForPrefix('post:')).toEqual(['post:1', 'post:2'])
+    expect(await index.keysForTag('posts')).toEqual(['post:2'])
   })
 
   it('supports tagsForKey, visitor helpers, and key removal', async () => {
