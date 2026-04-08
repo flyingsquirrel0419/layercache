@@ -60,7 +60,7 @@ describe('CircuitBreakerManager', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
     try {
-      const manager = new CircuitBreakerManager({ maxEntries: 2 })
+      const manager = new CircuitBreakerManager({ maxEntries: 3 })
 
       manager.recordFailure('expired', { failureThreshold: 1, cooldownMs: 100 })
       vi.advanceTimersByTime(200)
@@ -72,8 +72,11 @@ describe('CircuitBreakerManager', () => {
       vi.advanceTimersByTime(1)
       manager.recordFailure('overflow', { failureThreshold: 1, cooldownMs: 1_000 })
 
-      expect(manager.tripCount()).toBe(2)
+      expect(manager.tripCount()).toBe(3)
       expect(manager.isOpen('expired')).toBe(false)
+      expect(manager.isOpen('oldest')).toBe(false)
+      expect(manager.isOpen('newest')).toBe(true)
+      expect(manager.isOpen('trigger')).toBe(true)
       expect(manager.isOpen('overflow')).toBe(true)
     } finally {
       vi.useRealTimers()
