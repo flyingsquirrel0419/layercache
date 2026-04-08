@@ -281,19 +281,61 @@ describe('CacheNamespace', () => {
     expect(Object.keys(hitRate.byLayer).length).toBeGreaterThan(0)
   })
 
-  it('aggregates metrics across sibling namespaces on the same cache stack', async () => {
-    const cache = makeCache()
-    const first = cache.namespace('a')
-    const second = cache.namespace('b')
+  it('serializes sibling namespace operations through the shared cache mutex', async () => {
+    const metrics = {
+      hits: 0,
+      misses: 0,
+      fetches: 0,
+      sets: 0,
+      deletes: 0,
+      backfills: 0,
+      invalidations: 0,
+      staleHits: 0,
+      refreshes: 0,
+      refreshErrors: 0,
+      writeFailures: 0,
+      singleFlightWaits: 0,
+      negativeCacheHits: 0,
+      circuitBreakerTrips: 0,
+      degradedOperations: 0,
+      hitsByLayer: {},
+      missesByLayer: {},
+      latencyByLayer: {},
+      resetAt: Date.now()
+    }
 
-    await first.set('key', 1)
-    await second.get('missing')
-    await first.get('key')
+    const calls: string[] = []
+    let releaseFirst!: () => void
+    const firstReleased = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
 
-    expect(await first.get('key')).toBe(1)
-    expect(first.getMetrics().sets).toBeGreaterThan(0)
-    expect(second.getMetrics().misses).toBeGreaterThan(0)
-    expect(second.getHitRate().overall).toBe(0)
+    const cache = {
+      getMetrics: vi.fn(() => metrics),
+      getOrSet: vi.fn(async (key: string, fetcher: () => Promise<number>) => {
+        calls.push(`getOrSet:${key}`)
+        await firstReleased
+        return fetcher()
+      }),
+      set: vi.fn(async (key: string, value: number) => {
+        calls.push(`set:${key}:${value}`)
+      })
+    } as unknown as CacheStack
+
+    const first = new CacheNamespace(cache, 'tenant-a')
+    const second = new CacheNamespace(cache, 'tenant-b')
+
+    const firstOperation = first.getOrSet('key', async () => 1)
+    const secondOperation = second.set('key', 2)
+
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(calls).toEqual(['getOrSet:tenant-a:key'])
+
+    releaseFirst()
+    await expect(firstOperation).resolves.toBe(1)
+    await expect(secondOperation).resolves.toBeUndefined()
+    expect(calls).toEqual(['getOrSet:tenant-a:key', 'set:tenant-b:key:2'])
   })
 
   it('tracks zero-delta metrics snapshots and preserves zero-hit layer rates', async () => {
