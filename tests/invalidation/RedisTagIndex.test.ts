@@ -18,6 +18,24 @@ describe('RedisTagIndex', () => {
     await expect(index.tagsForKey('user:1')).resolves.toEqual([])
   })
 
+  it('replaces old tag mappings when a key is re-tracked and clears empty indexes safely', async () => {
+    const redis = new Redis()
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:update' })
+
+    await index.track('user:1', ['team:a', 'role:admin'])
+    await index.track('user:1', ['team:b'])
+    await index.track('user:2', [])
+
+    await expect(index.keysForTag('team:a')).resolves.toEqual([])
+    await expect(index.keysForTag('role:admin')).resolves.toEqual([])
+    await expect(index.keysForTag('team:b')).resolves.toEqual(['user:1'])
+    await expect(index.tagsForKey('user:2')).resolves.toEqual([])
+    await expect(index.tagsForKey('user:1')).resolves.toEqual(['team:b'])
+
+    const empty = new RedisTagIndex({ client: redis, prefix: 'tags:empty' })
+    await expect(empty.clear()).resolves.toBeUndefined()
+  })
+
   it('supports prefix scans over tracked keys', async () => {
     const redis = new Redis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:test' })
