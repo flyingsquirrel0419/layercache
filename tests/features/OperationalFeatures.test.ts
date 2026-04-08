@@ -116,6 +116,31 @@ class InMemoryInvalidationBus implements InvalidationBus {
   }
 }
 
+async function waitForCondition(
+  assertion: () => Promise<void> | void,
+  timeoutMs = 1_000,
+  pollIntervalMs = 10
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      await assertion()
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+
+  throw new Error('timed out waiting for condition')
+}
+
 describe('operational features', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -699,16 +724,39 @@ describe('operational features', () => {
 
   it('allows duplicate concurrent fetches when stampede prevention is disabled', async () => {
     let started = 0
-    let releaseFetch!: () => void
-    const allStarted = new Promise<void>((resolve) => {
-      releaseFetch = resolve
+    let releaseFirstFetch!: () => void
+    let releaseSecondFetch!: () => void
+    const firstFetchStarted = new Promise<void>((resolve) => {
+      releaseFirstFetch = resolve
+    })
+    const secondFetchStarted = new Promise<void>((resolve) => {
+      releaseSecondFetch = resolve
+    })
+    const bothFetchesStarted = Promise.all([firstFetchStarted, secondFetchStarted])
+    let concurrentFetchTimeoutId: ReturnType<typeof setTimeout> | undefined
+    const concurrentFetchTimeout = new Promise<void>((_, reject) => {
+      concurrentFetchTimeoutId = setTimeout(
+        () => reject(new Error('expected the second concurrent fetch to start when stampede prevention is disabled')),
+        250
+      )
     })
     const fetcher = vi.fn(async () => {
       started += 1
-      if (started === 2) {
-        releaseFetch()
+      if (started === 1) {
+        releaseFirstFetch()
       }
-      await allStarted
+      if (started === 2) {
+        releaseSecondFetch()
+      }
+
+      await Promise.race([
+        bothFetchesStarted.finally(() => {
+          if (concurrentFetchTimeoutId) {
+            clearTimeout(concurrentFetchTimeoutId)
+          }
+        }),
+        concurrentFetchTimeout
+      ])
       return { id: 1 }
     })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
@@ -751,9 +799,9 @@ describe('operational features', () => {
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     await expect(cache.get('greeting', async () => 'hello-v2')).resolves.toBe('hello-v1')
-    await new Promise((resolve) => setTimeout(resolve, 20))
-
-    await expect(cache.get('greeting')).resolves.toBe('hello-v2')
+    await waitForCondition(async () => {
+      await expect(cache.get('greeting')).resolves.toBe('hello-v2')
+    })
   })
 
   it('provides a redis-backed distributed single-flight coordinator', async () => {
