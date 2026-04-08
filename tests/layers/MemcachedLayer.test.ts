@@ -115,4 +115,12 @@ describe('MemcachedLayer', () => {
     const result = await layer.get('bad')
     expect(result).toBeNull()
   })
+
+  it('rejects keys that exceed the Memcached size limit', async () => {
+    await expect(layer.set('x'.repeat(251), 'value')).rejects.toThrow(/250-byte Memcached limit/i)
+  })
+
+  it('rejects keys with whitespace or control characters', async () => {
+    await expect(layer.delete('bad key')).rejects.toThrow(/invalid characters/i)
+  })
 })

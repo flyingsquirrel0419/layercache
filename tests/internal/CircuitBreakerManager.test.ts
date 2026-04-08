@@ -24,16 +24,21 @@ describe('CircuitBreakerManager', () => {
   it('throws while open and automatically resets after cooldown elapses', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
-    const manager = new CircuitBreakerManager({ maxEntries: 10 })
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 10 })
 
-    manager.recordFailure('user:1', { failureThreshold: 1, cooldownMs: 2_000 })
-    expect(() => manager.assertClosed('user:1', { failureThreshold: 1, cooldownMs: 2_000 })).toThrow(/resets in 2s/i)
+      manager.recordFailure('user:1', { failureThreshold: 1, cooldownMs: 2_000 })
+      expect(() => manager.assertClosed('user:1', { failureThreshold: 1, cooldownMs: 2_000 })).toThrow(
+        /resets in 2s/i
+      )
 
-    vi.advanceTimersByTime(2_001)
+      vi.advanceTimersByTime(2_001)
 
-    expect(() => manager.assertClosed('user:1', { failureThreshold: 1, cooldownMs: 2_000 })).not.toThrow()
-    expect(manager.isOpen('user:1')).toBe(false)
-    vi.useRealTimers()
+      expect(() => manager.assertClosed('user:1', { failureThreshold: 1, cooldownMs: 2_000 })).not.toThrow()
+      expect(manager.isOpen('user:1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('tracks trip counts and supports delete and clear', () => {
@@ -54,40 +59,69 @@ describe('CircuitBreakerManager', () => {
   it('prunes expired entries first and then oldest entries when over capacity', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
-    const manager = new CircuitBreakerManager({ maxEntries: 2 })
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 3 })
 
-    manager.recordFailure('expired', { failureThreshold: 1, cooldownMs: 100 })
-    vi.advanceTimersByTime(200)
-    manager.recordFailure('oldest', { failureThreshold: 1, cooldownMs: 1_000 })
-    vi.advanceTimersByTime(1)
-    manager.recordFailure('newest', { failureThreshold: 1, cooldownMs: 1_000 })
-    vi.advanceTimersByTime(1)
-    manager.recordFailure('trigger', { failureThreshold: 1, cooldownMs: 1_000 })
-    vi.advanceTimersByTime(1)
-    manager.recordFailure('overflow', { failureThreshold: 1, cooldownMs: 1_000 })
+      manager.recordFailure('expired', { failureThreshold: 1, cooldownMs: 100 })
+      vi.advanceTimersByTime(200)
+      manager.recordFailure('oldest', { failureThreshold: 1, cooldownMs: 1_000 })
+      vi.advanceTimersByTime(1)
+      manager.recordFailure('newest', { failureThreshold: 1, cooldownMs: 1_000 })
+      vi.advanceTimersByTime(1)
+      manager.recordFailure('trigger', { failureThreshold: 1, cooldownMs: 1_000 })
+      vi.advanceTimersByTime(1)
+      manager.recordFailure('overflow', { failureThreshold: 1, cooldownMs: 1_000 })
 
-    expect(manager.isOpen('expired')).toBe(false)
-    expect(manager.isOpen('oldest')).toBe(false)
-    expect(manager.isOpen('trigger')).toBe(true)
-    expect(manager.isOpen('overflow')).toBe(true)
-    vi.useRealTimers()
+      expect(manager.tripCount()).toBe(3)
+      expect(manager.isOpen('expired')).toBe(false)
+      expect(manager.isOpen('oldest')).toBe(false)
+      expect(manager.isOpen('newest')).toBe(true)
+      expect(manager.isOpen('trigger')).toBe(true)
+      expect(manager.isOpen('overflow')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('removes expired breakers before handling new failures', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 2 })
+
+      manager.recordFailure('expired', { failureThreshold: 1, cooldownMs: 100 })
+      vi.advanceTimersByTime(200)
+      manager.recordFailure('fresh-a', { failureThreshold: 1, cooldownMs: 1_000 })
+      manager.recordFailure('fresh-b', { failureThreshold: 1, cooldownMs: 1_000 })
+
+      expect(manager.tripCount()).toBe(2)
+      expect(manager.isOpen('expired')).toBe(false)
+      expect(manager.tripCount()).toBe(2)
+      expect(manager.isOpen('fresh-a')).toBe(true)
+      expect(manager.isOpen('fresh-b')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('uses default threshold/cooldown values and ignores closed breakers in trip counts', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
-    const manager = new CircuitBreakerManager({ maxEntries: 10 })
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 10 })
 
-    manager.recordFailure('default', {})
-    manager.recordFailure('default', {})
-    expect(manager.isOpen('default')).toBe(false)
-    manager.recordFailure('default', {})
-    expect(manager.isOpen('default')).toBe(true)
-    expect(manager.tripCount()).toBe(1)
+      manager.recordFailure('default', {})
+      manager.recordFailure('default', {})
+      expect(manager.isOpen('default')).toBe(false)
+      manager.recordFailure('default', {})
+      expect(manager.isOpen('default')).toBe(true)
+      expect(manager.tripCount()).toBe(1)
 
-    vi.advanceTimersByTime(30_001)
-    expect(manager.isOpen('default')).toBe(false)
-    expect(manager.tripCount()).toBe(0)
-    vi.useRealTimers()
+      vi.advanceTimersByTime(30_001)
+      expect(manager.isOpen('default')).toBe(false)
+      expect(manager.tripCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

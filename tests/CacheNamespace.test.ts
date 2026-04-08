@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { CacheMissError } from '../src/types'
@@ -280,13 +280,80 @@ describe('CacheNamespace', () => {
     expect(Object.keys(hitRate.byLayer).length).toBeGreaterThan(0)
   })
 
-  it('reuses the per-cache metrics mutex for namespaces on the same stack', async () => {
+  it('keeps namespace metrics correct across overlapping sibling operations', async () => {
     const cache = makeCache()
-    const first = cache.namespace('a')
-    const second = cache.namespace('b')
+    const first = cache.namespace('tenant-a')
+    const second = cache.namespace('tenant-b')
 
-    expect((first as unknown as { getMetricsMutex: () => unknown }).getMetricsMutex()).toBe(
-      (second as unknown as { getMetricsMutex: () => unknown }).getMetricsMutex()
-    )
+    let signalFirstStarted!: () => void
+    let releaseFirst!: () => void
+    const firstStarted = new Promise<void>((resolve) => {
+      signalFirstStarted = resolve
+    })
+    const firstReleased = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+
+    const firstOperation = first.getOrSet('key', async () => {
+      signalFirstStarted()
+      await firstReleased
+      return 1
+    })
+
+    await firstStarted
+    const secondOperation = second.set('key', 2)
+
+    releaseFirst()
+    await expect(firstOperation).resolves.toBe(1)
+    await expect(secondOperation).resolves.toBeUndefined()
+
+    expect(first.getMetrics()).toMatchObject({
+      misses: 1,
+      fetches: 1,
+      sets: 1
+    })
+    expect(second.getMetrics()).toMatchObject({
+      sets: 1
+    })
+  })
+
+  it('tracks namespace metrics on a real cache stack', async () => {
+    const cache = makeCache()
+    const users = cache.namespace('users')
+    const posts = cache.namespace('posts')
+
+    await users.set('1', { id: 1 })
+    await users.get('1')
+    await users.get('missing')
+    await posts.set('2', { id: 2 })
+
+    expect(users.getMetrics()).toMatchObject({
+      sets: 1,
+      hits: 1,
+      misses: 1
+    })
+    expect(users.getHitRate()).toEqual({
+      overall: 0.5,
+      byLayer: {
+        memory: 0.5
+      }
+    })
+    expect(posts.getMetrics()).toMatchObject({
+      sets: 1,
+      hits: 0,
+      misses: 0
+    })
+  })
+
+  it('returns cloned metrics snapshots after real operations', async () => {
+    const ns = makeCache().namespace('tenant')
+
+    await ns.set('key', 1)
+    await ns.get('key')
+
+    const metrics = ns.getMetrics()
+    metrics.hits = 999
+
+    expect(ns.getMetrics().hits).toBe(1)
   })
 })

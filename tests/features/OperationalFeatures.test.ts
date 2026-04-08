@@ -90,6 +90,17 @@ class SharedCoordinator implements CacheSingleFlightCoordinator {
   }
 }
 
+class AlwaysWaitCoordinator implements CacheSingleFlightCoordinator {
+  async execute<T>(
+    _key: string,
+    _options: CacheSingleFlightExecutionOptions,
+    _worker: () => Promise<T>,
+    waiter: () => Promise<T>
+  ): Promise<T> {
+    return waiter()
+  }
+}
+
 class InMemoryInvalidationBus implements InvalidationBus {
   private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
 
@@ -103,6 +114,31 @@ class InMemoryInvalidationBus implements InvalidationBus {
   async publish(message: InvalidationMessage): Promise<void> {
     await Promise.all([...this.handlers].map((handler) => handler(message)))
   }
+}
+
+async function waitForCondition(
+  assertion: () => Promise<void> | void,
+  timeoutMs = 1_000,
+  pollIntervalMs = 10
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      await assertion()
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+
+  throw new Error('timed out waiting for condition')
 }
 
 describe('operational features', () => {
@@ -168,7 +204,9 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ version: 1 })
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await waitForCondition(async () => {
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    })
 
     await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
     expect(fetches).toBe(1)
@@ -195,7 +233,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
-    await new Promise((resolve) => setTimeout(resolve, 35))
+    await waitForCondition(async () => {
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    })
 
     expect(cache.getStats().backgroundRefreshes).toBe(0)
     expect(cache.getMetrics().refreshErrors).toBe(1)
@@ -226,10 +266,12 @@ describe('operational features', () => {
 
     try {
       await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-      await new Promise((resolve) => setTimeout(resolve, 35))
+      await waitForCondition(async () => {
+        expect(cache.getStats().backgroundRefreshes).toBe(0)
+      })
 
       rejectFetch(new Error('late failure'))
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      await new Promise((resolve) => setImmediate(resolve))
 
       expect(unhandled).not.toHaveBeenCalled()
       expect(cache.getStats().backgroundRefreshes).toBe(0)
@@ -254,7 +296,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.clear()
     releaseFetch()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toBeNull()
+    })
 
     await expect(cache.get('user:1')).resolves.toBeNull()
   })
@@ -275,7 +319,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.delete('user:1')
     releaseFetch()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toBeNull()
+    })
 
     await expect(cache.get('user:1')).resolves.toBeNull()
   })
@@ -298,7 +344,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.delete('user:1')
     releaseFetch()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toBeNull()
+    })
 
     await expect(cache.get('user:1')).resolves.toBeNull()
     expect(cache.getMetrics().negativeCacheHits).toBe(0)
@@ -319,6 +367,19 @@ describe('operational features', () => {
 
     expect(attempts).toBe(1)
     expect(cache.getMetrics().refreshErrors).toBe(1)
+  })
+
+  it('serves stale-if-error values without requiring a fetcher', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(cache.get('settings')).resolves.toEqual({ version: 1 })
+    expect(cache.getMetrics()).toMatchObject({
+      hits: 1,
+      staleHits: 1,
+      refreshErrors: 0
+    })
   })
 
   it('applies ttl jitter before writing to layers', async () => {
@@ -394,9 +455,34 @@ describe('operational features', () => {
     ).rejects.toThrow(/disconnecting/i)
 
     await disconnectPromise
-    await new Promise((resolve) => setTimeout(resolve, 25))
 
     expect(refreshes).toBe(0)
+  })
+
+  it('does not schedule a second background refresh while one is already in flight', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      backgroundRefreshTimeoutMs: 20
+    })
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    const fetcher = vi.fn(
+      async () =>
+        await new Promise<{ version: number }>(() => {
+          // intentionally hangs until the timeout guard trips
+        })
+    )
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
+
+    await waitForCondition(async () => {
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    })
+    expect(cache.getStats().backgroundRefreshes).toBe(0)
   })
 
   it('uses layer bulk writes for mset when available', async () => {
@@ -514,6 +600,28 @@ describe('operational features', () => {
     expect(warn).toHaveBeenCalled()
   })
 
+  it('returns fetched values without caching them when shouldCache returns false', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get('user:1', async () => ({ id: 1, cacheable: false }), {
+        shouldCache: () => false
+      })
+    ).resolves.toEqual({ id: 1, cacheable: false })
+
+    await expect(cache.get('user:1')).resolves.toBeNull()
+  })
+
+  it('does not negative-cache null fetch results unless explicitly enabled', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const fetcher = vi.fn(async () => null)
+
+    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
+    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('validates cache keys and runtime ttl options', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -589,6 +697,126 @@ describe('operational features', () => {
     expect(cacheB.getMetrics().singleFlightWaits).toBe(1)
   })
 
+  it('rechecks the cache before fetching when a value appears between read passes', async () => {
+    let reads = 0
+    const layer: CacheLayer = {
+      name: 'flip-read',
+      get: async () => {
+        reads += 1
+        if (reads === 1) {
+          return null
+        }
+        return 'late-hit'
+      },
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined
+    }
+    const cache = new CacheStack([layer])
+    const fetcher = vi.fn(async () => 'fetched')
+
+    await expect(cache.get('user:1', fetcher)).resolves.toBe('late-hit')
+
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(reads).toBeGreaterThanOrEqual(2)
+  })
+
+  it('falls back to fetching after single-flight waiting times out', async () => {
+    const fetcher = vi.fn(async () => 'fresh')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      singleFlightCoordinator: new AlwaysWaitCoordinator(),
+      singleFlightTimeoutMs: 20,
+      singleFlightPollMs: 5
+    })
+
+    await expect(cache.get('user:1', fetcher)).resolves.toBe('fresh')
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(cache.getMetrics().singleFlightWaits).toBe(1)
+  })
+
+  it('allows duplicate concurrent fetches when stampede prevention is disabled', async () => {
+    let started = 0
+    let releaseFirstFetch!: () => void
+    let releaseSecondFetch!: () => void
+    const firstFetchStarted = new Promise<void>((resolve) => {
+      releaseFirstFetch = resolve
+    })
+    const secondFetchStarted = new Promise<void>((resolve) => {
+      releaseSecondFetch = resolve
+    })
+    const bothFetchesStarted = Promise.all([firstFetchStarted, secondFetchStarted])
+    let concurrentFetchTimeoutId: ReturnType<typeof setTimeout> | undefined
+    const concurrentFetchTimeout = new Promise<void>((_, reject) => {
+      concurrentFetchTimeoutId = setTimeout(
+        () => reject(new Error('expected the second concurrent fetch to start when stampede prevention is disabled')),
+        250
+      )
+    })
+    const fetcher = vi.fn(async () => {
+      started += 1
+      if (started === 1) {
+        releaseFirstFetch()
+      }
+      if (started === 2) {
+        releaseSecondFetch()
+      }
+
+      await Promise.race([
+        bothFetchesStarted.finally(() => {
+          if (concurrentFetchTimeoutId) {
+            clearTimeout(concurrentFetchTimeoutId)
+          }
+        }),
+        concurrentFetchTimeout
+      ])
+      return { id: 1 }
+    })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      stampedePrevention: false
+    })
+
+    await expect(Promise.all([cache.get('user:1', fetcher), cache.get('user:1', fetcher)])).resolves.toEqual([
+      { id: 1 },
+      { id: 1 }
+    ])
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('formats primitive refresh failures without masking stale responses', async () => {
+    const debug = vi.fn()
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      logger: { debug }
+    })
+    await cache.set('settings', 'cached', { ttl: 1, staleIfError: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(
+      cache.get('settings', async () => {
+        throw 'primitive failure'
+      })
+    ).resolves.toBe('cached')
+
+    expect(debug).toHaveBeenCalledWith(
+      'stale-if-error',
+      expect.objectContaining({ key: 'settings', error: 'primitive failure' })
+    )
+  })
+
+  it('refreshes stale primitive values through the timeout guard', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      backgroundRefreshTimeoutMs: 50
+    })
+    await cache.set('greeting', 'hello-v1', { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(cache.get('greeting', async () => 'hello-v2')).resolves.toBe('hello-v1')
+    await waitForCondition(async () => {
+      await expect(cache.get('greeting')).resolves.toBe('hello-v2')
+    })
+  })
+
   it('provides a redis-backed distributed single-flight coordinator', async () => {
     const redis = new Redis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:test' })
@@ -628,41 +856,52 @@ describe('operational features', () => {
   })
 
   it('renews redis single-flight leases for long-running workers', async () => {
-    const redis = new Redis()
-    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:renew' })
-    let fetches = 0
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-08T00:00:00Z'))
 
-    const first = coordinator.execute(
-      'user:renew',
-      { leaseMs: 40, renewIntervalMs: 10, waitTimeoutMs: 200, pollIntervalMs: 10 },
-      async () => {
-        fetches += 1
-        await new Promise((resolve) => setTimeout(resolve, 120))
-        return 'value'
-      },
-      async () => 'waited'
-    )
+    try {
+      const redis = new Redis()
+      const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:renew' })
+      let fetches = 0
+      let releaseFirst!: () => void
+      const firstReleased = new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
 
-    await new Promise((resolve) => setTimeout(resolve, 60))
+      const first = coordinator.execute(
+        'user:renew',
+        { leaseMs: 40, renewIntervalMs: 10, waitTimeoutMs: 200, pollIntervalMs: 10 },
+        async () => {
+          fetches += 1
+          await firstReleased
+          return 'value'
+        },
+        async () => 'waited'
+      )
 
-    const second = coordinator.execute(
-      'user:renew',
-      { leaseMs: 40, renewIntervalMs: 10, waitTimeoutMs: 200, pollIntervalMs: 10 },
-      async () => {
-        fetches += 1
-        return 'duplicate'
-      },
-      async () => {
-        await new Promise((resolve) => setTimeout(resolve, 70))
-        return 'value'
-      }
-    )
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(60)
 
-    await expect(Promise.all([first, second])).resolves.toEqual(['value', 'value'])
-    expect(fetches).toBe(1)
+      const second = coordinator.execute(
+        'user:renew',
+        { leaseMs: 40, renewIntervalMs: 10, waitTimeoutMs: 200, pollIntervalMs: 10 },
+        async () => {
+          fetches += 1
+          return 'duplicate'
+        },
+        async () => 'value'
+      )
+
+      releaseFirst()
+
+      await expect(Promise.all([first, second])).resolves.toEqual(['value', 'value'])
+      expect(fetches).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('falls back to the waiter when a redis single-flight lock is already held and skips invalid renewal intervals', async () => {
+  it('falls back to the waiter when a redis single-flight lock is already held', async () => {
     const redis = new Redis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis })
     const waiter = vi.fn(async () => 'waited')
@@ -678,22 +917,145 @@ describe('operational features', () => {
       )
     ).resolves.toBe('waited')
     expect(waiter).toHaveBeenCalledTimes(1)
+  })
 
-    expect(
-      (
-        coordinator as {
-          startLeaseRenewal: (
-            lockKey: string,
-            token: string,
-            options: { leaseMs: number; waitTimeoutMs: number; pollIntervalMs: number; renewIntervalMs?: number }
-          ) => ReturnType<typeof setInterval> | undefined
-        }
-      ).startLeaseRenewal('lock', 'token', {
-        leaseMs: 100,
-        renewIntervalMs: 0,
-        waitTimeoutMs: 50,
-        pollIntervalMs: 10
+  it('releases the lock when renewIntervalMs is invalid for the acquired lock', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:invalid-renew' })
+
+    await expect(
+      coordinator.execute(
+        'user:invalid',
+        { leaseMs: 100, renewIntervalMs: 100, waitTimeoutMs: 50, pollIntervalMs: 10 },
+        async () => 'value',
+        async () => 'waited'
+      )
+    ).resolves.toBe('value')
+
+    expect(await redis.get('sf:invalid-renew:user%3Ainvalid')).toBeNull()
+  })
+
+  it('uses the default renewal interval when renewIntervalMs is omitted', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-08T00:00:00Z'))
+
+    try {
+      const redis = new Redis()
+      const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:default-renew' })
+      let fetches = 0
+      let releaseFirst!: () => void
+      const firstReleased = new Promise<void>((resolve) => {
+        releaseFirst = resolve
       })
-    ).toBeUndefined()
+
+      const first = coordinator.execute(
+        'user:default',
+        { leaseMs: 200, waitTimeoutMs: 300, pollIntervalMs: 10 },
+        async () => {
+          fetches += 1
+          await firstReleased
+          return 'value'
+        },
+        async () => 'waited'
+      )
+
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(250)
+
+      const second = coordinator.execute(
+        'user:default',
+        { leaseMs: 200, waitTimeoutMs: 300, pollIntervalMs: 10 },
+        async () => {
+          fetches += 1
+          return 'duplicate'
+        },
+        async () => 'waited'
+      )
+
+      releaseFirst()
+
+      await expect(Promise.all([first, second])).resolves.toEqual(['value', 'waited'])
+      expect(fetches).toBe(1)
+      expect(await redis.get('sf:default-renew:user%3Adefault')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('swallows renewal failures while still releasing the redis single-flight lock', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-08T00:00:00Z'))
+
+    try {
+      const client = {
+        store: new Map<string, string>(),
+        async set(key: string, token: string, ..._args: unknown[]) {
+          this.store.set(key, token)
+          return 'OK'
+        },
+        async eval(_script: string, _numKeys: number, key: string, token: string, leaseMs?: string) {
+          if (leaseMs !== undefined) {
+            throw new Error('renew failed')
+          }
+
+          if (this.store.get(key) === token) {
+            this.store.delete(key)
+            return 1
+          }
+
+          return 0
+        },
+        async get(key: string) {
+          return this.store.get(key) ?? null
+        }
+      }
+
+      const coordinator = new RedisSingleFlightCoordinator({
+        client: client as unknown as Redis,
+        prefix: 'sf:renew-failure'
+      })
+
+      let releaseFirst!: () => void
+      const firstReleased = new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+
+      const first = coordinator.execute(
+        'user:renew-failure',
+        { leaseMs: 100, renewIntervalMs: 25, waitTimeoutMs: 200, pollIntervalMs: 10 },
+        async () => {
+          await firstReleased
+          return 'value'
+        },
+        async () => 'waited'
+      )
+
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(25)
+      releaseFirst()
+
+      await expect(first).resolves.toBe('value')
+      expect(await client.get('sf:renew-failure:user%3Arenew-failure')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases the lock when a redis single-flight worker throws', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:error' })
+
+    await expect(
+      coordinator.execute(
+        'user:throw',
+        { leaseMs: 100, waitTimeoutMs: 50, pollIntervalMs: 10 },
+        async () => {
+          throw new Error('boom')
+        },
+        async () => 'waited'
+      )
+    ).rejects.toThrow('boom')
+
+    expect(await redis.get('sf:error:user%3Athrow')).toBeNull()
   })
 })

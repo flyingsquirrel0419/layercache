@@ -32,16 +32,22 @@ describe('TagIndex', () => {
     expect((await index.matchPattern('user:*')).sort()).toEqual(['user:1', 'user:2'])
   })
 
-  it('resets trie node ids when cleared', async () => {
+  it('resets public key indexes when cleared', async () => {
     const index = new TagIndex()
 
     await index.touch('user:1')
+    await index.track('user:2', ['users'])
     await index.clear()
-    await index.touch('post:1')
 
-    expect(await index.keysForPrefix('post:')).toEqual(['post:1'])
-    expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeGreaterThan(1)
-    expect((index as unknown as { nextNodeId: number }).nextNodeId).toBeLessThan(10)
+    await expect(index.keysForPrefix('user:')).resolves.toEqual([])
+    await expect(index.matchPattern('user:*')).resolves.toEqual([])
+    await expect(index.tagsForKey('user:2')).resolves.toEqual([])
+
+    await index.touch('post:1')
+    await index.track('post:2', ['posts'])
+
+    expect(await index.keysForPrefix('post:')).toEqual(['post:1', 'post:2'])
+    expect(await index.keysForTag('posts')).toEqual(['post:2'])
   })
 
   it('supports tagsForKey, visitor helpers, and key removal', async () => {
@@ -73,5 +79,29 @@ describe('TagIndex', () => {
 
     await index.remove('user:1')
     await expect(index.keysForTag('users')).resolves.toEqual([])
+  })
+
+  it('retracks keys through the public API and keeps prefix cleanup consistent', async () => {
+    const index = new TagIndex()
+
+    await index.track('user:1', ['users'])
+    await index.track('user:1', ['admins'])
+    await index.track('user:1:profile', ['profiles'])
+    await index.track('user:1:posts', ['profiles'])
+
+    await expect(index.keysForTag('users')).resolves.toEqual([])
+    await expect(index.keysForTag('admins')).resolves.toEqual(['user:1'])
+
+    await index.remove('user:1:profile')
+
+    await expect(index.keysForPrefix('user:1:')).resolves.toEqual(['user:1:posts'])
+    await expect(index.tagsForKey('user:1:profile')).resolves.toEqual([])
+  })
+
+  it('ignores removals for unknown keys', async () => {
+    const index = new TagIndex()
+
+    await index.remove('missing')
+    await expect(index.keysForPrefix('missing:')).resolves.toEqual([])
   })
 })

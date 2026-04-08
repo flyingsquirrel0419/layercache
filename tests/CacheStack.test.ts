@@ -1,10 +1,11 @@
 import Redis from 'ioredis-mock'
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
+import { createStoredValueEnvelope } from '../src/internal/StoredValue'
 import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { RedisLayer } from '../src/layers/RedisLayer'
-import type { CacheLayer, InvalidationBus, InvalidationMessage } from '../src/types'
+import { CacheMissError, type CacheLayer, type InvalidationBus, type InvalidationMessage } from '../src/types'
 
 class RecordingLayer implements CacheLayer {
   readonly name: string
@@ -198,6 +199,88 @@ describe('CacheStack', () => {
     })
   })
 
+  it('throws CacheMissError from getOrThrow when the key is missing', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(cache.getOrThrow('missing')).rejects.toBeInstanceOf(CacheMissError)
+    await expect(cache.getOrThrow('missing')).rejects.toMatchObject({ key: 'missing' })
+  })
+
+  it('continues has() checks when layer.has() fails or returns false', async () => {
+    const warn = vi.fn()
+    const flakyHasLayer: CacheLayer = {
+      name: 'flaky-has',
+      get: async () => null,
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      has: async () => {
+        throw new Error('has broke')
+      }
+    }
+    const falseHasLayer: CacheLayer = {
+      name: 'false-has',
+      get: async () => null,
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      has: async () => false
+    }
+    const trueHasLayer: CacheLayer = {
+      name: 'true-has',
+      get: async () => 'value',
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      has: async () => true
+    }
+    const cache = new CacheStack([flakyHasLayer, falseHasLayer, trueHasLayer], {
+      logger: { warn }
+    })
+
+    await expect(cache.has('user:1')).resolves.toBe(true)
+    expect(warn).toHaveBeenCalledWith(
+      'layer-operation-failed',
+      expect.objectContaining({
+        layer: 'flaky-has',
+        operation: 'has',
+        error: 'has() failed for layer "flaky-has"'
+      })
+    )
+  })
+
+  it('returns null from ttl() when every layer misses or ttl lookup fails', async () => {
+    const cache = new CacheStack([
+      {
+        name: 'ttl-throws',
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => undefined,
+        clear: async () => undefined,
+        ttl: async () => {
+          throw new Error('ttl broke')
+        }
+      },
+      {
+        name: 'ttl-null',
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => undefined,
+        clear: async () => undefined,
+        ttl: async () => null
+      },
+      {
+        name: 'ttl-absent',
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => undefined,
+        clear: async () => undefined
+      }
+    ])
+
+    await expect(cache.ttl('user:1')).resolves.toBeNull()
+  })
+
   it('can clean up stale generations after a generation bump', async () => {
     const redis = new Redis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:generation:' })
@@ -219,6 +302,98 @@ describe('CacheStack', () => {
     }
 
     await expect(redisLayer.get('v1:user:1')).resolves.toBeNull()
+  })
+
+  it('reports generation cleanup failures through the public generation bump flow', async () => {
+    const warn = vi.fn()
+    const brokenCleanupLayer: CacheLayer = {
+      name: 'broken-cleanup',
+      get: async () => null,
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      keys: async () => {
+        throw new Error('cleanup failed')
+      }
+    }
+    const cache = new CacheStack([brokenCleanupLayer], {
+      generation: 1,
+      generationCleanup: true,
+      logger: { warn }
+    })
+
+    cache.bumpGeneration(2)
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (warn.mock.calls.some(([message]) => message === 'generation-cleanup-error')) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+
+    expect(warn).toHaveBeenCalledWith(
+      'generation-cleanup-error',
+      expect.objectContaining({ generation: 1, error: 'cleanup failed' })
+    )
+  })
+
+  it('skips deleteMany calls on publicly degraded layers', async () => {
+    const degradedDeleteMany = vi.fn(async (_keys: string[]) => undefined)
+    const degradedLayer: CacheLayer = {
+      name: 'degraded-delete',
+      get: async () => {
+        throw new Error('read failed')
+      },
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      deleteMany: degradedDeleteMany
+    }
+    const healthyLayer = new RecordingLayer('healthy', 60)
+    const cache = new CacheStack([degradedLayer, healthyLayer], {
+      gracefulDegradation: true
+    })
+
+    await expect(cache.has('user:1')).resolves.toBe(false)
+    expect(cache.getStats().layers.find((layer) => layer.name === 'degraded-delete')?.degradedUntil).not.toBeNull()
+
+    await expect(cache.mdelete(['user:1'])).resolves.toBeUndefined()
+    expect(degradedDeleteMany).not.toHaveBeenCalled()
+  })
+
+  it('skips sliding-ttl writes to layers that were publicly degraded earlier', async () => {
+    const degradedSet = vi.fn(async () => undefined)
+    const degradedLayer: CacheLayer = {
+      name: 'degraded-sliding',
+      get: async () => {
+        throw new Error('read failed')
+      },
+      set: degradedSet,
+      delete: async () => undefined,
+      clear: async () => undefined
+    }
+    const healthyLayer = new RecordingLayer('healthy-sliding', 60)
+    const cache = new CacheStack([degradedLayer, healthyLayer], {
+      gracefulDegradation: true
+    })
+
+    await expect(cache.get('missing')).resolves.toBeNull()
+    expect(cache.getStats().layers.find((layer) => layer.name === 'degraded-sliding')?.degradedUntil).not.toBeNull()
+
+    await healthyLayer.set(
+      'user:1',
+      createStoredValueEnvelope({
+        kind: 'value',
+        value: { id: 1 },
+        freshTtlSeconds: 2
+      }),
+      2
+    )
+
+    degradedSet.mockClear()
+
+    await expect(cache.get('user:1', undefined, { slidingTtl: true })).resolves.toEqual({ id: 1 })
+    expect(degradedSet).not.toHaveBeenCalled()
   })
 
   it('propagates invalidation to local layers across bridge instances', async () => {

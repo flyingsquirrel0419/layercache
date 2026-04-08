@@ -1,8 +1,25 @@
+import { Transform } from 'node:stream'
 import Redis from 'ioredis-mock'
 import { describe, expect, it, vi } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
+
+class EchoTransform extends Transform {
+  override _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null, data?: Buffer) => void
+  ) {
+    callback(null, chunk)
+  }
+}
+
+class ErrorTransform extends Transform {
+  override _transform(_chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    callback(new Error('boom'))
+  }
+}
 
 describe('RedisLayer', () => {
   it('round-trips json values', async () => {
@@ -257,5 +274,29 @@ describe('RedisLayer', () => {
     )
 
     warnSpy.mockRestore()
+  })
+
+  it('handles decompressor end and error events in the limit helper', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({
+      client,
+      decompressionMaxBytes: 16
+    })
+
+    await expect(
+      (
+        layer as unknown as {
+          decompressWithLimit: (decompressor: Transform, payload: Buffer) => Promise<Buffer>
+        }
+      ).decompressWithLimit(new EchoTransform(), Buffer.from('payload'))
+    ).resolves.toEqual(Buffer.from('payload'))
+
+    await expect(
+      (
+        layer as unknown as {
+          decompressWithLimit: (decompressor: Transform, payload: Buffer) => Promise<Buffer>
+        }
+      ).decompressWithLimit(new ErrorTransform(), Buffer.from('payload'))
+    ).rejects.toThrow('boom')
   })
 })

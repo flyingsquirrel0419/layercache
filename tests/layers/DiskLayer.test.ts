@@ -219,4 +219,63 @@ describe('DiskLayer', () => {
     expect(() => new DiskLayer({ directory: dir, maxFiles: 0 })).toThrow(/positive integer/i)
     expect(() => new DiskLayer({ directory: dir, maxEntryBytes: 0 })).toThrow(/positive number/i)
   })
+
+  it('skips max-file enforcement when unlimited and tolerates readdir/stat failures', async () => {
+    await expect(
+      (layer as unknown as { enforceMaxFiles: () => Promise<void> }).enforceMaxFiles()
+    ).resolves.toBeUndefined()
+
+    const boundedLayer = new DiskLayer({ directory: dir, maxFiles: 2 })
+
+    const readdirSpy = vi.spyOn(fs, 'readdir').mockRejectedValueOnce(new Error('missing directory'))
+    await expect(
+      (boundedLayer as unknown as { enforceMaxFiles: () => Promise<void> }).enforceMaxFiles()
+    ).resolves.toBeUndefined()
+    readdirSpy.mockRestore()
+
+    await boundedLayer.set('a', 1)
+    await boundedLayer.set('b', 2)
+
+    const realStat = fs.stat.bind(fs)
+    const statSpy = vi.spyOn(fs, 'stat').mockRejectedValueOnce(new Error('stat failed')).mockImplementation(realStat)
+
+    await boundedLayer.set('c', 3)
+
+    expect(statSpy).toHaveBeenCalled()
+    expect(await boundedLayer.size()).toBeLessThanOrEqual(2)
+    statSpy.mockRestore()
+  })
+
+  it('keeps scanning when an entry cannot be opened', async () => {
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const validHash = createHash('sha256').update('scan-good').digest('hex')
+    const validFile = join(dir, `${validHash}.lc`)
+    await fs.writeFile(validFile, JSON.stringify({ key: 'scan-good', value: 1, expiresAt: null }))
+
+    const realOpen = fs.open.bind(fs)
+    const openSpy = vi.spyOn(fs, 'open').mockImplementation(async (path, flags) => {
+      if (String(path) === validFile) {
+        throw new Error('file vanished')
+      }
+      return realOpen(path as never, flags as never)
+    })
+
+    await expect(layer.keys()).resolves.toEqual([])
+    expect(openSpy).toHaveBeenCalled()
+    await expect(fs.stat(validFile)).rejects.toThrow()
+
+    openSpy.mockRestore()
+  })
+
+  it('deletes corrupted scan entries', async () => {
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const invalidHash = createHash('sha256').update('scan-bad').digest('hex')
+    const invalidFile = join(dir, `${invalidHash}.lc`)
+    await fs.writeFile(invalidFile, 'not-json!!!')
+
+    await expect(layer.keys()).resolves.toEqual([])
+    await expect(fs.stat(invalidFile)).rejects.toThrow()
+  })
 })

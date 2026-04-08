@@ -44,8 +44,6 @@ export class CircuitBreakerManager {
       return
     }
 
-    this.pruneIfNeeded()
-
     const failureThreshold = options.failureThreshold ?? 3
     const cooldownMs = options.cooldownMs ?? 30_000
     const state = this.breakers.get(key) ?? { failures: 0, openUntil: null, createdAt: Date.now() }
@@ -56,6 +54,7 @@ export class CircuitBreakerManager {
     }
 
     this.breakers.set(key, state)
+    this.pruneIfNeeded()
   }
 
   recordSuccess(key: string): void {

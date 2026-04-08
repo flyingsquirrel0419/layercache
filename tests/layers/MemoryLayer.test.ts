@@ -117,6 +117,24 @@ describe('MemoryLayer', () => {
     vi.useRealTimers()
   })
 
+  it('returns null ttl for non-expiring entries and removes expired entries during ttl lookups', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
+
+    const layer = new MemoryLayer()
+    await layer.set('permanent', 'value', 0)
+    await expect(layer.ttl('permanent')).resolves.toBeNull()
+
+    const expiring = new MemoryLayer({ ttl: 1 })
+    await expiring.set('soon', 'value')
+    vi.advanceTimersByTime(1_001)
+
+    await expect(expiring.ttl('soon')).resolves.toBeNull()
+    await expect(expiring.get('soon')).resolves.toBeNull()
+
+    vi.useRealTimers()
+  })
+
   it('imports and exports snapshot state while skipping expired entries', async () => {
     vi.useFakeTimers()
     const now = new Date('2026-04-07T00:00:00Z')
@@ -135,6 +153,24 @@ describe('MemoryLayer', () => {
       { key: 'forever', value: 1, expiresAt: null },
       { key: 'fresh', value: { ok: true }, expiresAt: now.getTime() + 10_000 }
     ])
+
+    vi.useRealTimers()
+  })
+
+  it('evicts imported entries when snapshot size exceeds maxSize', async () => {
+    vi.useFakeTimers()
+    const now = new Date('2026-04-07T00:00:00Z')
+    vi.setSystemTime(now)
+
+    const layer = new MemoryLayer({ maxSize: 1 })
+    layer.importState([
+      { key: 'a', value: 1, expiresAt: now.getTime() + 10_000 },
+      { key: 'b', value: 2, expiresAt: now.getTime() + 10_000 }
+    ])
+
+    await expect(layer.size()).resolves.toBe(1)
+    await expect(layer.get('a')).resolves.toBeNull()
+    await expect(layer.get('b')).resolves.toBe(2)
 
     vi.useRealTimers()
   })

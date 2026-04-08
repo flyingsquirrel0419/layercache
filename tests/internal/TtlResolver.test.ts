@@ -26,48 +26,54 @@ describe('TtlResolver', () => {
     vi.useFakeTimers()
     const now = new Date('2026-04-05T10:05:10Z')
     vi.setSystemTime(now)
-    const resolver = new TtlResolver({ maxProfileEntries: 100 })
+    try {
+      const resolver = new TtlResolver({ maxProfileEntries: 100 })
 
-    const midnight = resolver.resolveFreshTtl(
-      'midnight',
-      'memory',
-      'value',
-      { ttlPolicy: 'until-midnight' },
-      5,
-      undefined
-    )
-    const nextHour = resolver.resolveFreshTtl('hour', 'memory', 'value', { ttlPolicy: 'next-hour' }, 5, undefined)
+      const midnight = resolver.resolveFreshTtl(
+        'midnight',
+        'memory',
+        'value',
+        { ttlPolicy: 'until-midnight' },
+        5,
+        undefined
+      )
+      const nextHour = resolver.resolveFreshTtl('hour', 'memory', 'value', { ttlPolicy: 'next-hour' }, 5, undefined)
 
-    const nextMidnight = new Date(now)
-    nextMidnight.setHours(24, 0, 0, 0)
-    const expectedMidnight = Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1_000))
+      const nextMidnight = new Date(now)
+      nextMidnight.setHours(24, 0, 0, 0)
+      const expectedMidnight = Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1_000))
 
-    const expectedNextHour = new Date(now)
-    expectedNextHour.setMinutes(60, 0, 0)
-    const nextHourSeconds = Math.max(1, Math.ceil((expectedNextHour.getTime() - now.getTime()) / 1_000))
+      const expectedNextHour = new Date(now)
+      expectedNextHour.setMinutes(60, 0, 0)
+      const nextHourSeconds = Math.max(1, Math.ceil((expectedNextHour.getTime() - now.getTime()) / 1_000))
 
-    expect(midnight).toBe(expectedMidnight)
-    expect(nextHour).toBe(nextHourSeconds)
-    vi.useRealTimers()
+      expect(midnight).toBe(expectedMidnight)
+      expect(nextHour).toBe(nextHourSeconds)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('supports aligned ttl policies', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-05T10:05:10Z'))
-    const resolver = new TtlResolver({ maxProfileEntries: 100 })
+    try {
+      const resolver = new TtlResolver({ maxProfileEntries: 100 })
 
-    const ttl = resolver.resolveFreshTtl(
-      'key',
-      'memory',
-      'value',
-      { ttlPolicy: { alignTo: 300 } },
-      undefined,
-      undefined
-    )
+      const ttl = resolver.resolveFreshTtl(
+        'key',
+        'memory',
+        'value',
+        { ttlPolicy: { alignTo: 300 } },
+        undefined,
+        undefined
+      )
 
-    expect(ttl).toBeGreaterThan(0)
-    expect(ttl).toBeLessThanOrEqual(300)
-    vi.useRealTimers()
+      expect(ttl).toBeGreaterThan(0)
+      expect(ttl).toBeLessThanOrEqual(300)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('supports negative cache ttl fallback and adaptive ttl growth', () => {
@@ -145,49 +151,70 @@ describe('TtlResolver', () => {
   it('prunes least recently accessed profiles when capacity is exceeded', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-05T10:00:00Z'))
-    const resolver = new TtlResolver({ maxProfileEntries: 3 })
+    try {
+      const resolver = new TtlResolver({ maxProfileEntries: 3 })
 
-    resolver.recordAccess('a')
-    vi.advanceTimersByTime(1)
-    resolver.recordAccess('b')
-    vi.advanceTimersByTime(1)
-    resolver.recordAccess('c')
-    vi.advanceTimersByTime(1)
-    resolver.recordAccess('d')
+      resolver.recordAccess('a')
+      vi.advanceTimersByTime(1)
+      resolver.recordAccess('b')
+      vi.advanceTimersByTime(1)
+      resolver.recordAccess('c')
+      vi.advanceTimersByTime(1)
+      resolver.recordAccess('d')
 
-    const ttlA = resolver.resolveFreshTtl('a', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
-    const ttlD = resolver.resolveFreshTtl('d', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
+      const ttlA = resolver.resolveFreshTtl('a', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
+      const ttlD = resolver.resolveFreshTtl('d', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
 
-    expect(ttlA).toBe(10)
-    expect(ttlD).toBe(10)
-    vi.useRealTimers()
+      expect(ttlA).toBe(10)
+      expect(ttlD).toBe(10)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('falls back across defaults and exercises function policy branches', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-05T10:05:10Z'))
-    const resolver = new TtlResolver({ maxProfileEntries: 2 })
+    try {
+      const resolver = new TtlResolver({ maxProfileEntries: 2 })
 
-    expect(resolver.resolveLayerSeconds('memory', undefined, { memory: 5 }, 3)).toBe(5)
-    expect(resolver.resolveLayerSeconds('redis', undefined, { memory: 5 }, 3)).toBe(3)
-    expect(resolver.applyAdaptiveTtl('missing', 'memory', undefined, true)).toBeUndefined()
-    expect(resolver.applyAdaptiveTtl('cold', 'memory', 10, true)).toBe(10)
-    expect(resolver.applyJitter(undefined, 1)).toBeUndefined()
-    expect(resolver.applyJitter(0, 1)).toBe(0)
-    expect(resolver.applyJitter(10, 0)).toBe(10)
+      expect(resolver.resolveLayerSeconds('memory', undefined, { memory: 5 }, 3)).toBe(5)
+      expect(resolver.resolveLayerSeconds('redis', undefined, { memory: 5 }, 3)).toBe(3)
+      expect(resolver.applyAdaptiveTtl('missing', 'memory', undefined, true)).toBeUndefined()
+      expect(resolver.applyAdaptiveTtl('cold', 'memory', 10, true)).toBe(10)
+      expect(resolver.applyJitter(undefined, 1)).toBeUndefined()
+      expect(resolver.applyJitter(0, 1)).toBe(0)
+      expect(resolver.applyJitter(10, 0)).toBe(10)
 
-    const functionPolicy = resolver.resolveFreshTtl(
-      'fn',
-      'memory',
-      'value',
-      { ttlPolicy: ({ key }) => (key === 'fn' ? 7 : 1) },
-      undefined,
-      undefined,
-      undefined,
-      'value'
-    )
-    expect(functionPolicy).toBe(7)
+      const functionPolicy = resolver.resolveFreshTtl(
+        'fn',
+        'memory',
+        'value',
+        { ttlPolicy: ({ key }) => (key === 'fn' ? 7 : 1) },
+        undefined,
+        undefined,
+        undefined,
+        'value'
+      )
+      expect(functionPolicy).toBe(7)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
-    vi.useRealTimers()
+  it('uses default negative ttl and adaptive defaults when no overrides are present', () => {
+    const resolver = new TtlResolver({ maxProfileEntries: 4 })
+
+    expect(resolver.resolveFreshTtl('missing', 'memory', 'empty', {}, undefined, undefined)).toBe(60)
+    expect(resolver.resolveLayerSeconds('redis', { memory: 5 }, undefined, 3)).toBe(3)
+
+    resolver.recordAccess('hot')
+    resolver.recordAccess('hot')
+    resolver.recordAccess('hot')
+
+    expect(
+      resolver.resolveFreshTtl('hot', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
+    ).toBe(15)
+    expect(resolver.applyAdaptiveTtl('hot', 'memory', 10, true)).toBe(15)
   })
 })

@@ -85,6 +85,20 @@ describe('MsgpackSerializer', () => {
     expect(msgpackSize).toBeLessThan(jsonSize)
   })
 
+  it('accepts string payloads for low-byte msgpack values', () => {
+    const payload = serializer.serialize({ score: 128 }).toString('latin1')
+    expect(serializer.deserialize(payload)).toEqual({ score: 128 })
+  })
+
+  it('strips dangerous prototype pollution keys during deserialize', () => {
+    const payload = Buffer.from(
+      encode(JSON.parse('{"safe":1,"prototype":"blocked","constructor":{"blocked":true}}'))
+    )
+
+    expect(serializer.deserialize<Record<string, unknown>>(payload)).toEqual({ safe: 1 })
+    expect(({} as Record<string, unknown> & { polluted?: boolean }).polluted).toBeUndefined()
+  })
+
   it('rejects excessively nested payloads during deserialize', () => {
     let nested: unknown = 'leaf'
     for (let index = 0; index < 80; index += 1) {

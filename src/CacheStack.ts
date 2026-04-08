@@ -9,6 +9,21 @@ import {
 } from './internal/CacheKeySerialization'
 import { readUtf8HandleWithLimit, validateSnapshotFilePath } from './internal/CacheSnapshotFile'
 import {
+  generationPrefix,
+  planGenerationCleanupBatches,
+  qualifyGenerationKey,
+  qualifyGenerationPattern,
+  resolveGenerationCleanupTarget,
+  stripGenerationPrefix
+} from './internal/CacheStackGeneration'
+import { CacheStackMaintenance } from './internal/CacheStackMaintenance'
+import {
+  planFreshReadPolicies,
+  resolveRecoverableLayerFailure,
+  shouldSkipLayer as shouldSkipDegradedLayer,
+  shouldStartBackgroundRefresh
+} from './internal/CacheStackRuntimePolicy'
+import {
   validateAdaptiveTtlOptions,
   validateCacheKey,
   validateCircuitBreakerOptions,
@@ -27,8 +42,6 @@ import { MetricsCollector } from './internal/MetricsCollector'
 import {
   createStoredValueEnvelope,
   isStoredValueEnvelope,
-  refreshStoredEnvelope,
-  remainingFreshTtlSeconds,
   remainingStoredTtlSeconds,
   resolveStoredValue
 } from './internal/StoredValue'
@@ -148,15 +161,10 @@ export class CacheStack extends EventEmitter {
   private readonly snapshotSerializer = new JsonSerializer()
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
   private readonly layerDegradedUntil = new Map<string, number>()
-  private readonly keyEpochs = new Map<string, number>()
+  private readonly maintenance = new CacheStackMaintenance()
   private readonly ttlResolver: TtlResolver
   private readonly circuitBreakerManager: CircuitBreakerManager
   private currentGeneration?: number
-  private readonly writeBehindQueue: Array<() => Promise<void>> = []
-  private writeBehindTimer?: ReturnType<typeof setInterval>
-  private writeBehindFlushPromise?: Promise<void>
-  private generationCleanupPromise?: Promise<void>
-  private clearEpoch = 0
   private isDisconnecting = false
   private disconnectPromise?: Promise<void>
 
@@ -394,7 +402,7 @@ export class CacheStack extends EventEmitter {
 
   async clear(): Promise<void> {
     await this.awaitStartup('clear')
-    this.beginClearEpoch()
+    this.maintenance.beginClearEpoch()
     await Promise.all(this.layers.map((layer) => layer.clear()))
     await this.tagIndex.clear()
     this.ttlResolver.clearProfiles()
@@ -701,14 +709,18 @@ export class CacheStack extends EventEmitter {
   bumpGeneration(nextGeneration?: number): number {
     const current = this.currentGeneration ?? 0
     const previousGeneration = this.currentGeneration
-    this.currentGeneration = nextGeneration ?? current + 1
-    if (
-      previousGeneration !== undefined &&
-      previousGeneration !== this.currentGeneration &&
-      this.shouldCleanupGenerations()
-    ) {
-      this.scheduleGenerationCleanup(previousGeneration)
+    const updatedGeneration = nextGeneration ?? current + 1
+    const generationToCleanup = resolveGenerationCleanupTarget({
+      previousGeneration,
+      nextGeneration: updatedGeneration,
+      generationCleanup: this.options.generationCleanup
+    })
+
+    this.currentGeneration = updatedGeneration
+    if (generationToCleanup !== null) {
+      this.scheduleGenerationCleanup(generationToCleanup)
     }
+
     return this.currentGeneration
   }
 
@@ -881,12 +893,9 @@ export class CacheStack extends EventEmitter {
         await this.startup
         await this.unsubscribeInvalidation?.()
         await this.flushWriteBehindQueue()
-        await this.generationCleanupPromise
+        await this.maintenance.waitForGenerationCleanup()
         await Promise.allSettled([...this.backgroundRefreshes.values()])
-        if (this.writeBehindTimer) {
-          clearInterval(this.writeBehindTimer)
-          this.writeBehindTimer = undefined
-        }
+        this.maintenance.disposeWriteBehindTimer()
         await Promise.allSettled(this.layers.map((layer) => layer.dispose?.() ?? Promise.resolve()))
       })()
     }
@@ -994,13 +1003,13 @@ export class CacheStack extends EventEmitter {
         return null
       }
 
-      if (this.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
+      if (this.maintenance.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
         this.logger.debug?.('skip-negative-store-after-invalidation', {
           key,
           expectedClearEpoch,
-          clearEpoch: this.clearEpoch,
+          clearEpoch: this.maintenance.currentClearEpoch(),
           expectedKeyEpoch,
-          keyEpoch: this.currentKeyEpoch(key)
+          keyEpoch: this.maintenance.currentKeyEpoch(key)
         })
         return null
       }
@@ -1020,13 +1029,13 @@ export class CacheStack extends EventEmitter {
       }
     }
 
-    if (this.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
+    if (this.maintenance.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
       this.logger.debug?.('skip-store-after-invalidation', {
         key,
         expectedClearEpoch,
-        clearEpoch: this.clearEpoch,
+        clearEpoch: this.maintenance.currentClearEpoch(),
         expectedKeyEpoch,
-        keyEpoch: this.currentKeyEpoch(key)
+        keyEpoch: this.maintenance.currentKeyEpoch(key)
       })
       return fetched
     }
@@ -1041,10 +1050,10 @@ export class CacheStack extends EventEmitter {
     value: unknown,
     options?: CacheWriteOptions
   ): Promise<void> {
-    const clearEpoch = this.clearEpoch
-    const keyEpoch = this.currentKeyEpoch(key)
+    const clearEpoch = this.maintenance.currentClearEpoch()
+    const keyEpoch = this.maintenance.currentKeyEpoch(key)
     await this.writeAcrossLayers(key, kind, value, options)
-    if (this.isWriteOutdated(key, clearEpoch, keyEpoch)) {
+    if (this.maintenance.isWriteOutdated(key, clearEpoch, keyEpoch)) {
       return
     }
     if (options?.tags) {
@@ -1065,8 +1074,8 @@ export class CacheStack extends EventEmitter {
     entries: Array<{ key: string; value: unknown; options?: CacheWriteOptions }>
   ): Promise<void> {
     const now = Date.now()
-    const clearEpoch = this.clearEpoch
-    const entryEpochs = new Map(entries.map((entry) => [entry.key, this.currentKeyEpoch(entry.key)]))
+    const clearEpoch = this.maintenance.currentClearEpoch()
+    const entryEpochs = new Map(entries.map((entry) => [entry.key, this.maintenance.currentKeyEpoch(entry.key)]))
     const entriesByLayer = new Map<CacheLayer, CacheLayerSetManyEntry[]>()
     const immediateOperations: Array<() => Promise<void>> = []
     const deferredOperations: Array<() => Promise<void>> = []
@@ -1086,11 +1095,11 @@ export class CacheStack extends EventEmitter {
 
     for (const [layer, layerEntries] of entriesByLayer.entries()) {
       const operation = async () => {
-        if (clearEpoch !== this.clearEpoch) {
+        if (clearEpoch !== this.maintenance.currentClearEpoch()) {
           return
         }
         const activeEntries = layerEntries.filter(
-          (entry) => (entryEpochs.get(entry.key) ?? 0) === this.currentKeyEpoch(entry.key)
+          (entry) => (entryEpochs.get(entry.key) ?? 0) === this.maintenance.currentKeyEpoch(entry.key)
         )
         if (activeEntries.length === 0) {
           return
@@ -1116,12 +1125,12 @@ export class CacheStack extends EventEmitter {
 
     await this.executeLayerOperations(immediateOperations, { key: 'batch', action: 'mset' })
     await Promise.all(deferredOperations.map((operation) => this.enqueueWriteBehind(operation)))
-    if (clearEpoch !== this.clearEpoch) {
+    if (clearEpoch !== this.maintenance.currentClearEpoch()) {
       return
     }
 
     for (const entry of entries) {
-      if (this.isWriteOutdated(entry.key, clearEpoch, entryEpochs.get(entry.key))) {
+      if (this.maintenance.isWriteOutdated(entry.key, clearEpoch, entryEpochs.get(entry.key))) {
         continue
       }
       if (entry.options?.tags) {
@@ -1253,14 +1262,14 @@ export class CacheStack extends EventEmitter {
     options?: CacheWriteOptions
   ): Promise<void> {
     const now = Date.now()
-    const clearEpoch = this.clearEpoch
-    const keyEpoch = this.currentKeyEpoch(key)
+    const clearEpoch = this.maintenance.currentClearEpoch()
+    const keyEpoch = this.maintenance.currentKeyEpoch(key)
     const immediateOperations: Array<() => Promise<void>> = []
     const deferredOperations: Array<() => Promise<void>> = []
 
     for (const layer of this.layers) {
       const operation = async () => {
-        if (this.isWriteOutdated(key, clearEpoch, keyEpoch)) {
+        if (this.maintenance.isWriteOutdated(key, clearEpoch, keyEpoch)) {
           return
         }
         if (this.shouldSkipLayer(layer)) {
@@ -1349,12 +1358,17 @@ export class CacheStack extends EventEmitter {
   }
 
   private scheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
-    if (this.isDisconnecting || this.backgroundRefreshes.has(key)) {
+    if (
+      !shouldStartBackgroundRefresh({
+        isDisconnecting: this.isDisconnecting,
+        hasRefreshInFlight: this.backgroundRefreshes.has(key)
+      })
+    ) {
       return
     }
 
-    const clearEpoch = this.clearEpoch
-    const keyEpoch = this.currentKeyEpoch(key)
+    const clearEpoch = this.maintenance.currentClearEpoch()
+    const keyEpoch = this.maintenance.currentKeyEpoch(key)
     const refresh = (async () => {
       this.metricsCollector.increment('refreshes')
       try {
@@ -1404,7 +1418,7 @@ export class CacheStack extends EventEmitter {
       return
     }
 
-    this.bumpKeyEpochs(keys)
+    this.maintenance.bumpKeyEpochs(keys)
     await this.deleteKeysFromLayers(this.layers, keys)
 
     for (const key of keys) {
@@ -1434,7 +1448,7 @@ export class CacheStack extends EventEmitter {
 
     const localLayers = this.layers.filter((layer) => layer.isLocal)
     if (message.scope === 'clear') {
-      this.beginClearEpoch()
+      this.maintenance.beginClearEpoch()
       await Promise.all(localLayers.map((layer) => layer.clear()))
       await this.tagIndex.clear()
       this.ttlResolver.clearProfiles()
@@ -1443,7 +1457,7 @@ export class CacheStack extends EventEmitter {
     }
 
     const keys = message.keys ?? []
-    this.bumpKeyEpochs(keys)
+    this.maintenance.bumpKeyEpochs(keys)
     await this.deleteKeysFromLayers(localLayers, keys)
 
     if (message.operation !== 'write') {
@@ -1510,43 +1524,23 @@ export class CacheStack extends EventEmitter {
     return this.options.broadcastL1Invalidation ?? this.options.publishSetInvalidation ?? false
   }
 
-  private shouldCleanupGenerations(): boolean {
-    return Boolean(this.options.generationCleanup)
-  }
-
-  private generationCleanupBatchSize(): number {
-    const configured =
-      typeof this.options.generationCleanup === 'object' ? this.options.generationCleanup.batchSize : undefined
-    return configured ?? 500
-  }
-
   private scheduleGenerationCleanup(generation: number): void {
-    const task = (this.generationCleanupPromise ?? Promise.resolve())
-      .then(() => this.cleanupGeneration(generation))
-      .catch((error) => {
+    this.maintenance.scheduleGenerationCleanup(
+      generation,
+      async (generationToClean) => this.cleanupGeneration(generationToClean),
+      (failedGeneration, error) => {
         this.logger.warn?.('generation-cleanup-error', {
-          generation,
+          generation: failedGeneration,
           error: this.formatError(error)
         })
-      })
-
-    this.generationCleanupPromise = task.finally(() => {
-      if (this.generationCleanupPromise === task) {
-        this.generationCleanupPromise = undefined
       }
-    })
+    )
   }
 
   private async cleanupGeneration(generation: number): Promise<void> {
     const prefix = `v${generation}:`
     const keys = await this.keyDiscovery.collectKeysWithPrefix(prefix)
-    if (keys.length === 0) {
-      return
-    }
-
-    const batchSize = this.generationCleanupBatchSize()
-    for (let index = 0; index < keys.length; index += batchSize) {
-      const batch = keys.slice(index, index + batchSize)
+    for (const batch of planGenerationCleanupBatches(keys, this.options.generationCleanup)) {
       await this.deleteKeys(batch)
       await this.publishInvalidation({
         scope: 'keys',
@@ -1558,96 +1552,39 @@ export class CacheStack extends EventEmitter {
   }
 
   private initializeWriteBehind(options: CacheWriteBehindOptions | undefined): void {
-    if (this.options.writeStrategy !== 'write-behind') {
-      return
-    }
-
-    const flushIntervalMs = options?.flushIntervalMs
-    if (!flushIntervalMs || flushIntervalMs <= 0) {
-      return
-    }
-
-    this.writeBehindTimer = setInterval(() => {
-      void this.flushWriteBehindQueue()
-    }, flushIntervalMs)
-    this.writeBehindTimer.unref?.()
+    this.maintenance.initializeWriteBehindTimer(
+      this.options.writeStrategy,
+      options,
+      this.flushWriteBehindQueue.bind(this)
+    )
   }
 
   private shouldWriteBehind(layer: CacheLayer): boolean {
     return this.options.writeStrategy === 'write-behind' && !layer.isLocal
   }
 
-  private beginClearEpoch(): void {
-    this.clearEpoch += 1
-    this.keyEpochs.clear()
-    this.writeBehindQueue.length = 0
-  }
-
-  private currentKeyEpoch(key: string): number {
-    return this.keyEpochs.get(key) ?? 0
-  }
-
-  private bumpKeyEpochs(keys: string[]): void {
-    for (const key of keys) {
-      this.keyEpochs.set(key, this.currentKeyEpoch(key) + 1)
-    }
-  }
-
-  private isWriteOutdated(key: string, expectedClearEpoch?: number, expectedKeyEpoch?: number): boolean {
-    if (expectedClearEpoch !== undefined && expectedClearEpoch !== this.clearEpoch) {
-      return true
-    }
-
-    if (expectedKeyEpoch !== undefined && expectedKeyEpoch !== this.currentKeyEpoch(key)) {
-      return true
-    }
-
-    return false
-  }
-
   private async enqueueWriteBehind(operation: () => Promise<void>): Promise<void> {
-    this.writeBehindQueue.push(operation)
-    const batchSize = this.options.writeBehind?.batchSize ?? 100
-    const maxQueueSize = this.options.writeBehind?.maxQueueSize ?? batchSize * 10
-
-    if (this.writeBehindQueue.length >= batchSize) {
-      await this.flushWriteBehindQueue()
-      return
-    }
-
-    if (this.writeBehindQueue.length >= maxQueueSize) {
-      await this.flushWriteBehindQueue()
-    }
+    await this.maintenance.enqueueWriteBehind(operation, this.options.writeBehind, this.runWriteBehindBatch.bind(this))
   }
 
   private async flushWriteBehindQueue(): Promise<void> {
-    if (this.writeBehindFlushPromise || this.writeBehindQueue.length === 0) {
-      await this.writeBehindFlushPromise
+    await this.maintenance.flushWriteBehindQueue(this.options.writeBehind, this.runWriteBehindBatch.bind(this))
+  }
+
+  private async runWriteBehindBatch(batch: Array<() => Promise<void>>): Promise<void> {
+    const results = await Promise.allSettled(batch.map((operation) => operation()))
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failures.length === 0) {
       return
     }
 
-    const batchSize = this.options.writeBehind?.batchSize ?? 100
-    const batch = this.writeBehindQueue.splice(0, batchSize)
-    this.writeBehindFlushPromise = (async () => {
-      const results = await Promise.allSettled(batch.map((operation) => operation()))
-      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      if (failures.length > 0) {
-        this.metricsCollector.increment('writeFailures', failures.length)
-        this.logger.error?.('write-behind-flush-failure', {
-          failed: failures.length,
-          total: batch.length,
-          errors: failures.map((failure) => this.formatError(failure.reason))
-        })
-        this.emitError('write-behind', { failed: failures.length, total: batch.length })
-      }
-    })()
-
-    await this.writeBehindFlushPromise
-    this.writeBehindFlushPromise = undefined
-
-    if (this.writeBehindQueue.length > 0) {
-      await this.flushWriteBehindQueue()
-    }
+    this.metricsCollector.increment('writeFailures', failures.length)
+    this.logger.error?.('write-behind-flush-failure', {
+      failed: failures.length,
+      total: batch.length,
+      errors: failures.map((failure) => this.formatError(failure.reason))
+    })
+    this.emitError('write-behind', { failed: failures.length, total: batch.length })
   }
 
   private buildLayerSetEntry(
@@ -1687,38 +1624,20 @@ export class CacheStack extends EventEmitter {
     }
 
     const [firstGroup, ...rest] = groups
-    if (!firstGroup) {
-      return []
-    }
-
     const restSets = rest.map((group) => new Set(group))
     return [...new Set(firstGroup)].filter((key) => restSets.every((group) => group.has(key)))
   }
 
   private qualifyKey(key: string): string {
-    const prefix = this.generationPrefix()
-    return prefix ? `${prefix}${key}` : key
+    return qualifyGenerationKey(key, this.currentGeneration)
   }
 
   private qualifyPattern(pattern: string): string {
-    const prefix = this.generationPrefix()
-    return prefix ? `${prefix}${pattern}` : pattern
+    return qualifyGenerationPattern(pattern, this.currentGeneration)
   }
 
   private stripQualifiedKey(key: string): string {
-    const prefix = this.generationPrefix()
-    if (!prefix || !key.startsWith(prefix)) {
-      return key
-    }
-    return key.slice(prefix.length)
-  }
-
-  private generationPrefix(): string {
-    if (this.currentGeneration === undefined) {
-      return ''
-    }
-
-    return `v${this.currentGeneration}:`
+    return stripGenerationPrefix(key, this.currentGeneration)
   }
 
   private async deleteKeysFromLayers(layers: CacheLayer[], keys: string[]): Promise<void> {
@@ -1829,13 +1748,15 @@ export class CacheStack extends EventEmitter {
     options: CacheGetOptions | undefined,
     fetcher?: () => Promise<T>
   ): Promise<void> {
-    const refreshAhead =
-      this.resolveLayerSeconds(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
-    const remainingFreshTtl = remainingFreshTtlSeconds(hit.stored) ?? 0
+    const plan = planFreshReadPolicies({
+      stored: hit.stored,
+      hasFetcher: Boolean(fetcher),
+      slidingTtl: options?.slidingTtl ?? false,
+      refreshAheadSeconds:
+        this.resolveLayerSeconds(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
+    })
 
-    if ((options?.slidingTtl ?? false) && isStoredValueEnvelope(hit.stored)) {
-      const refreshed = refreshStoredEnvelope(hit.stored)
-      const ttl = remainingStoredTtlSeconds(refreshed)
+    if (plan.refreshedStored) {
       for (let index = 0; index <= hit.layerIndex; index += 1) {
         const layer = this.layers[index]
         if (!layer || this.shouldSkipLayer(layer)) {
@@ -1843,34 +1764,29 @@ export class CacheStack extends EventEmitter {
         }
 
         try {
-          await layer.set(key, refreshed, ttl)
+          await layer.set(key, plan.refreshedStored, plan.refreshedStoredTtl)
         } catch (error) {
           await this.handleLayerFailure(layer, 'sliding-ttl', error)
         }
       }
     }
 
-    if (fetcher && refreshAhead > 0 && remainingFreshTtl > 0 && remainingFreshTtl <= refreshAhead) {
+    if (fetcher && plan.shouldScheduleBackgroundRefresh) {
       this.scheduleBackgroundRefresh(key, fetcher, options)
     }
   }
 
   private shouldSkipLayer(layer: CacheLayer): boolean {
-    const degradedUntil = this.layerDegradedUntil.get(layer.name)
-    return degradedUntil !== undefined && degradedUntil > Date.now()
+    return shouldSkipDegradedLayer(this.layerDegradedUntil.get(layer.name))
   }
 
   private async handleLayerFailure(layer: CacheLayer, operation: string, error: unknown): Promise<null> {
-    if (!this.isGracefulDegradationEnabled()) {
+    const recovery = resolveRecoverableLayerFailure(this.options.gracefulDegradation)
+    if (!recovery.degrade) {
       throw error
     }
 
-    const retryAfterMs =
-      typeof this.options.gracefulDegradation === 'object'
-        ? (this.options.gracefulDegradation.retryAfterMs ?? 10_000)
-        : 10_000
-
-    this.layerDegradedUntil.set(layer.name, Date.now() + retryAfterMs)
+    this.layerDegradedUntil.set(layer.name, recovery.degradedUntil)
     this.metricsCollector.increment('degradedOperations')
     this.logger.warn?.('layer-degraded', { layer: layer.name, operation, error: this.formatError(error) })
     this.emitError(operation, { layer: layer.name, degraded: true, error: this.formatError(error) })
