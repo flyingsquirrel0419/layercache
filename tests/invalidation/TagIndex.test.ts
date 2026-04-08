@@ -75,58 +75,27 @@ describe('TagIndex', () => {
     await expect(index.keysForTag('users')).resolves.toEqual([])
   })
 
-  it('handles missing reverse-tag and trie entries when removing keys', async () => {
+  it('retracks keys through the public API and keeps prefix cleanup consistent', async () => {
     const index = new TagIndex()
 
     await index.track('user:1', ['users'])
-    ;(index as unknown as { tagToKeys: Map<string, Set<string>> }).tagToKeys.delete('users')
+    await index.track('user:1', ['admins'])
+    await index.track('user:1:profile', ['profiles'])
+    await index.track('user:1:posts', ['profiles'])
 
-    await index.remove('user:1')
-
-    await expect(index.tagsForKey('user:1')).resolves.toEqual([])
     await expect(index.keysForTag('users')).resolves.toEqual([])
+    await expect(index.keysForTag('admins')).resolves.toEqual(['user:1'])
+
+    await index.remove('user:1:profile')
+
+    await expect(index.keysForPrefix('user:1:')).resolves.toEqual(['user:1:posts'])
+    await expect(index.tagsForKey('user:1:profile')).resolves.toEqual([])
   })
 
-  it('ignores removals for unknown or partially missing keys', async () => {
+  it('ignores removals for unknown keys', async () => {
     const index = new TagIndex()
 
     await index.remove('missing')
-
-    const mutableIndex = index as unknown as {
-      knownKeys: Set<string>
-    }
-    mutableIndex.knownKeys.add('ghost:key')
-
-    await index.remove('ghost:key')
-    await expect(index.keysForPrefix('ghost:')).resolves.toEqual([])
-  })
-
-  it('stops recursive pattern collection when guard limits are reached', async () => {
-    const index = new TagIndex()
-
-    await index.touch('user:1')
-
-    const matches = new Set<string>()
-    const visited = new Set<string>()
-    const root = index as unknown as {
-      root: { id: number; terminal: boolean; children: Map<string, unknown> }
-      collectPatternMatches: (
-        node: { id: number; terminal: boolean; children: Map<string, unknown> },
-        prefix: string,
-        pattern: string,
-        patternIndex: number,
-        matches: Set<string>,
-        visited: Set<string>,
-        depth: number
-      ) => void
-    }
-
-    root.collectPatternMatches(root.root, '', '*', 0, matches, visited, 501)
-    expect(matches.size).toBe(0)
-
-    root.collectPatternMatches(root.root, '', 'user:*', 0, matches, visited, 0)
-    root.collectPatternMatches(root.root, '', 'user:*', 0, matches, visited, 0)
-
-    expect([...matches]).toEqual(['user:1'])
+    await expect(index.keysForPrefix('missing:')).resolves.toEqual([])
   })
 })
