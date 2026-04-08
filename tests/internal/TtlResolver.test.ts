@@ -190,4 +190,20 @@ describe('TtlResolver', () => {
 
     vi.useRealTimers()
   })
+
+  it('uses default negative ttl and adaptive defaults when no overrides are present', () => {
+    const resolver = new TtlResolver({ maxProfileEntries: 4 })
+
+    expect(resolver.resolveFreshTtl('missing', 'memory', 'empty', {}, undefined, undefined)).toBe(60)
+    expect(resolver.resolveLayerSeconds('redis', { memory: 5 }, undefined, 3)).toBe(3)
+
+    resolver.recordAccess('hot')
+    resolver.recordAccess('hot')
+    resolver.recordAccess('hot')
+
+    expect(
+      resolver.resolveFreshTtl('hot', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
+    ).toBe(15)
+    expect(resolver.applyAdaptiveTtl('hot', 'memory', 10, true)).toBe(15)
+  })
 })

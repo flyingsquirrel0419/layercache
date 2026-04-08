@@ -4,6 +4,8 @@ import {
   validateCacheKey,
   validateCircuitBreakerOptions,
   validateLayerNumberOption,
+  MAX_CACHE_KEY_LENGTH,
+  MAX_PATTERN_LENGTH,
   validateNonNegativeNumber,
   validatePattern,
   validatePositiveNumber,
@@ -31,16 +33,20 @@ describe('CacheStackValidation', () => {
     expect(() => validateCacheKey('')).toThrow(/must not be empty/i)
     expect(() => validateCacheKey(`a${'\u0000'}b`)).toThrow(/control characters/i)
     expect(() => validateCacheKey(`a${'\uD800'}b`)).toThrow(/surrogate/i)
+    expect(() => validateCacheKey('x'.repeat(MAX_CACHE_KEY_LENGTH + 1))).toThrow(/at most 1024/i)
 
     expect(validateTag('users')).toBe('users')
     expect(() => validateTag('')).toThrow(/must not be empty/i)
     expect(() => validateTag(`a${'\u0000'}b`)).toThrow(/control characters/i)
+    expect(() => validateTag(`a${'\uD800'}b`)).toThrow(/surrogate/i)
+    expect(() => validateTag('x'.repeat(MAX_CACHE_KEY_LENGTH + 1))).toThrow(/at most 1024/i)
     expect(() => validateTags(Array.from({ length: 129 }, (_, index) => `tag:${index}`))).toThrow(/at most 128/i)
     expect(() => validateTags(['a', 'b'])).not.toThrow()
 
     expect(() => validatePattern('user:*')).not.toThrow()
     expect(() => validatePattern('')).toThrow(/must not be empty/i)
     expect(() => validatePattern(`a${'\u0000'}b`)).toThrow(/control characters/i)
+    expect(() => validatePattern('x'.repeat(MAX_PATTERN_LENGTH + 1))).toThrow(/at most 1024/i)
   })
 
   it('validates ttl and circuit breaker related options', () => {

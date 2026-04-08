@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { CacheMissError } from '../src/types'
+import { CacheNamespace } from '../src/CacheNamespace'
 
 function makeCache() {
   return new CacheStack([new MemoryLayer({ ttl: 60 })])
@@ -288,5 +289,108 @@ describe('CacheNamespace', () => {
     expect((first as unknown as { getMetricsMutex: () => unknown }).getMetricsMutex()).toBe(
       (second as unknown as { getMetricsMutex: () => unknown }).getMetricsMutex()
     )
+  })
+
+  it('tracks zero-delta metrics snapshots and preserves zero-hit layer rates', async () => {
+    const metrics = {
+      hits: 0,
+      misses: 0,
+      fetches: 0,
+      sets: 0,
+      deletes: 0,
+      backfills: 0,
+      invalidations: 0,
+      staleHits: 0,
+      refreshes: 0,
+      refreshErrors: 0,
+      writeFailures: 0,
+      singleFlightWaits: 0,
+      negativeCacheHits: 0,
+      circuitBreakerTrips: 0,
+      degradedOperations: 0,
+      hitsByLayer: { memory: 0 },
+      missesByLayer: { memory: 0 },
+      latencyByLayer: {},
+      resetAt: Date.now()
+    }
+
+    const cache = {
+      getMetrics: vi.fn(() => metrics),
+      get: vi.fn(async () => null)
+    } as unknown as CacheStack
+
+    const ns = new CacheNamespace(cache, 'tenant')
+
+    await expect(ns.get('key')).resolves.toBeNull()
+    expect(cache.get).toHaveBeenCalledWith('tenant:key', undefined, undefined)
+    expect(ns.getHitRate()).toEqual({
+      overall: 0,
+      byLayer: { memory: 0 }
+    })
+  })
+
+  it('accumulates non-zero per-layer metrics from the wrapped cache', async () => {
+    const snapshots = [
+      {
+        hits: 0,
+        misses: 0,
+        fetches: 0,
+        sets: 0,
+        deletes: 0,
+        backfills: 0,
+        invalidations: 0,
+        staleHits: 0,
+        refreshes: 0,
+        refreshErrors: 0,
+        writeFailures: 0,
+        singleFlightWaits: 0,
+        negativeCacheHits: 0,
+        circuitBreakerTrips: 0,
+        degradedOperations: 0,
+        hitsByLayer: {},
+        missesByLayer: {},
+        latencyByLayer: {},
+        resetAt: Date.now()
+      },
+      {
+        hits: 1,
+        misses: 0,
+        fetches: 0,
+        sets: 0,
+        deletes: 0,
+        backfills: 0,
+        invalidations: 0,
+        staleHits: 0,
+        refreshes: 0,
+        refreshErrors: 0,
+        writeFailures: 0,
+        singleFlightWaits: 0,
+        negativeCacheHits: 0,
+        circuitBreakerTrips: 0,
+        degradedOperations: 0,
+        hitsByLayer: { memory: 1 },
+        missesByLayer: {},
+        latencyByLayer: {},
+        resetAt: Date.now()
+      }
+    ]
+
+    let calls = 0
+    const cache = {
+      getMetrics: vi.fn(() => snapshots[Math.min(calls, snapshots.length - 1)]),
+      get: vi.fn(async () => {
+        calls += 1
+        return null
+      })
+    } as unknown as CacheStack
+
+    const ns = new CacheNamespace(cache, 'tenant')
+
+    await expect(ns.get('key')).resolves.toBeNull()
+    expect(ns.getMetrics().hitsByLayer.memory).toBe(1)
+    expect(ns.getHitRate()).toEqual({
+      overall: 1,
+      byLayer: { memory: 1 }
+    })
   })
 })

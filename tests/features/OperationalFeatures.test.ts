@@ -696,4 +696,22 @@ describe('operational features', () => {
       })
     ).toBeUndefined()
   })
+
+  it('releases the lock when a redis single-flight worker throws', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:error' })
+
+    await expect(
+      coordinator.execute(
+        'user:throw',
+        { leaseMs: 100, waitTimeoutMs: 50, pollIntervalMs: 10 },
+        async () => {
+          throw new Error('boom')
+        },
+        async () => 'waited'
+      )
+    ).rejects.toThrow('boom')
+
+    expect(await redis.get('sf:error:user%3Athrow')).toBeNull()
+  })
 })
