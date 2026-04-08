@@ -90,6 +90,17 @@ class SharedCoordinator implements CacheSingleFlightCoordinator {
   }
 }
 
+class AlwaysWaitCoordinator implements CacheSingleFlightCoordinator {
+  async execute<T>(
+    _key: string,
+    _options: CacheSingleFlightExecutionOptions,
+    _worker: () => Promise<T>,
+    waiter: () => Promise<T>
+  ): Promise<T> {
+    return waiter()
+  }
+}
+
 class InMemoryInvalidationBus implements InvalidationBus {
   private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
 
@@ -321,6 +332,19 @@ describe('operational features', () => {
     expect(cache.getMetrics().refreshErrors).toBe(1)
   })
 
+  it('serves stale-if-error values without requiring a fetcher', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(cache.get('settings')).resolves.toEqual({ version: 1 })
+    expect(cache.getMetrics()).toMatchObject({
+      hits: 1,
+      staleHits: 1,
+      refreshErrors: 0
+    })
+  })
+
   it('applies ttl jitter before writing to layers', async () => {
     const layer = new BulkLayer()
     const cache = new CacheStack([layer])
@@ -397,6 +421,30 @@ describe('operational features', () => {
     await new Promise((resolve) => setTimeout(resolve, 25))
 
     expect(refreshes).toBe(0)
+  })
+
+  it('does not schedule a second background refresh while one is already in flight', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      backgroundRefreshTimeoutMs: 20
+    })
+    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    const fetcher = vi.fn(
+      async () =>
+        await new Promise<{ version: number }>(() => {
+          // intentionally hangs until the timeout guard trips
+        })
+    )
+
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
+
+    await new Promise((resolve) => setTimeout(resolve, 35))
+    expect(cache.getStats().backgroundRefreshes).toBe(0)
   })
 
   it('uses layer bulk writes for mset when available', async () => {
@@ -514,6 +562,28 @@ describe('operational features', () => {
     expect(warn).toHaveBeenCalled()
   })
 
+  it('returns fetched values without caching them when shouldCache returns false', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get('user:1', async () => ({ id: 1, cacheable: false }), {
+        shouldCache: () => false
+      })
+    ).resolves.toEqual({ id: 1, cacheable: false })
+
+    await expect(cache.get('user:1')).resolves.toBeNull()
+  })
+
+  it('does not negative-cache null fetch results unless explicitly enabled', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const fetcher = vi.fn(async () => null)
+
+    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
+    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('validates cache keys and runtime ttl options', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -587,6 +657,103 @@ describe('operational features', () => {
 
     expect(fetches).toBe(1)
     expect(cacheB.getMetrics().singleFlightWaits).toBe(1)
+  })
+
+  it('rechecks the cache before fetching when a value appears between read passes', async () => {
+    let reads = 0
+    const layer: CacheLayer = {
+      name: 'flip-read',
+      get: async () => {
+        reads += 1
+        if (reads === 1) {
+          return null
+        }
+        return 'late-hit'
+      },
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined
+    }
+    const cache = new CacheStack([layer])
+    const fetcher = vi.fn(async () => 'fetched')
+
+    await expect(cache.get('user:1', fetcher)).resolves.toBe('late-hit')
+
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(reads).toBeGreaterThanOrEqual(2)
+  })
+
+  it('falls back to fetching after single-flight waiting times out', async () => {
+    const fetcher = vi.fn(async () => 'fresh')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      singleFlightCoordinator: new AlwaysWaitCoordinator(),
+      singleFlightTimeoutMs: 20,
+      singleFlightPollMs: 5
+    })
+
+    await expect(cache.get('user:1', fetcher)).resolves.toBe('fresh')
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(cache.getMetrics().singleFlightWaits).toBe(1)
+  })
+
+  it('allows duplicate concurrent fetches when stampede prevention is disabled', async () => {
+    let started = 0
+    let releaseFetch!: () => void
+    const allStarted = new Promise<void>((resolve) => {
+      releaseFetch = resolve
+    })
+    const fetcher = vi.fn(async () => {
+      started += 1
+      if (started === 2) {
+        releaseFetch()
+      }
+      await allStarted
+      return { id: 1 }
+    })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      stampedePrevention: false
+    })
+
+    await expect(Promise.all([cache.get('user:1', fetcher), cache.get('user:1', fetcher)])).resolves.toEqual([
+      { id: 1 },
+      { id: 1 }
+    ])
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('formats primitive refresh failures without masking stale responses', async () => {
+    const debug = vi.fn()
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      logger: { debug }
+    })
+    await cache.set('settings', 'cached', { ttl: 1, staleIfError: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(
+      cache.get('settings', async () => {
+        throw 'primitive failure'
+      })
+    ).resolves.toBe('cached')
+
+    expect(debug).toHaveBeenCalledWith(
+      'stale-if-error',
+      expect.objectContaining({ key: 'settings', error: 'primitive failure' })
+    )
+  })
+
+  it('refreshes stale primitive values through the timeout guard', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      backgroundRefreshTimeoutMs: 50
+    })
+    await cache.set('greeting', 'hello-v1', { ttl: 1, staleWhileRevalidate: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(cache.get('greeting', async () => 'hello-v2')).resolves.toBe('hello-v1')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    await expect(cache.get('greeting')).resolves.toBe('hello-v2')
   })
 
   it('provides a redis-backed distributed single-flight coordinator', async () => {

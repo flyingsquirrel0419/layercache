@@ -5,7 +5,7 @@ import { createStoredValueEnvelope } from '../src/internal/StoredValue'
 import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { RedisLayer } from '../src/layers/RedisLayer'
-import type { CacheLayer, InvalidationBus, InvalidationMessage } from '../src/types'
+import { CacheMissError, type CacheLayer, type InvalidationBus, type InvalidationMessage } from '../src/types'
 
 class RecordingLayer implements CacheLayer {
   readonly name: string
@@ -197,6 +197,88 @@ describe('CacheStack', () => {
       misses: 1,
       sets: 1
     })
+  })
+
+  it('throws CacheMissError from getOrThrow when the key is missing', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(cache.getOrThrow('missing')).rejects.toBeInstanceOf(CacheMissError)
+    await expect(cache.getOrThrow('missing')).rejects.toMatchObject({ key: 'missing' })
+  })
+
+  it('continues has() checks when layer.has() fails or returns false', async () => {
+    const warn = vi.fn()
+    const flakyHasLayer: CacheLayer = {
+      name: 'flaky-has',
+      get: async () => null,
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      has: async () => {
+        throw new Error('has broke')
+      }
+    }
+    const falseHasLayer: CacheLayer = {
+      name: 'false-has',
+      get: async () => null,
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      has: async () => false
+    }
+    const trueHasLayer: CacheLayer = {
+      name: 'true-has',
+      get: async () => 'value',
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined,
+      has: async () => true
+    }
+    const cache = new CacheStack([flakyHasLayer, falseHasLayer, trueHasLayer], {
+      logger: { warn }
+    })
+
+    await expect(cache.has('user:1')).resolves.toBe(true)
+    expect(warn).toHaveBeenCalledWith(
+      'layer-operation-failed',
+      expect.objectContaining({
+        layer: 'flaky-has',
+        operation: 'has',
+        error: 'has() failed for layer "flaky-has"'
+      })
+    )
+  })
+
+  it('returns null from ttl() when every layer misses or ttl lookup fails', async () => {
+    const cache = new CacheStack([
+      {
+        name: 'ttl-throws',
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => undefined,
+        clear: async () => undefined,
+        ttl: async () => {
+          throw new Error('ttl broke')
+        }
+      },
+      {
+        name: 'ttl-null',
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => undefined,
+        clear: async () => undefined,
+        ttl: async () => null
+      },
+      {
+        name: 'ttl-absent',
+        get: async () => null,
+        set: async () => undefined,
+        delete: async () => undefined,
+        clear: async () => undefined
+      }
+    ])
+
+    await expect(cache.ttl('user:1')).resolves.toBeNull()
   })
 
   it('can clean up stale generations after a generation bump', async () => {
