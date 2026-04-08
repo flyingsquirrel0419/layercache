@@ -86,8 +86,8 @@ describe('MsgpackSerializer', () => {
   })
 
   it('accepts string payloads for low-byte msgpack values', () => {
-    const payload = serializer.serialize(42).toString('latin1')
-    expect(serializer.deserialize(payload)).toBe(42)
+    const payload = serializer.serialize({ score: 128 }).toString('latin1')
+    expect(serializer.deserialize(payload)).toEqual({ score: 128 })
   })
 
   it('strips dangerous prototype pollution keys during deserialize', () => {

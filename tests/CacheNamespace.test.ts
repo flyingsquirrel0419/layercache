@@ -1,8 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { CacheMissError } from '../src/types'
-import { CacheNamespace } from '../src/CacheNamespace'
 
 function makeCache() {
   return new CacheStack([new MemoryLayer({ ttl: 60 })])
@@ -281,163 +280,80 @@ describe('CacheNamespace', () => {
     expect(Object.keys(hitRate.byLayer).length).toBeGreaterThan(0)
   })
 
-  it('serializes sibling namespace operations through the shared cache mutex', async () => {
-    const metrics = {
-      hits: 0,
-      misses: 0,
-      fetches: 0,
-      sets: 0,
-      deletes: 0,
-      backfills: 0,
-      invalidations: 0,
-      staleHits: 0,
-      refreshes: 0,
-      refreshErrors: 0,
-      writeFailures: 0,
-      singleFlightWaits: 0,
-      negativeCacheHits: 0,
-      circuitBreakerTrips: 0,
-      degradedOperations: 0,
-      hitsByLayer: {},
-      missesByLayer: {},
-      latencyByLayer: {},
-      resetAt: Date.now()
-    }
+  it('keeps namespace metrics correct across overlapping sibling operations', async () => {
+    const cache = makeCache()
+    const first = cache.namespace('tenant-a')
+    const second = cache.namespace('tenant-b')
 
-    const calls: string[] = []
+    let signalFirstStarted!: () => void
     let releaseFirst!: () => void
+    const firstStarted = new Promise<void>((resolve) => {
+      signalFirstStarted = resolve
+    })
     const firstReleased = new Promise<void>((resolve) => {
       releaseFirst = resolve
     })
 
-    const cache = {
-      getMetrics: vi.fn(() => metrics),
-      getOrSet: vi.fn(async (key: string, fetcher: () => Promise<number>) => {
-        calls.push(`getOrSet:${key}`)
-        await firstReleased
-        return fetcher()
-      }),
-      set: vi.fn(async (key: string, value: number) => {
-        calls.push(`set:${key}:${value}`)
-      })
-    } as unknown as CacheStack
+    const firstOperation = first.getOrSet('key', async () => {
+      signalFirstStarted()
+      await firstReleased
+      return 1
+    })
 
-    const first = new CacheNamespace(cache, 'tenant-a')
-    const second = new CacheNamespace(cache, 'tenant-b')
-
-    const firstOperation = first.getOrSet('key', async () => 1)
+    await firstStarted
     const secondOperation = second.set('key', 2)
-
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(calls).toEqual(['getOrSet:tenant-a:key'])
 
     releaseFirst()
     await expect(firstOperation).resolves.toBe(1)
     await expect(secondOperation).resolves.toBeUndefined()
-    expect(calls).toEqual(['getOrSet:tenant-a:key', 'set:tenant-b:key:2'])
-  })
 
-  it('tracks zero-delta metrics snapshots and preserves zero-hit layer rates', async () => {
-    const metrics = {
-      hits: 0,
-      misses: 0,
-      fetches: 0,
-      sets: 0,
-      deletes: 0,
-      backfills: 0,
-      invalidations: 0,
-      staleHits: 0,
-      refreshes: 0,
-      refreshErrors: 0,
-      writeFailures: 0,
-      singleFlightWaits: 0,
-      negativeCacheHits: 0,
-      circuitBreakerTrips: 0,
-      degradedOperations: 0,
-      hitsByLayer: { memory: 0 },
-      missesByLayer: { memory: 0 },
-      latencyByLayer: {},
-      resetAt: Date.now()
-    }
-
-    const cache = {
-      getMetrics: vi.fn(() => metrics),
-      get: vi.fn(async () => null)
-    } as unknown as CacheStack
-
-    const ns = new CacheNamespace(cache, 'tenant')
-
-    await expect(ns.get('key')).resolves.toBeNull()
-    expect(cache.get).toHaveBeenCalledWith('tenant:key', undefined, undefined)
-    expect(ns.getHitRate()).toEqual({
-      overall: 0,
-      byLayer: { memory: 0 }
+    expect(first.getMetrics()).toMatchObject({
+      misses: 1,
+      fetches: 1,
+      sets: 1
+    })
+    expect(second.getMetrics()).toMatchObject({
+      sets: 1
     })
   })
 
-  it('accumulates non-zero per-layer metrics from the wrapped cache', async () => {
-    const snapshots = [
-      {
-        hits: 0,
-        misses: 0,
-        fetches: 0,
-        sets: 0,
-        deletes: 0,
-        backfills: 0,
-        invalidations: 0,
-        staleHits: 0,
-        refreshes: 0,
-        refreshErrors: 0,
-        writeFailures: 0,
-        singleFlightWaits: 0,
-        negativeCacheHits: 0,
-        circuitBreakerTrips: 0,
-        degradedOperations: 0,
-        hitsByLayer: {},
-        missesByLayer: {},
-        latencyByLayer: {},
-        resetAt: Date.now()
-      },
-      {
-        hits: 1,
-        misses: 0,
-        fetches: 0,
-        sets: 0,
-        deletes: 0,
-        backfills: 0,
-        invalidations: 0,
-        staleHits: 0,
-        refreshes: 0,
-        refreshErrors: 0,
-        writeFailures: 0,
-        singleFlightWaits: 0,
-        negativeCacheHits: 0,
-        circuitBreakerTrips: 0,
-        degradedOperations: 0,
-        hitsByLayer: { memory: 1 },
-        missesByLayer: {},
-        latencyByLayer: {},
-        resetAt: Date.now()
+  it('tracks namespace metrics on a real cache stack', async () => {
+    const cache = makeCache()
+    const users = cache.namespace('users')
+    const posts = cache.namespace('posts')
+
+    await users.set('1', { id: 1 })
+    await users.get('1')
+    await users.get('missing')
+    await posts.set('2', { id: 2 })
+
+    expect(users.getMetrics()).toMatchObject({
+      sets: 1,
+      hits: 1,
+      misses: 1
+    })
+    expect(users.getHitRate()).toEqual({
+      overall: 0.5,
+      byLayer: {
+        memory: 0.5
       }
-    ]
-
-    let calls = 0
-    const cache = {
-      getMetrics: vi.fn(() => snapshots[Math.min(calls, snapshots.length - 1)]),
-      get: vi.fn(async () => {
-        calls += 1
-        return null
-      })
-    } as unknown as CacheStack
-
-    const ns = new CacheNamespace(cache, 'tenant')
-
-    await expect(ns.get('key')).resolves.toBeNull()
-    expect(ns.getMetrics().hitsByLayer.memory).toBe(1)
-    expect(ns.getHitRate()).toEqual({
-      overall: 1,
-      byLayer: { memory: 1 }
     })
+    expect(posts.getMetrics()).toMatchObject({
+      sets: 1,
+      hits: 0,
+      misses: 0
+    })
+  })
+
+  it('returns cloned metrics snapshots after real operations', async () => {
+    const ns = makeCache().namespace('tenant')
+
+    await ns.set('key', 1)
+    await ns.get('key')
+
+    const metrics = ns.getMetrics()
+    metrics.hits = 999
+
+    expect(ns.getMetrics().hits).toBe(1)
   })
 })

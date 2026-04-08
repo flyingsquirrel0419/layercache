@@ -11,7 +11,7 @@ export class MsgpackSerializer implements CacheSerializer {
   }
 
   deserialize<T>(payload: string | Buffer): T {
-    const normalized = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+    const normalized = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'latin1')
     return sanitizeMsgpackValue(decode(normalized), 0, { count: 0 }) as T
   }
 }
