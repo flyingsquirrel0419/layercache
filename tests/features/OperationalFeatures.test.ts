@@ -662,7 +662,7 @@ describe('operational features', () => {
     expect(fetches).toBe(1)
   })
 
-  it('falls back to the waiter when a redis single-flight lock is already held and skips invalid renewal intervals', async () => {
+  it('falls back to the waiter when a redis single-flight lock is already held', async () => {
     const redis = new Redis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis })
     const waiter = vi.fn(async () => 'waited')
@@ -678,23 +678,102 @@ describe('operational features', () => {
       )
     ).resolves.toBe('waited')
     expect(waiter).toHaveBeenCalledTimes(1)
+  })
 
-    expect(
-      (
-        coordinator as {
-          startLeaseRenewal: (
-            lockKey: string,
-            token: string,
-            options: { leaseMs: number; waitTimeoutMs: number; pollIntervalMs: number; renewIntervalMs?: number }
-          ) => ReturnType<typeof setInterval> | undefined
+  it('releases the lock when renewIntervalMs is invalid for the acquired lock', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:invalid-renew' })
+
+    await expect(
+      coordinator.execute(
+        'user:invalid',
+        { leaseMs: 100, renewIntervalMs: 100, waitTimeoutMs: 50, pollIntervalMs: 10 },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return 'value'
+        },
+        async () => 'waited'
+      )
+    ).resolves.toBe('value')
+
+    expect(await redis.get('sf:invalid-renew:user%3Ainvalid')).toBeNull()
+  })
+
+  it('uses the default renewal interval when renewIntervalMs is omitted', async () => {
+    const redis = new Redis()
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:default-renew' })
+    let fetches = 0
+
+    const first = coordinator.execute(
+      'user:default',
+      { leaseMs: 200, waitTimeoutMs: 300, pollIntervalMs: 10 },
+      async () => {
+        fetches += 1
+        await new Promise((resolve) => setTimeout(resolve, 260))
+        return 'value'
+      },
+      async () => 'waited'
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 220))
+
+    const second = coordinator.execute(
+      'user:default',
+      { leaseMs: 200, waitTimeoutMs: 300, pollIntervalMs: 10 },
+      async () => {
+        fetches += 1
+        return 'duplicate'
+      },
+      async () => 'waited'
+    )
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['value', 'waited'])
+    expect(fetches).toBe(1)
+    expect(await redis.get('sf:default-renew:user%3Adefault')).toBeNull()
+  })
+
+  it('swallows renewal failures while still releasing the redis single-flight lock', async () => {
+    const client = {
+      store: new Map<string, string>(),
+      async set(key: string, token: string) {
+        this.store.set(key, token)
+        return 'OK'
+      },
+      async eval(_script: string, _numKeys: number, key: string, token: string, leaseMs?: string) {
+        if (leaseMs !== undefined) {
+          throw new Error('renew failed')
         }
-      ).startLeaseRenewal('lock', 'token', {
-        leaseMs: 100,
-        renewIntervalMs: 0,
-        waitTimeoutMs: 50,
-        pollIntervalMs: 10
-      })
-    ).toBeUndefined()
+
+        if (this.store.get(key) === token) {
+          this.store.delete(key)
+          return 1
+        }
+
+        return 0
+      },
+      async get(key: string) {
+        return this.store.get(key) ?? null
+      }
+    }
+
+    const coordinator = new RedisSingleFlightCoordinator({
+      client: client as unknown as Redis,
+      prefix: 'sf:renew-failure'
+    })
+
+    await expect(
+      coordinator.execute(
+        'user:renew-failure',
+        { leaseMs: 100, renewIntervalMs: 25, waitTimeoutMs: 200, pollIntervalMs: 10 },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 70))
+          return 'value'
+        },
+        async () => 'waited'
+      )
+    ).resolves.toBe('value')
+
+    expect(await client.get('sf:renew-failure:user%3Arenew-failure')).toBeNull()
   })
 
   it('releases the lock when a redis single-flight worker throws', async () => {
