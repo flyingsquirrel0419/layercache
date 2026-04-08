@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `README.md` now reflects the current validation baseline with **393 passing tests**.
+
+### Added
+- Additional coverage-focused regression tests for `CacheStack` read/write paths, stale serving, background refresh coordination, namespace metrics helpers, generation helpers, runtime helpers, and layer/invalidation internals.
+- New internal helper modules (`CacheNamespaceMetrics`, `CacheStackGeneration`, `CacheStackMaintenance`, `CacheStackRuntimePolicy`) to split branch-heavy `CacheStack`/`CacheNamespace` responsibilities into directly testable units.
+
 ## [1.2.6] — 2026-04-08
 
 ### Changed
