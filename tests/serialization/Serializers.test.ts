@@ -91,9 +91,7 @@ describe('MsgpackSerializer', () => {
   })
 
   it('strips dangerous prototype pollution keys during deserialize', () => {
-    const payload = Buffer.from(
-      encode(JSON.parse('{"safe":1,"prototype":"blocked","constructor":{"blocked":true}}'))
-    )
+    const payload = Buffer.from(encode(JSON.parse('{"safe":1,"prototype":"blocked","constructor":{"blocked":true}}')))
 
     expect(serializer.deserialize<Record<string, unknown>>(payload)).toEqual({ safe: 1 })
     expect(({} as Record<string, unknown> & { polluted?: boolean }).polluted).toBeUndefined()

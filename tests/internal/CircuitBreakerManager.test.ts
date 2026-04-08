@@ -28,9 +28,7 @@ describe('CircuitBreakerManager', () => {
       const manager = new CircuitBreakerManager({ maxEntries: 10 })
 
       manager.recordFailure('user:1', { failureThreshold: 1, cooldownMs: 2_000 })
-      expect(() => manager.assertClosed('user:1', { failureThreshold: 1, cooldownMs: 2_000 })).toThrow(
-        /resets in 2s/i
-      )
+      expect(() => manager.assertClosed('user:1', { failureThreshold: 1, cooldownMs: 2_000 })).toThrow(/resets in 2s/i)
 
       vi.advanceTimersByTime(2_001)
 

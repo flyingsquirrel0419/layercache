@@ -162,8 +162,22 @@ describe('TtlResolver', () => {
       vi.advanceTimersByTime(1)
       resolver.recordAccess('d')
 
-      const ttlA = resolver.resolveFreshTtl('a', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
-      const ttlD = resolver.resolveFreshTtl('d', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
+      const ttlA = resolver.resolveFreshTtl(
+        'a',
+        'memory',
+        'value',
+        { ttl: 10, adaptiveTtl: true },
+        undefined,
+        undefined
+      )
+      const ttlD = resolver.resolveFreshTtl(
+        'd',
+        'memory',
+        'value',
+        { ttl: 10, adaptiveTtl: true },
+        undefined,
+        undefined
+      )
 
       expect(ttlA).toBe(10)
       expect(ttlD).toBe(10)

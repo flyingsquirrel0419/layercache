@@ -5,7 +5,7 @@ import { createStoredValueEnvelope } from '../src/internal/StoredValue'
 import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { RedisLayer } from '../src/layers/RedisLayer'
-import { CacheMissError, type CacheLayer, type InvalidationBus, type InvalidationMessage } from '../src/types'
+import { type CacheLayer, CacheMissError, type InvalidationBus, type InvalidationMessage } from '../src/types'
 
 class RecordingLayer implements CacheLayer {
   readonly name: string
