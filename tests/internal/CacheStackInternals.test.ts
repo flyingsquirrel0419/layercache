@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
+import { generationPrefix, stripGenerationPrefix } from '../../src/internal/CacheStackGeneration'
 import { createStoredValueEnvelope } from '../../src/internal/StoredValue'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import type { CacheLayer } from '../../src/types'
@@ -131,9 +132,9 @@ describe('CacheStack internals', () => {
   it('handles generation prefixes and invalidation key limits through internal helpers', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { generation: 2, invalidationMaxKeys: false })
 
-    expect((cache as { generationPrefix: () => string }).generationPrefix()).toBe('v2:')
-    expect((cache as { stripQualifiedKey: (key: string) => string }).stripQualifiedKey('v2:user:1')).toBe('user:1')
-    expect((cache as { stripQualifiedKey: (key: string) => string }).stripQualifiedKey('user:1')).toBe('user:1')
+    expect(generationPrefix(2)).toBe('v2:')
+    expect(stripGenerationPrefix('v2:user:1', 2)).toBe('user:1')
+    expect(stripGenerationPrefix('user:1', 2)).toBe('user:1')
     expect((cache as { invalidationMaxKeys: () => number | false }).invalidationMaxKeys()).toBe(false)
 
     const limited = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })

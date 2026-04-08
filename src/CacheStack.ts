@@ -8,6 +8,14 @@ import {
   serializeOptions
 } from './internal/CacheKeySerialization'
 import { readUtf8HandleWithLimit, validateSnapshotFilePath } from './internal/CacheSnapshotFile'
+import {
+  generationPrefix,
+  planGenerationCleanupBatches,
+  qualifyGenerationKey,
+  qualifyGenerationPattern,
+  resolveGenerationCleanupTarget,
+  stripGenerationPrefix
+} from './internal/CacheStackGeneration'
 import { CacheStackMaintenance } from './internal/CacheStackMaintenance'
 import {
   planFreshReadPolicies,
@@ -700,14 +708,18 @@ export class CacheStack extends EventEmitter {
   bumpGeneration(nextGeneration?: number): number {
     const current = this.currentGeneration ?? 0
     const previousGeneration = this.currentGeneration
-    this.currentGeneration = nextGeneration ?? current + 1
-    if (
-      previousGeneration !== undefined &&
-      previousGeneration !== this.currentGeneration &&
-      this.shouldCleanupGenerations()
-    ) {
-      this.scheduleGenerationCleanup(previousGeneration)
+    const updatedGeneration = nextGeneration ?? current + 1
+    const generationToCleanup = resolveGenerationCleanupTarget({
+      previousGeneration,
+      nextGeneration: updatedGeneration,
+      generationCleanup: this.options.generationCleanup
+    })
+
+    this.currentGeneration = updatedGeneration
+    if (generationToCleanup !== null) {
+      this.scheduleGenerationCleanup(generationToCleanup)
     }
+
     return this.currentGeneration
   }
 
@@ -1506,16 +1518,6 @@ export class CacheStack extends EventEmitter {
     return this.options.broadcastL1Invalidation ?? this.options.publishSetInvalidation ?? false
   }
 
-  private shouldCleanupGenerations(): boolean {
-    return Boolean(this.options.generationCleanup)
-  }
-
-  private generationCleanupBatchSize(): number {
-    const configured =
-      typeof this.options.generationCleanup === 'object' ? this.options.generationCleanup.batchSize : undefined
-    return configured ?? 500
-  }
-
   private scheduleGenerationCleanup(generation: number): void {
     this.maintenance.scheduleGenerationCleanup(
       generation,
@@ -1532,13 +1534,7 @@ export class CacheStack extends EventEmitter {
   private async cleanupGeneration(generation: number): Promise<void> {
     const prefix = `v${generation}:`
     const keys = await this.keyDiscovery.collectKeysWithPrefix(prefix)
-    if (keys.length === 0) {
-      return
-    }
-
-    const batchSize = this.generationCleanupBatchSize()
-    for (let index = 0; index < keys.length; index += batchSize) {
-      const batch = keys.slice(index, index + batchSize)
+    for (const batch of planGenerationCleanupBatches(keys, this.options.generationCleanup)) {
       await this.deleteKeys(batch)
       await this.publishInvalidation({
         scope: 'keys',
@@ -1550,8 +1546,10 @@ export class CacheStack extends EventEmitter {
   }
 
   private initializeWriteBehind(options: CacheWriteBehindOptions | undefined): void {
-    this.maintenance.initializeWriteBehindTimer(this.options.writeStrategy, options, async () =>
-      this.flushWriteBehindQueue()
+    this.maintenance.initializeWriteBehindTimer(
+      this.options.writeStrategy,
+      options,
+      this.flushWriteBehindQueue.bind(this)
     )
   }
 
@@ -1560,15 +1558,11 @@ export class CacheStack extends EventEmitter {
   }
 
   private async enqueueWriteBehind(operation: () => Promise<void>): Promise<void> {
-    await this.maintenance.enqueueWriteBehind(operation, this.options.writeBehind, async (batch) =>
-      this.runWriteBehindBatch(batch)
-    )
+    await this.maintenance.enqueueWriteBehind(operation, this.options.writeBehind, this.runWriteBehindBatch.bind(this))
   }
 
   private async flushWriteBehindQueue(): Promise<void> {
-    await this.maintenance.flushWriteBehindQueue(this.options.writeBehind, async (batch) =>
-      this.runWriteBehindBatch(batch)
-    )
+    await this.maintenance.flushWriteBehindQueue(this.options.writeBehind, this.runWriteBehindBatch.bind(this))
   }
 
   private async runWriteBehindBatch(batch: Array<() => Promise<void>>): Promise<void> {
@@ -1624,38 +1618,20 @@ export class CacheStack extends EventEmitter {
     }
 
     const [firstGroup, ...rest] = groups
-    if (!firstGroup) {
-      return []
-    }
-
     const restSets = rest.map((group) => new Set(group))
     return [...new Set(firstGroup)].filter((key) => restSets.every((group) => group.has(key)))
   }
 
   private qualifyKey(key: string): string {
-    const prefix = this.generationPrefix()
-    return prefix ? `${prefix}${key}` : key
+    return qualifyGenerationKey(key, this.currentGeneration)
   }
 
   private qualifyPattern(pattern: string): string {
-    const prefix = this.generationPrefix()
-    return prefix ? `${prefix}${pattern}` : pattern
+    return qualifyGenerationPattern(pattern, this.currentGeneration)
   }
 
   private stripQualifiedKey(key: string): string {
-    const prefix = this.generationPrefix()
-    if (!prefix || !key.startsWith(prefix)) {
-      return key
-    }
-    return key.slice(prefix.length)
-  }
-
-  private generationPrefix(): string {
-    if (this.currentGeneration === undefined) {
-      return ''
-    }
-
-    return `v${this.currentGeneration}:`
+    return stripGenerationPrefix(key, this.currentGeneration)
   }
 
   private async deleteKeysFromLayers(layers: CacheLayer[], keys: string[]): Promise<void> {
