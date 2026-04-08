@@ -551,7 +551,9 @@ describe('CacheStack internals', () => {
       throw new Error('cleanup failed')
     })
     ;(failingCleanup as { scheduleGenerationCleanup: (generation: number) => void }).scheduleGenerationCleanup(1)
-    await (failingCleanup as { generationCleanupPromise?: Promise<void> }).generationCleanupPromise
+    await (
+      failingCleanup as { maintenance: { waitForGenerationCleanup: () => Promise<void> } }
+    ).maintenance.waitForGenerationCleanup()
     expect(warned).toHaveLength(1)
 
     expect((cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([])).toEqual([])
@@ -559,6 +561,11 @@ describe('CacheStack internals', () => {
       (cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([['a', 'b', 'b'], ['b', 'c'], ['b']])
     ).toEqual(['b'])
 
+    const failingDeleteManyLayer = makeLayer('delete-many-fail', {
+      deleteMany: vi.fn(async () => {
+        throw new Error('delete many failed')
+      })
+    })
     const deleteManyLayer = makeLayer('delete-many', {
       deleteMany: vi.fn(async () => undefined)
     })
@@ -567,7 +574,7 @@ describe('CacheStack internals', () => {
         throw new Error('delete failed')
       })
     })
-    const deletionCache = new CacheStack([deleteManyLayer, deleteOneLayer], {
+    const deletionCache = new CacheStack([failingDeleteManyLayer, deleteManyLayer, deleteOneLayer], {
       gracefulDegradation: true
     })
     ;(deletionCache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set(
@@ -579,7 +586,7 @@ describe('CacheStack internals', () => {
         deletionCache as {
           deleteKeysFromLayers: (layers: CacheLayer[], keys: string[]) => Promise<void>
         }
-      ).deleteKeysFromLayers([deleteManyLayer, deleteOneLayer], ['user:1'])
+      ).deleteKeysFromLayers([failingDeleteManyLayer, deleteManyLayer, deleteOneLayer], ['user:1'])
     ).resolves.toBeUndefined()
 
     const policyCache = new CacheStack([makeLayer('policy', { set: vi.fn(async () => undefined) })])
@@ -624,6 +631,54 @@ describe('CacheStack internals', () => {
     )
     expect(scheduleSpy).toHaveBeenCalled()
     scheduleSpy.mockRestore()
+
+    const degradedSlidingLayer = makeLayer('degraded-policy', { set: vi.fn(async () => undefined) })
+    const failingSlidingLayer = makeLayer('failing-policy', {
+      set: vi.fn(async () => {
+        throw new Error('sliding ttl failed')
+      })
+    })
+    const slidingCache = new CacheStack([degradedSlidingLayer, failingSlidingLayer], {
+      gracefulDegradation: true
+    })
+    ;(slidingCache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set(
+      'degraded-policy',
+      Date.now() + 1_000
+    )
+    await expect(
+      (
+        slidingCache as {
+          applyFreshReadPolicies: (
+            key: string,
+            hit: {
+              found: true
+              value: string
+              stored: unknown
+              state: 'fresh'
+              layerIndex: number
+              layerName: string
+            },
+            options: { refreshAhead?: number; slidingTtl?: boolean },
+            fetcher?: () => Promise<string>
+          ) => Promise<void>
+        }
+      ).applyFreshReadPolicies(
+        'user:2',
+        {
+          found: true,
+          value: 'value',
+          stored: createStoredValueEnvelope({
+            kind: 'value',
+            value: 'value',
+            freshTtlSeconds: 20
+          }),
+          state: 'fresh',
+          layerIndex: 1,
+          layerName: 'failing-policy'
+        },
+        { refreshAhead: 0, slidingTtl: true }
+      )
+    ).resolves.toBeUndefined()
   })
 
   it('covers circuit recording, error emission, snapshot validation, tag fallback, and export-key branches', async () => {

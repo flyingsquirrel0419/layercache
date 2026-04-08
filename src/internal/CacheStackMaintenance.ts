@@ -1,0 +1,142 @@
+import type { CacheWriteBehindOptions } from '../types'
+
+type WriteBehindOperation = () => Promise<void>
+type FlushWriteBehindBatch = (batch: WriteBehindOperation[]) => Promise<void>
+type GenerationCleanupTask = (generation: number) => Promise<void>
+type GenerationCleanupErrorHandler = (generation: number, error: unknown) => void
+
+export class CacheStackMaintenance {
+  private readonly keyEpochs = new Map<string, number>()
+  private readonly writeBehindQueue: WriteBehindOperation[] = []
+  private writeBehindTimer?: ReturnType<typeof setInterval>
+  private writeBehindFlushPromise?: Promise<void>
+  private generationCleanupPromise?: Promise<void>
+  private clearEpoch = 0
+
+  initializeWriteBehindTimer(
+    writeStrategy: 'write-through' | 'write-behind' | undefined,
+    options: CacheWriteBehindOptions | undefined,
+    flush: () => Promise<void>
+  ): void {
+    if (writeStrategy !== 'write-behind') {
+      return
+    }
+
+    const flushIntervalMs = options?.flushIntervalMs
+    if (!flushIntervalMs || flushIntervalMs <= 0) {
+      return
+    }
+
+    this.disposeWriteBehindTimer()
+    this.writeBehindTimer = setInterval(() => {
+      void flush()
+    }, flushIntervalMs)
+    this.writeBehindTimer.unref?.()
+  }
+
+  disposeWriteBehindTimer(): void {
+    if (!this.writeBehindTimer) {
+      return
+    }
+
+    clearInterval(this.writeBehindTimer)
+    this.writeBehindTimer = undefined
+  }
+
+  beginClearEpoch(): void {
+    this.clearEpoch += 1
+    this.keyEpochs.clear()
+    this.writeBehindQueue.length = 0
+  }
+
+  currentClearEpoch(): number {
+    return this.clearEpoch
+  }
+
+  currentKeyEpoch(key: string): number {
+    return this.keyEpochs.get(key) ?? 0
+  }
+
+  bumpKeyEpochs(keys: string[]): void {
+    for (const key of keys) {
+      this.keyEpochs.set(key, this.currentKeyEpoch(key) + 1)
+    }
+  }
+
+  isWriteOutdated(key: string, expectedClearEpoch?: number, expectedKeyEpoch?: number): boolean {
+    if (expectedClearEpoch !== undefined && expectedClearEpoch !== this.clearEpoch) {
+      return true
+    }
+
+    if (expectedKeyEpoch !== undefined && expectedKeyEpoch !== this.currentKeyEpoch(key)) {
+      return true
+    }
+
+    return false
+  }
+
+  async enqueueWriteBehind(
+    operation: WriteBehindOperation,
+    options: CacheWriteBehindOptions | undefined,
+    flushBatch: FlushWriteBehindBatch
+  ): Promise<void> {
+    this.writeBehindQueue.push(operation)
+    const batchSize = options?.batchSize ?? 100
+    const maxQueueSize = options?.maxQueueSize ?? batchSize * 10
+
+    if (this.writeBehindQueue.length >= batchSize) {
+      await this.flushWriteBehindQueue(options, flushBatch)
+      return
+    }
+
+    if (this.writeBehindQueue.length >= maxQueueSize) {
+      await this.flushWriteBehindQueue(options, flushBatch)
+    }
+  }
+
+  async flushWriteBehindQueue(
+    options: CacheWriteBehindOptions | undefined,
+    flushBatch: FlushWriteBehindBatch
+  ): Promise<void> {
+    if (this.writeBehindFlushPromise || this.writeBehindQueue.length === 0) {
+      await this.writeBehindFlushPromise
+      return
+    }
+
+    const batchSize = options?.batchSize ?? 100
+    const batch = this.writeBehindQueue.splice(0, batchSize)
+    this.writeBehindFlushPromise = flushBatch(batch)
+
+    try {
+      await this.writeBehindFlushPromise
+    } finally {
+      this.writeBehindFlushPromise = undefined
+    }
+
+    if (this.writeBehindQueue.length > 0) {
+      await this.flushWriteBehindQueue(options, flushBatch)
+    }
+  }
+
+  scheduleGenerationCleanup(
+    generation: number,
+    task: GenerationCleanupTask,
+    onError: GenerationCleanupErrorHandler
+  ): void {
+    const scheduledTask = (this.generationCleanupPromise ?? Promise.resolve())
+      .then(() => task(generation))
+      .catch((error) => {
+        onError(generation, error)
+      })
+
+    this.generationCleanupPromise = scheduledTask.finally(() => {
+      if (this.generationCleanupPromise === scheduledTask) {
+        this.generationCleanupPromise = undefined
+      }
+    })
+  }
+
+  async waitForGenerationCleanup(): Promise<void> {
+    await this.generationCleanupPromise
+  }
+}
