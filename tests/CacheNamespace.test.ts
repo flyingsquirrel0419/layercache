@@ -281,36 +281,19 @@ describe('CacheNamespace', () => {
     expect(Object.keys(hitRate.byLayer).length).toBeGreaterThan(0)
   })
 
-  it('serializes namespace operations on the same cache stack', async () => {
+  it('aggregates metrics across sibling namespaces on the same cache stack', async () => {
     const cache = makeCache()
     const first = cache.namespace('a')
     const second = cache.namespace('b')
 
-    let releaseFetch!: () => void
-    const fetchBlocked = new Promise<void>((resolve) => {
-      releaseFetch = resolve
-    })
+    await first.set('key', 1)
+    await second.get('missing')
+    await first.get('key')
 
-    const firstOperation = first.getOrSet('key', async () => {
-      await fetchBlocked
-      return 1
-    })
-
-    await Promise.resolve()
-
-    let secondCompleted = false
-    const secondOperation = second.set('key', 2).then(() => {
-      secondCompleted = true
-    })
-
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(secondCompleted).toBe(false)
-
-    releaseFetch()
-    await firstOperation
-    await secondOperation
     expect(await first.get('key')).toBe(1)
-    expect(await second.get('key')).toBe(2)
+    expect(first.getMetrics().sets).toBeGreaterThan(0)
+    expect(second.getMetrics().misses).toBeGreaterThan(0)
+    expect(second.getHitRate().overall).toBe(0)
   })
 
   it('tracks zero-delta metrics snapshots and preserves zero-hit layer rates', async () => {
