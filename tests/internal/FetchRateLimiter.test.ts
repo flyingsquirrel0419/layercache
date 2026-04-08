@@ -119,6 +119,27 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('returns a positive wait time while the interval window is still active', () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+
+    try {
+      const now = Date.now()
+      const bucket = { active: 0, startedAt: [now - 25], cleanupTimer: undefined }
+      ;(limiter as unknown as { buckets: Map<string, typeof bucket> }).buckets.set('global', bucket)
+
+      expect(
+        (
+          limiter as unknown as {
+            waitTime: (bucketKey: string, options: Record<string, unknown>) => number
+          }
+        ).waitTime('global', { intervalMs: 100, maxPerInterval: 1 })
+      ).toBe(75)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('respects maxConcurrent limits and drains queued work later', async () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()
@@ -151,6 +172,33 @@ describe('FetchRateLimiter', () => {
     await expect(second).resolves.toBe('b')
     expect(order).toEqual(['first-start', 'second-start'])
     vi.useRealTimers()
+  })
+
+  it('clears an existing cleanup timer when rearming an interval bucket', () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout')
+    const bucket = {
+      active: 0,
+      startedAt: [Date.now()],
+      cleanupTimer: setTimeout(() => undefined, 1_000)
+    }
+    ;(limiter as unknown as { buckets: Map<string, typeof bucket> }).buckets.set('global', bucket)
+
+    try {
+      ;(
+        limiter as unknown as {
+          cleanupBucket: (bucketKey: string, state: typeof bucket, intervalMs: number | undefined) => void
+        }
+      ).cleanupBucket('global', bucket, 10)
+
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
+      expect(bucket.cleanupTimer).toBeDefined()
+    } finally {
+      clearTimeoutSpy.mockRestore()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
 
   it('evicts idle buckets when the internal bucket map grows too large', async () => {

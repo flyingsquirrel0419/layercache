@@ -1,19 +1,21 @@
+import * as fs from 'node:fs'
 import { mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readUtf8HandleWithLimit, validateSnapshotFilePath } from '../../src/internal/CacheSnapshotFile'
 
 describe('CacheSnapshotFile', () => {
   it('validates read and write paths inside the configured snapshot base dir', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-file-'))
-    const filePath = join(dir, 'snapshot.json')
+    const filePath = join(dir, 'nested', 'deeper', 'snapshot.json')
 
     try {
-      await writeFile(filePath, '[]', 'utf8')
-      await expect(validateSnapshotFilePath(filePath, 'read', dir)).resolves.toBe(filePath)
       await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
       await expect(validateSnapshotFilePath(filePath, 'write', false)).resolves.toBe(resolve(filePath))
+
+      await writeFile(filePath, '[]', 'utf8')
+      await expect(validateSnapshotFilePath(filePath, 'read', dir)).resolves.toBe(filePath)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -50,6 +52,67 @@ describe('CacheSnapshotFile', () => {
     }
   })
 
+  it('rethrows non-ENOENT ancestor lookup errors', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-file-err-'))
+    const filePath = join(dir, 'nested', 'snapshot.json')
+    const lstatError = Object.assign(new Error('boom'), { code: 'EACCES' })
+    const lstatSpy = vi.spyOn(fs.promises, 'lstat').mockRejectedValue(lstatError)
+
+    try {
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).rejects.toThrow('boom')
+    } finally {
+      lstatSpy.mockRestore()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('walks ancestor lookup to the root when intermediate directories are missing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-file-root-'))
+    const filePath = join(dir, 'nested', 'snapshot.json')
+    const lstatSpy = vi
+      .spyOn(fs.promises, 'lstat')
+      .mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
+
+    try {
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).rejects.toThrow(
+        /outside the allowed snapshot directory/i
+      )
+    } finally {
+      lstatSpy.mockRestore()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects writes when an existing parent directory is swapped for a symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-race-'))
+    const outsideDir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-race-outside-'))
+    const parentDir = join(dir, 'nested')
+    const filePath = join(parentDir, 'snapshot.json')
+    await fs.promises.mkdir(parentDir, { recursive: true })
+
+    const realMkdir = fs.promises.mkdir.bind(fs.promises)
+    const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockImplementation(async (...args) => {
+      const [target] = args
+      if (target === parentDir) {
+        await rm(parentDir, { recursive: true, force: true })
+        await symlink(outsideDir, parentDir, 'dir')
+        return undefined
+      }
+
+      return realMkdir(...(args as Parameters<typeof fs.promises.mkdir>))
+    })
+
+    try {
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).rejects.toThrow(
+        /outside the allowed snapshot directory/i
+      )
+    } finally {
+      mkdirSpy.mockRestore()
+      await rm(dir, { recursive: true, force: true })
+      await rm(outsideDir, { recursive: true, force: true })
+    }
+  })
+
   it('reads UTF-8 content with and without size limits', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-read-'))
     const filePath = join(dir, 'snapshot.json')
@@ -59,6 +122,10 @@ describe('CacheSnapshotFile', () => {
       const handle = await open(filePath, 'r')
       await expect(readUtf8HandleWithLimit(handle, false)).resolves.toContain('user:1')
       await handle.close()
+
+      const fullHandle = await open(filePath, 'r')
+      await expect(readUtf8HandleWithLimit(fullHandle, 1_024)).resolves.toContain('user:1')
+      await fullHandle.close()
 
       const limitedHandle = await open(filePath, 'r')
       await expect(readUtf8HandleWithLimit(limitedHandle, 8)).rejects.toThrow(/snapshotMaxBytes/i)
