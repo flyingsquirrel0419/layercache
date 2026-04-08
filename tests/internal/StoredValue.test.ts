@@ -88,6 +88,55 @@ describe('StoredValue', () => {
     ).toBe(false)
   })
 
+  it('rejects envelopes with invalid timestamp metadata', () => {
+    const now = Date.now()
+    const future = now + 11 * 365 * 24 * 60 * 60 * 1_000
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: now + 1_000,
+        staleUntil: null,
+        errorUntil: 'bad'
+      })
+    ).toBe(false)
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: future,
+        staleUntil: null,
+        errorUntil: null
+      })
+    ).toBe(false)
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: now + 1_000,
+        staleUntil: null,
+        errorUntil: future
+      })
+    ).toBe(false)
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: now + 5_000,
+        staleUntil: null,
+        errorUntil: now + 1_000
+      })
+    ).toBe(false)
+  })
+
   it('rejects stale metadata without a fresh ttl baseline', () => {
     const now = Date.now()
 
@@ -101,6 +150,22 @@ describe('StoredValue', () => {
         errorUntil: null,
         freshTtlSeconds: null,
         staleWhileRevalidateSeconds: 30
+      })
+    ).toBe(false)
+  })
+
+  it('rejects stale-if-error ttl metadata without a valid finite value', () => {
+    const now = Date.now()
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: now + 1_000,
+        staleUntil: now + 2_000,
+        errorUntil: null,
+        staleIfErrorSeconds: Number.POSITIVE_INFINITY
       })
     ).toBe(false)
   })
@@ -142,6 +207,17 @@ describe('StoredValue', () => {
     expect(remainingStoredTtlSeconds(empty, now)).toBe(10)
     expect(remainingStoredTtlSeconds(empty, now + 11_000)).toBe(1)
     expect(remainingStoredTtlSeconds('plain')).toBeUndefined()
+  })
+
+  it('returns undefined ttl helpers for envelopes without expiry metadata', () => {
+    const now = Date.now()
+    const empty = createStoredValueEnvelope({
+      kind: 'empty',
+      now
+    })
+
+    expect(remainingStoredTtlSeconds(empty, now)).toBeUndefined()
+    expect(remainingFreshTtlSeconds(empty, now)).toBeUndefined()
   })
 
   it('refreshes envelopes and leaves plain values untouched', () => {
