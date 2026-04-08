@@ -204,7 +204,9 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ version: 1 })
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await waitForCondition(async () => {
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    })
 
     await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
     expect(fetches).toBe(1)
@@ -231,7 +233,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
-    await new Promise((resolve) => setTimeout(resolve, 35))
+    await waitForCondition(async () => {
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    })
 
     expect(cache.getStats().backgroundRefreshes).toBe(0)
     expect(cache.getMetrics().refreshErrors).toBe(1)
@@ -262,10 +266,12 @@ describe('operational features', () => {
 
     try {
       await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-      await new Promise((resolve) => setTimeout(resolve, 35))
+      await waitForCondition(async () => {
+        expect(cache.getStats().backgroundRefreshes).toBe(0)
+      })
 
       rejectFetch(new Error('late failure'))
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      await new Promise((resolve) => setImmediate(resolve))
 
       expect(unhandled).not.toHaveBeenCalled()
       expect(cache.getStats().backgroundRefreshes).toBe(0)
@@ -290,7 +296,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.clear()
     releaseFetch()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toBeNull()
+    })
 
     await expect(cache.get('user:1')).resolves.toBeNull()
   })
@@ -311,7 +319,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.delete('user:1')
     releaseFetch()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toBeNull()
+    })
 
     await expect(cache.get('user:1')).resolves.toBeNull()
   })
@@ -334,7 +344,9 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.delete('user:1')
     releaseFetch()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toBeNull()
+    })
 
     await expect(cache.get('user:1')).resolves.toBeNull()
     expect(cache.getMetrics().negativeCacheHits).toBe(0)
@@ -443,7 +455,6 @@ describe('operational features', () => {
     ).rejects.toThrow(/disconnecting/i)
 
     await disconnectPromise
-    await new Promise((resolve) => setTimeout(resolve, 25))
 
     expect(refreshes).toBe(0)
   })
@@ -468,7 +479,9 @@ describe('operational features', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
-    await new Promise((resolve) => setTimeout(resolve, 35))
+    await waitForCondition(async () => {
+      expect(cache.getStats().backgroundRefreshes).toBe(0)
+    })
     expect(cache.getStats().backgroundRefreshes).toBe(0)
   })
 
