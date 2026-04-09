@@ -1,4 +1,5 @@
 import type Redis from 'ioredis'
+import { sanitizeStructuredData } from '../internal/StructuredDataSanitizer'
 import type { CacheLogger, InvalidationBus, InvalidationMessage } from '../types'
 
 interface RedisInvalidationBusOptions {
@@ -63,7 +64,12 @@ export class RedisInvalidationBus implements InvalidationBus {
     let message: InvalidationMessage
 
     try {
-      const parsed = sanitizeJsonValue(JSON.parse(payload))
+      const parsed = sanitizeStructuredData(JSON.parse(payload), {
+        label: 'Invalidation payload',
+        maxDepth: 64,
+        maxNodes: 10_000,
+        createObject: () => Object.create(null) as Record<string, unknown>
+      })
       if (!this.isInvalidationMessage(parsed)) {
         throw new Error('Invalid invalidation payload shape.')
       }
@@ -118,35 +124,4 @@ export class RedisInvalidationBus implements InvalidationBus {
 
     console.error(`[layercache] ${message}`, error)
   }
-}
-
-const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
-const MAX_SANITIZE_DEPTH = 64
-const MAX_SANITIZE_NODES = 10_000
-
-function sanitizeJsonValue(value: unknown, depth = 0, state = { count: 0 }): unknown {
-  state.count += 1
-  if (state.count > MAX_SANITIZE_NODES) {
-    throw new Error(`Invalidation payload exceeds max node count of ${MAX_SANITIZE_NODES}.`)
-  }
-
-  if (depth > MAX_SANITIZE_DEPTH) {
-    throw new Error(`Invalidation payload exceeds max depth of ${MAX_SANITIZE_DEPTH}.`)
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeJsonValue(entry, depth + 1, state))
-  }
-
-  if (value && typeof value === 'object') {
-    const result: Record<string, unknown> = Object.create(null)
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      if (!DANGEROUS_KEYS.has(key)) {
-        result[key] = sanitizeJsonValue((value as Record<string, unknown>)[key], depth + 1, state)
-      }
-    }
-    return result
-  }
-
-  return value
 }

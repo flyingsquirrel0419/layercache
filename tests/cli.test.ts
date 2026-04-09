@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // We test the exported `main` function with mocked ioredis
+let connectImpl = async () => undefined
+
 vi.mock('ioredis', () => {
   function makeClient() {
     return {
-      connect: async () => undefined,
+      connect: async () => connectImpl(),
       scan: async () => ['0', ['key:1', 'key:2']],
       del: async () => 2,
       getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
@@ -34,6 +36,7 @@ describe('CLI — main()', () => {
   let stderrOutput: string[]
 
   beforeEach(() => {
+    connectImpl = async () => undefined
     stdoutOutput = []
     stderrOutput = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -107,5 +110,17 @@ describe('CLI — main()', () => {
     const output = stdoutOutput.join('')
     expect(output).toContain('"key": "user:1"')
     expect(output).toContain('"ttlSeconds": 42')
+  })
+
+  it('masks Redis credentials in connection failures', async () => {
+    connectImpl = async () => {
+      throw new Error('auth failed')
+    }
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://default:secret@localhost:6379'])
+
+    expect(stderrOutput.join('')).toContain('redis://default:***@localhost:6379')
+    expect(stderrOutput.join('')).not.toContain('secret')
   })
 })

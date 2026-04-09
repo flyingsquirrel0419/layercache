@@ -405,6 +405,8 @@ describe('growth features', () => {
 
   it('provides hono middleware and an OpenTelemetry plugin', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const originalGet = cache.get
+    const originalSet = cache.set
     const spans: Array<{ name: string; ended: boolean }> = []
     const tracer = {
       startSpan: (name: string) => {
@@ -420,6 +422,8 @@ describe('growth features', () => {
     }
 
     const plugin = createOpenTelemetryPlugin(cache, tracer)
+    expect(cache.get).toBe(originalGet)
+    expect(cache.set).toBe(originalSet)
     await cache.set('otel:key', { ok: true })
     await cache.get('otel:key')
     plugin.uninstall()

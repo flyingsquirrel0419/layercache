@@ -15,8 +15,8 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
-  <img src="https://img.shields.io/badge/tests-393_passing-brightgreen" alt="tests">
-  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main" alt="Coveralls"></a>
+  <img src="https://img.shields.io/badge/tests-397_passing-brightgreen" alt="tests">
+  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260409" alt="Coveralls"></a>
 </p>
 
 <p align="center">
@@ -163,7 +163,7 @@ const cache = new CacheStack([
 | **Per-layer latency** | Avg, max, and sample count using Welford's algorithm |
 | **Health checks** | Async health endpoint per layer with latency measurement |
 | **Event hooks** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
-| **OpenTelemetry** | Distributed tracing support |
+| **OpenTelemetry** | Hook-based distributed tracing support without method monkey-patching |
 | **Prometheus exporter** | Metrics export including latency gauges |
 | **HTTP stats handler** | JSON endpoint for dashboards |
 | **Admin CLI** | `npx layercache stats\|keys\|invalidate` for Redis-backed caches |
@@ -183,7 +183,7 @@ layercache plugs into the frameworks you already use:
 | **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - field resolver wrapper |
 | **NestJS** | `@cachestack/nestjs` - `CacheStackModule.forRoot()`, `@Cacheable()` decorator |
 | **Next.js** | Works natively with App Router and API routes |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - distributed tracing spans |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - event-driven tracing spans without monkey-patching |
 
 <details>
 <summary><b>Express example</b></summary>

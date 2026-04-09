@@ -280,4 +280,31 @@ describe('FetchRateLimiter', () => {
       vi.useRealTimers()
     }
   })
+
+  it('disposes timers and rejects future scheduling', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+
+    try {
+      await limiter.schedule(
+        { intervalMs: 10, maxPerInterval: 1, scope: 'key' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        async () => 'a'
+      )
+
+      const bucket = (
+        limiter as unknown as { buckets: Map<string, { cleanupTimer?: ReturnType<typeof setTimeout> }> }
+      ).buckets.get('key:user:1')
+      expect(bucket?.cleanupTimer).toBeDefined()
+
+      limiter.dispose()
+
+      expect((limiter as unknown as { buckets: Map<string, unknown> }).buckets.size).toBe(0)
+      await expect(
+        limiter.schedule({ maxConcurrent: 1 }, { key: 'user:2', fetcher: async () => 'b' }, async () => 'b')
+      ).rejects.toThrow(/disposed/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -32,12 +32,17 @@ export class FetchRateLimiter {
   private readonly fetcherBuckets = new WeakMap<(...args: never[]) => unknown, string>()
   private nextFetcherBucketId = 0
   private drainTimer?: ReturnType<typeof setTimeout>
+  private isDisposed = false
 
   async schedule<T>(
     options: CacheRateLimitOptions | undefined,
     context: ScheduleContext,
     task: () => Promise<T>
   ): Promise<T> {
+    if (this.isDisposed) {
+      throw new Error('FetchRateLimiter has been disposed.')
+    }
+
     if (!options) {
       return task()
     }
@@ -61,6 +66,31 @@ export class FetchRateLimiter {
       this.pendingBuckets.add(bucketKey)
       this.drain()
     })
+  }
+
+  dispose(): void {
+    this.isDisposed = true
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer)
+      this.drainTimer = undefined
+    }
+
+    for (const bucket of this.buckets.values()) {
+      if (bucket.cleanupTimer) {
+        clearTimeout(bucket.cleanupTimer)
+        bucket.cleanupTimer = undefined
+      }
+    }
+
+    for (const queue of this.queuesByBucket.values()) {
+      for (const item of queue) {
+        item.reject(new Error('FetchRateLimiter has been disposed.'))
+      }
+    }
+
+    this.queuesByBucket.clear()
+    this.pendingBuckets.clear()
+    this.buckets.clear()
   }
 
   private normalize(options: CacheRateLimitOptions): NormalizedRateLimitOptions | undefined {
@@ -106,6 +136,10 @@ export class FetchRateLimiter {
   }
 
   private drain(): void {
+    if (this.isDisposed) {
+      return
+    }
+
     if (this.drainTimer) {
       clearTimeout(this.drainTimer)
       this.drainTimer = undefined
@@ -223,6 +257,10 @@ export class FetchRateLimiter {
   }
 
   private bucketState(bucketKey: string): BucketState {
+    if (this.isDisposed) {
+      throw new Error('FetchRateLimiter has been disposed.')
+    }
+
     const existing = this.buckets.get(bucketKey)
     if (existing) {
       return existing

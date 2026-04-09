@@ -139,7 +139,11 @@ describe('CacheStack internals', () => {
 
     const limited = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
     expect(() =>
-      (limited as { assertWithinInvalidationKeyLimit: (size: number) => void }).assertWithinInvalidationKeyLimit(2)
+      (
+        limited as {
+          invalidation: { assertWithinInvalidationKeyLimit: (size: number, maxKeys: number | false) => void }
+        }
+      ).invalidation.assertWithinInvalidationKeyLimit(2, 1)
     ).toThrow(/too many keys/i)
   })
 
@@ -188,27 +192,31 @@ describe('CacheStack internals', () => {
       keys: async () => ['v3:user:2']
     })
     const cache = new CacheStack([layerWithEntry, layerWithKeys], { generation: 3 })
-    const readLayerEntry = vi
-      .spyOn(
-        cache as object as { readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null> },
-        'readLayerEntry'
-      )
-      .mockImplementation(async (_layer, key) => {
-        if (key.endsWith('missing')) {
-          return null
+    const readLayerEntry = vi.fn(async (_layer: CacheLayer, key: string) => {
+      if (key.endsWith('missing')) {
+        return null
+      }
+      return { kind: 'value', value: key }
+    })
+    ;(
+      cache as {
+        snapshots: {
+          options: { readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null> }
         }
-        return { kind: 'value', value: key }
-      })
+      }
+    ).snapshots.options.readLayerEntry = readLayerEntry
 
     const exported: Array<{ key: string; value: unknown }> = []
     await (
       cache as {
-        visitExportEntries: (
-          maxEntries: number | false,
-          visitor: (entry: { key: string; value: unknown; ttl?: number }) => Promise<void> | void
-        ) => Promise<void>
+        snapshots: {
+          visitExportEntries: (
+            maxEntries: number | false,
+            visitor: (entry: { key: string; value: unknown; ttl?: number }) => Promise<void> | void
+          ) => Promise<void>
+        }
       }
-    ).visitExportEntries(false, (entry) => {
+    ).snapshots.visitExportEntries(false, (entry) => {
       exported.push({ key: entry.key, value: entry.value })
     })
 
@@ -217,7 +225,6 @@ describe('CacheStack internals', () => {
       { key: 'user:2', value: { kind: 'value', value: 'v3:user:2' } }
     ])
     expect(readLayerEntry).toHaveBeenCalled()
-    readLayerEntry.mockRestore()
   })
 
   it('uses snapshot and invalidation defaults unless explicitly disabled', () => {
@@ -525,9 +532,15 @@ describe('CacheStack internals', () => {
       (cache as { cleanupGeneration: (generation: number) => Promise<void> }).cleanupGeneration(1)
     ).resolves.toBeUndefined()
 
-    expect((cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([])).toEqual([])
     expect(
-      (cache as { intersectKeys: (groups: string[][]) => string[] }).intersectKeys([['a', 'b', 'b'], ['b', 'c'], ['b']])
+      (cache as { invalidation: { intersectKeys: (groups: string[][]) => string[] } }).invalidation.intersectKeys([])
+    ).toEqual([])
+    expect(
+      (cache as { invalidation: { intersectKeys: (groups: string[][]) => string[] } }).invalidation.intersectKeys([
+        ['a', 'b', 'b'],
+        ['b', 'c'],
+        ['b']
+      ])
     ).toEqual(['b'])
 
     const policyCache = new CacheStack([makeLayer('policy', { set: vi.fn(async () => undefined) })])
@@ -607,18 +620,20 @@ describe('CacheStack internals', () => {
     expect(emitted).toEqual([expect.objectContaining({ operation: 'custom', reason: 'test' })])
 
     expect(
-      (cache as { isCacheSnapshotEntries: (value: unknown) => boolean }).isCacheSnapshotEntries([
-        { key: 'ok', ttl: 1, value: { id: 1 } }
-      ])
+      (
+        cache as { snapshots: { isCacheSnapshotEntries: (value: unknown) => boolean } }
+      ).snapshots.isCacheSnapshotEntries([{ key: 'ok', ttl: 1, value: { id: 1 } }])
     ).toBe(true)
     expect(
-      (cache as { isCacheSnapshotEntries: (value: unknown) => boolean }).isCacheSnapshotEntries([
-        { key: 'bad', ttl: -1 }
-      ])
+      (
+        cache as { snapshots: { isCacheSnapshotEntries: (value: unknown) => boolean } }
+      ).snapshots.isCacheSnapshotEntries([{ key: 'bad', ttl: -1 }])
     ).toBe(false)
-    expect((cache as { isCacheSnapshotEntries: (value: unknown) => boolean }).isCacheSnapshotEntries([null])).toBe(
-      false
-    )
+    expect(
+      (
+        cache as { snapshots: { isCacheSnapshotEntries: (value: unknown) => boolean } }
+      ).snapshots.isCacheSnapshotEntries([null])
+    ).toBe(false)
 
     const tagIndex = {
       keysForTag: vi.fn(async () => ['user:1']),
@@ -631,7 +646,9 @@ describe('CacheStack internals', () => {
     }
     const tagCache = new CacheStack([makeLayer('layer')], { tagIndex: tagIndex as never })
     await expect(
-      (tagCache as { collectKeysForTag: (tag: string) => Promise<string[]> }).collectKeysForTag('team:a')
+      (
+        tagCache as { invalidation: { collectKeysForTag: (tag: string, maxKeys: number | false) => Promise<string[]> } }
+      ).invalidation.collectKeysForTag('team:a', false)
     ).resolves.toEqual(['user:1'])
     await expect(
       (tagCache as { getTagsForKey: (key: string) => Promise<string[]> }).getTagsForKey('user:1')
@@ -643,27 +660,28 @@ describe('CacheStack internals', () => {
         keys: vi.fn(async () => ['user:1'])
       })
     ])
-    const readSpy = vi
-      .spyOn(
-        exportCache as unknown as {
-          readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null>
-        },
-        'readLayerEntry'
-      )
-      .mockResolvedValue({ ok: true })
+    const readSpy = vi.fn(async () => ({ ok: true }))
+    ;(
+      exportCache as {
+        snapshots: {
+          options: { readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null> }
+        }
+      }
+    ).snapshots.options.readLayerEntry = readSpy
 
     const entries: string[] = []
     await (
       exportCache as {
-        visitExportEntries: (
-          maxEntries: number | false,
-          visitor: (entry: { key: string; value: unknown }) => Promise<void> | void
-        ) => Promise<void>
+        snapshots: {
+          visitExportEntries: (
+            maxEntries: number | false,
+            visitor: (entry: { key: string; value: unknown }) => Promise<void> | void
+          ) => Promise<void>
+        }
       }
-    ).visitExportEntries(false, (entry) => {
+    ).snapshots.visitExportEntries(false, (entry) => {
       entries.push(entry.key)
     })
     expect(entries).toEqual(['user:1'])
-    readSpy.mockRestore()
   })
 })

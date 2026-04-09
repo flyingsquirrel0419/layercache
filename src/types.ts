@@ -378,6 +378,17 @@ export interface CacheStackEvents {
   'stampede-dedupe': { key: string }
   /** Fired after a key is successfully warmed. */
   warm: { key: string }
+  /** Fired immediately before a high-level cache operation begins. */
+  'operation-start': { id: number; name: string; attributes?: Record<string, unknown> }
+  /** Fired after a high-level cache operation finishes. */
+  'operation-end': {
+    id: number
+    name: string
+    attributes?: Record<string, unknown>
+    success: boolean
+    result?: 'null'
+    error?: unknown
+  }
   /** Fired when an error occurs (layer failure, circuit breaker, etc.). */
   error: { operation: string; [key: string]: unknown }
 }

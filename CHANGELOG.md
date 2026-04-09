@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.8] — 2026-04-09
+
+### Changed
+- `README.md` now reflects the current validation baseline with **397 passing tests**.
+- `CacheStack` now delegates snapshot import/export, invalidation helpers, and layer write orchestration to dedicated internal modules (`CacheStackSnapshotManager`, `CacheStackInvalidationSupport`, `CacheStackLayerWriter`), reducing core class sprawl further.
+- OpenTelemetry integration now uses `CacheStack` operation events instead of monkey-patching cache instance methods.
+- Shared structured payload sanitization now lives in a single internal utility reused by JSON serialization, MessagePack serialization, and Redis invalidation payload handling.
+
+### Fixed
+- `FetchRateLimiter` now exposes `dispose()` and is cleaned up during `CacheStack.disconnect()`, preventing internal timers from surviving shutdown.
+- CLI Redis connection errors now mask embedded passwords consistently by routing messages through `maskRedisUrl()`.
+- Compression coverage now includes deterministic fuzz-style malformed/truncated payload checks for both gzip and brotli Redis payload paths.
+- Vitest now installs a shared Redis mock cleanup hook so `ioredis-mock` listeners are disconnected after each test, preventing `MaxListenersExceededWarning` noise in the full suite.
+
 ## [1.2.7] — 2026-04-08
 
 ### Changed

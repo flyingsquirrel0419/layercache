@@ -38,7 +38,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   try {
     await redis.connect().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to connect to Redis: ${message}`)
+      throw new Error(`Failed to connect to Redis at ${maskRedisUrl(redisUrl)}: ${message}`)
     })
 
     if (args.command === 'stats') {
