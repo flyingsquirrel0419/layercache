@@ -8,6 +8,7 @@ export class MsgpackSerializer implements CacheSerializer {
   }
 
   deserialize<T>(payload: string | Buffer): T {
+    // latin1 preserves byte values 1:1 for binary msgpack payloads stored as strings
     const normalized = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'latin1')
     return sanitizeStructuredData(decode(normalized), {
       label: 'MessagePack payload',

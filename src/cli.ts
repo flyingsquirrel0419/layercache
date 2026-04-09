@@ -139,6 +139,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     const token = rest[index]
     const value = rest[index + 1]
     if (token === '--redis') {
+      if (!value || value.startsWith('--')) {
+        process.stderr.write('Error: --redis requires a value (e.g. redis://localhost:6379)\n')
+        process.exitCode = 1
+        return parsed
+      }
       parsed.redisUrl = value
       index += 1
     } else if (token === '--pattern') {
@@ -160,6 +165,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 const BATCH_DELETE_SIZE = 500
+const SCAN_MAX_KEYS = 1_000_000
 
 async function batchDelete(redis: Redis, keys: string[]): Promise<void> {
   for (let i = 0; i < keys.length; i += BATCH_DELETE_SIZE) {
@@ -176,6 +182,12 @@ async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {
     const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
     cursor = nextCursor
     keys.push(...batch)
+    if (keys.length >= SCAN_MAX_KEYS) {
+      process.stderr.write(
+        `Warning: stopped scanning after ${SCAN_MAX_KEYS} keys. Use a more specific --pattern to narrow results.\n`
+      )
+      return keys
+    }
   } while (cursor !== '0')
 
   return keys
@@ -238,6 +250,6 @@ function maskRedisUrl(url: string): string {
   }
 }
 
-if (process.argv[1]?.includes('cli.')) {
+if (process.argv[1]?.endsWith('cli.cjs') || process.argv[1]?.endsWith('cli.js')) {
   void main()
 }

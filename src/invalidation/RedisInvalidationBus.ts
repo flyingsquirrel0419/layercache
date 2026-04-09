@@ -23,6 +23,7 @@ export class RedisInvalidationBus implements InvalidationBus {
   private readonly logger?: CacheLogger
   private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
   private sharedListener?: (_channel: string, payload: string) => void
+  private subscribePromise: Promise<void> | undefined
 
   constructor(options: RedisInvalidationBusOptions) {
     this.publisher = options.publisher
@@ -32,17 +33,33 @@ export class RedisInvalidationBus implements InvalidationBus {
   }
 
   async subscribe(handler: (message: InvalidationMessage) => Promise<void> | void): Promise<() => Promise<void>> {
-    // First subscriber — attach to Redis
-    if (this.handlers.size === 0) {
-      const listener = (_channel: string, payload: string): void => {
-        void this.dispatchToHandlers(payload)
-      }
-      this.sharedListener = listener
-      this.subscriber.on('message', listener)
-      await this.subscriber.subscribe(this.channel)
+    // Serialize concurrent subscribe() calls to prevent race conditions.
+    // Chain onto the existing promise so late callers wait for earlier ones.
+    const previousPromise = this.subscribePromise
+    let resolveThis!: () => void
+    this.subscribePromise = new Promise<void>((resolve) => {
+      resolveThis = resolve
+    })
+
+    if (previousPromise) {
+      await previousPromise
     }
 
-    this.handlers.add(handler)
+    try {
+      // First subscriber — attach to Redis
+      if (this.handlers.size === 0) {
+        const listener = (_channel: string, payload: string): void => {
+          void this.dispatchToHandlers(payload)
+        }
+        this.sharedListener = listener
+        this.subscriber.on('message', listener)
+        await this.subscriber.subscribe(this.channel)
+      }
+
+      this.handlers.add(handler)
+    } finally {
+      resolveThis()
+    }
 
     return async () => {
       this.handlers.delete(handler)

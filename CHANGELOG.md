@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.9] — 2026-04-10
+
+### Fixed
+- `CacheStack.withTimeout()` no longer misidentifies resolved `null` values as the race-loser branch, preventing incorrect error throws when cached values are legitimately null.
+- `CacheStack.mget()` fast path now skips degraded layers and correctly increments stale-hit counters, matching the behavior of the slow path.
+- `CacheStack.disconnect()` now signals all in-flight background refreshes to abort, waits up to 5 seconds for them to settle, and cleans up all timers — preventing dangling promises and event-loop leaks after shutdown.
+- `CacheStackLayerWriter.executeLayerOperations()` simplified a tautological failure check to `failures.length === operations.length`, making the "all layers failed" condition clearer.
+- `CacheStackSnapshotManager.importState()` now respects `shouldSkipLayer` and catches per-layer write failures with `handleLayerFailure`, preventing snapshot restores from crashing on a single bad layer.
+- `CacheStackSnapshotManager.sanitizeSnapshotValue()` explicitly calls `sanitizeStructuredData` after serializer round-trip to guarantee prototype-pollution protection even with custom serializers.
+- `CacheStackSnapshotManager` temp file names now use `crypto.randomBytes` instead of `Math.random()` to prevent predictable temp-file names.
+- `FetchRateLimiter.drain()` now defers re-entrancy via `setTimeout(0)` to avoid event-loop starvation under heavy contention.
+- `FetchRateLimiter.bucketState()` throws a hard error after failed bucket eviction instead of silently continuing with an invalid state.
+- `RedisInvalidationBus.subscribe()` now serializes concurrent callers through a Promise chain, eliminating a race condition where overlapping subscribes could clobber each other's subscription state.
+- `CacheKeySerialization.serializeKeyPart()` percent-encodes `%` and `:` in string key parts, preventing key collisions from keys that naturally contain colons.
+- `StructuredDataSanitizer` now builds sanitized arrays with explicit `[]` + `push()` instead of `.map()`, ensuring the result is always a true Array instance even if `Array.prototype` has been tampered with.
+- `DiskLayer` temp file names now use `crypto.randomBytes` instead of `Math.random()`.
+- `MsgpackSerializer.deserialize()` now includes a comment documenting why `latin1` encoding is correct for binary msgpack payloads.
+- CLI `--redis` flag now validates that a value is provided before attempting to connect.
+- CLI `scanKeys` now caps results at 1 000 000 keys to prevent unbounded memory usage on large keyspaces.
+- CLI auto-run detection now checks for `endsWith('cli.cjs') || endsWith('cli.js')` instead of `includes('cli.')`, preventing false triggers from paths containing `cli.` in directory names.
+- `nextOperationId` in `CacheStack` now wraps via modulo `Number.MAX_SAFE_INTEGER` to prevent integer overflow in long-running processes.
+- OpenTelemetry integration now wraps span start/end callbacks in try/catch and caps in-memory spans at 10 000 to prevent tracer errors from breaking cache operations.
+- `CacheValue` type now has a JSDoc note clarifying `null` ambiguity.
+
+### Added
+- `StructuredDataSanitizer.test.ts` — 12 test cases covering primitives, arrays, dangerous key stripping, nested objects, `createObject` factory, and depth/node limits.
+- `RedisLayer.compression.test.ts` — 4 tests for `decompressionMaxBytes` enforcement on gzip and brotli payloads.
+
+### Changed
+- Test suite now passes with **411 tests** (up from 397).
+
 ## [1.2.8] — 2026-04-09
 
 ### Changed

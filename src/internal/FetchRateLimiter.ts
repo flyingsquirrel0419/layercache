@@ -216,7 +216,14 @@ export class FetchRateLimiter {
             this.pendingBuckets.add(next.bucketKey)
           }
           this.cleanupBucket(next.bucketKey, bucket, next.options.intervalMs)
-          this.drain()
+          // Schedule next drain on next tick to prevent recursive event-loop starvation
+          if (!this.drainTimer) {
+            this.drainTimer = setTimeout(() => {
+              this.drainTimer = undefined
+              this.drain()
+            }, 0)
+            this.drainTimer.unref?.()
+          }
         })
     }
   }
@@ -268,6 +275,10 @@ export class FetchRateLimiter {
 
     if (this.buckets.size >= MAX_BUCKETS) {
       this.evictIdleBuckets()
+      // Hard limit: if eviction could not free enough space, throw
+      if (this.buckets.size >= MAX_BUCKETS) {
+        throw new Error(`FetchRateLimiter bucket limit (${MAX_BUCKETS}) exceeded.`)
+      }
     }
 
     const bucket: BucketState = { active: 0, startedAt: [] }

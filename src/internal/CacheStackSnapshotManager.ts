@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { CacheLayer, CacheSerializer, CacheSnapshotEntry, CacheTagIndex } from '../types'
 import { readUtf8HandleWithLimit, validateSnapshotFilePath } from './CacheSnapshotFile'
 import { remainingStoredTtlSeconds } from './StoredValue'
+import { sanitizeStructuredData } from './StructuredDataSanitizer'
 
 const DEFAULT_SNAPSHOT_IMPORT_BATCH_SIZE = 50
 
@@ -11,6 +13,8 @@ interface CacheStackSnapshotManagerOptions {
   tagIndex: CacheTagIndex
   snapshotSerializer: CacheSerializer
   readLayerEntry: (layer: CacheLayer, key: string) => Promise<unknown | null>
+  shouldSkipLayer: (layer: CacheLayer) => boolean
+  handleLayerFailure: (layer: CacheLayer, operation: string, error: unknown) => Promise<null>
   qualifyKey: (key: string) => string
   stripQualifiedKey: (key: string) => string
   validateCacheKey: (key: string) => string
@@ -39,7 +43,16 @@ export class CacheStackSnapshotManager {
       const batch = normalizedEntries.slice(index, index + DEFAULT_SNAPSHOT_IMPORT_BATCH_SIZE)
       await Promise.all(
         batch.map(async (entry) => {
-          await Promise.all(this.options.layers.map((layer) => layer.set(entry.key, entry.value, entry.ttl)))
+          await Promise.all(
+            this.options.layers.map(async (layer) => {
+              if (this.options.shouldSkipLayer(layer)) return
+              try {
+                await layer.set(entry.key, entry.value, entry.ttl)
+              } catch (error) {
+                await this.options.handleLayerFailure(layer, 'write', error)
+              }
+            })
+          )
           await this.options.tagIndex.touch(entry.key)
         })
       )
@@ -54,7 +67,7 @@ export class CacheStackSnapshotManager {
     const targetPath = await validateSnapshotFilePath(filePath, 'write', snapshotBaseDir)
     const tempPath = path.join(
       path.dirname(targetPath),
-      `.layercache-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`
+      `.layercache-${process.pid}-${Date.now()}-${randomBytes(8).toString('hex')}.tmp`
     )
     let handle: import('node:fs/promises').FileHandle | undefined
 
@@ -186,6 +199,14 @@ export class CacheStackSnapshotManager {
   }
 
   private sanitizeSnapshotValue(value: unknown): unknown {
-    return this.options.snapshotSerializer.deserialize(this.options.snapshotSerializer.serialize(value))
+    // Always run explicit sanitization to ensure prototype-pollution protection
+    // even when a custom serializer is used that does not call sanitizeStructuredData.
+    const roundTripped = this.options.snapshotSerializer.deserialize(this.options.snapshotSerializer.serialize(value))
+    return sanitizeStructuredData(roundTripped, {
+      label: 'Snapshot value',
+      maxDepth: 64,
+      maxNodes: 10_000,
+      createObject: () => Object.create(null) as Record<string, unknown>
+    })
   }
 }

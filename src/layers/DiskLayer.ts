@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { unwrapStoredValue } from '../internal/StoredValue'
@@ -101,7 +101,7 @@ export class DiskLayer implements CacheLayer {
       }
       const payload = this.serializer.serialize(entry)
       const targetPath = this.keyToPath(key)
-      const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+      const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${randomBytes(8).toString('hex')}.tmp`
       try {
         await fs.writeFile(tempPath, payload)
         await fs.rename(tempPath, targetPath)

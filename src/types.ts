@@ -1,3 +1,11 @@
+/**
+ * Values that can be stored in the cache.
+ *
+ * **Note:** `null` is technically allowed by this type but has ambiguous semantics
+ * because `get()` returns `null` to indicate a cache miss. Storing `null` explicitly
+ * via `set()` will work, but reading it back will be indistinguishable from a miss.
+ * Consider using a sentinel value (e.g. `{ empty: true }`) instead of `null`.
+ */
 export type CacheValue = Record<string, unknown> | unknown[] | string | number | boolean | null
 
 /**

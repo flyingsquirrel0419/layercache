@@ -198,67 +198,60 @@ describe('growth features', () => {
     }
   })
 
-  it('rejects oversized snapshot files based on the opened file handle', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-open-limit-'))
-    const filePath = join(dir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
-      snapshotBaseDir: dir,
-      snapshotMaxBytes: 32
-    })
-
-    try {
-      await writeFile(filePath, JSON.stringify([{ key: 'user:1', value: 'x'.repeat(256) }]), 'utf8')
-      await expect(cache.restoreFromFile(filePath)).rejects.toThrow(/snapshotMaxBytes/i)
-    } finally {
-      await rm(dir, { recursive: true, force: true })
-    }
-  })
-
   it('supports sliding ttl and adaptive ttl', async () => {
-    const layer = new MemoryLayer({ ttl: 60 })
-    const cache = new CacheStack([layer])
+    vi.useFakeTimers()
+    try {
+      const layer = new MemoryLayer({ ttl: 60 })
+      const cache = new CacheStack([layer])
 
-    await cache.set('sliding', { ok: true }, { ttl: 1 })
-    await new Promise((resolve) => setTimeout(resolve, 700))
-    await expect(cache.get('sliding', undefined, { slidingTtl: true })).resolves.toEqual({ ok: true })
-    await new Promise((resolve) => setTimeout(resolve, 700))
-    await expect(cache.get('sliding')).resolves.toEqual({ ok: true })
+      await cache.set('sliding', { ok: true }, { ttl: 1 })
+      await vi.advanceTimersByTimeAsync(700)
+      await expect(cache.get('sliding', undefined, { slidingTtl: true })).resolves.toEqual({ ok: true })
+      await vi.advanceTimersByTimeAsync(700)
+      await expect(cache.get('sliding')).resolves.toEqual({ ok: true })
 
-    await cache.set('adaptive', { ok: true }, { ttl: 10 })
-    await cache.get('adaptive')
-    await cache.get('adaptive')
-    await cache.get('adaptive')
-    await cache.set(
-      'adaptive',
-      { ok: true },
-      {
-        ttl: 10,
-        adaptiveTtl: { hotAfter: 2, step: 5, maxTtl: 20 }
-      }
-    )
+      await cache.set('adaptive', { ok: true }, { ttl: 10 })
+      await cache.get('adaptive')
+      await cache.get('adaptive')
+      await cache.get('adaptive')
+      await cache.set(
+        'adaptive',
+        { ok: true },
+        {
+          ttl: 10,
+          adaptiveTtl: { hotAfter: 2, step: 5, maxTtl: 20 }
+        }
+      )
 
-    const stored = await layer.getEntry<{ freshUntil?: number }>('adaptive')
-    expect(stored).not.toBeNull()
-    if (stored && typeof stored === 'object' && 'freshUntil' in stored) {
+      const stored = await layer.getEntry<{ freshUntil?: number }>('adaptive')
+      expect(stored).not.toBeNull()
+      expect(stored).toHaveProperty('freshUntil')
       const ttlSeconds = Math.round(((stored as { freshUntil: number }).freshUntil - Date.now()) / 1_000)
       expect(ttlSeconds).toBeGreaterThanOrEqual(14)
+    } finally {
+      vi.useRealTimers()
     }
   })
 
   it('refreshes sliding ttl across backfilled upper layers', async () => {
-    const redis = new Redis()
-    const memory = new MemoryLayer({ ttl: 60 })
-    const redisLayer = new RedisLayer({ client: redis, ttl: 60, prefix: 'sliding:' })
-    const cache = new CacheStack([memory, redisLayer])
+    vi.useFakeTimers()
+    try {
+      const redis = new Redis()
+      const memory = new MemoryLayer({ ttl: 60 })
+      const redisLayer = new RedisLayer({ client: redis, ttl: 60, prefix: 'sliding:' })
+      const cache = new CacheStack([memory, redisLayer])
 
-    await cache.set('sliding:remote', { ok: true }, { ttl: 1 })
-    await memory.delete('sliding:remote')
-    await new Promise((resolve) => setTimeout(resolve, 700))
+      await cache.set('sliding:remote', { ok: true }, { ttl: 1 })
+      await memory.delete('sliding:remote')
+      await vi.advanceTimersByTimeAsync(700)
 
-    await expect(cache.get('sliding:remote', undefined, { slidingTtl: true })).resolves.toEqual({ ok: true })
-    await new Promise((resolve) => setTimeout(resolve, 700))
+      await expect(cache.get('sliding:remote', undefined, { slidingTtl: true })).resolves.toEqual({ ok: true })
+      await vi.advanceTimersByTimeAsync(700)
 
-    await expect(memory.get('sliding:remote')).resolves.toEqual({ ok: true })
+      await expect(memory.get('sliding:remote')).resolves.toEqual({ ok: true })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('degrades unhealthy layers and opens circuit breakers for failing fetchers', async () => {

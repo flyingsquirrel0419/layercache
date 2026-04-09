@@ -91,4 +91,39 @@ describe('RedisLayer — compression', () => {
     expect(await layer.has('k')).toBe(true)
     expect(await layer.has('missing')).toBe(false)
   })
+
+  for (const algo of ['gzip', 'brotli'] as const) {
+    describe(`${algo} decompressionMaxBytes`, () => {
+      it('rejects decompressed payloads exceeding the byte limit', async () => {
+        const layer = new RedisLayer({
+          client: new Redis(),
+          compression: algo,
+          compressionThreshold: 1,
+          decompressionMaxBytes: 64
+        })
+
+        // Create a value that compresses well but decompresses to > 64 bytes
+        const largeValue = { data: 'x'.repeat(512) }
+        await layer.set('bomb', largeValue)
+
+        // deserializeOrDelete catches decompression errors and returns null
+        // (treating the key as corrupted), so we assert null rather than a throw.
+        const result = await layer.get('bomb')
+        expect(result).toBeNull()
+      })
+
+      it('allows decompressed payloads within the byte limit', async () => {
+        const layer = new RedisLayer({
+          client: new Redis(),
+          compression: algo,
+          compressionThreshold: 1,
+          decompressionMaxBytes: 1024 * 1024
+        })
+
+        const value = { data: 'x'.repeat(512) }
+        await layer.set('safe', value)
+        await expect(layer.get('safe')).resolves.toEqual(value)
+      })
+    })
+  }
 })

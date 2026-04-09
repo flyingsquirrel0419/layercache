@@ -14,6 +14,8 @@ interface OpenTelemetryTracer {
 type CacheOperationStart = CacheStackEvents['operation-start']
 type CacheOperationEnd = CacheStackEvents['operation-end']
 
+const MAX_SPANS = 10_000
+
 /**
  * Lightweight OpenTelemetry instrumentation for a CacheStack instance.
  *
@@ -24,7 +26,19 @@ export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemet
   const spans = new Map<number, OpenTelemetrySpan>()
 
   const onStart = (event: CacheOperationStart): void => {
-    spans.set(event.id, tracer.startSpan(event.name, { attributes: event.attributes }))
+    try {
+      // Evict stale spans if the map grows too large (orphaned from missing operation-end)
+      if (spans.size >= MAX_SPANS) {
+        const oldest = spans.keys().next().value
+        if (oldest !== undefined) {
+          spans.get(oldest)?.end()
+          spans.delete(oldest)
+        }
+      }
+      spans.set(event.id, tracer.startSpan(event.name, { attributes: event.attributes }))
+    } catch {
+      // Swallow tracer errors to avoid breaking cache operations
+    }
   }
 
   const onEnd = (event: CacheOperationEnd): void => {
@@ -34,12 +48,16 @@ export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemet
     }
 
     spans.delete(event.id)
-    span.setAttribute?.('layercache.success', event.success)
-    if (event.result) {
-      span.setAttribute?.('layercache.result', event.result)
-    }
-    if (event.error !== undefined) {
-      span.recordException?.(event.error)
+    try {
+      span.setAttribute?.('layercache.success', event.success)
+      if (event.result) {
+        span.setAttribute?.('layercache.result', event.result)
+      }
+      if (event.error !== undefined) {
+        span.recordException?.(event.error)
+      }
+    } catch {
+      // Swallow tracer errors to avoid breaking cache operations
     }
     span.end()
   }

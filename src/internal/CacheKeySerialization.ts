@@ -24,7 +24,7 @@ export function normalizeForSerialization(value: unknown): unknown {
 
 export function serializeKeyPart(value: unknown): string {
   if (typeof value === 'string') {
-    return `s:${value}`
+    return `s:${value.replace(/%/g, '%25').replace(/:/g, '%3A')}`
   }
 
   if (typeof value === 'number') {

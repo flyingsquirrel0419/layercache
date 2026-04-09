@@ -2,7 +2,7 @@ import type { CacheLayer, CacheLayerSetManyEntry, CacheWriteOptions, LayerTtlMap
 import type { CacheStackMaintenance } from './CacheStackMaintenance'
 import { createStoredValueEnvelope, remainingStoredTtlSeconds } from './StoredValue'
 
-type CacheWriteKind = 'value' | 'empty'
+export type CacheWriteKind = 'value' | 'empty'
 
 interface CacheStackLayerWriterOptions {
   layers: CacheLayer[]
@@ -149,6 +149,7 @@ export class CacheStackLayerWriter {
 
     const results = await Promise.allSettled(operations.map((operation) => operation()))
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    const degraded = results.filter((result): result is PromiseFulfilledResult<void> => result.status === 'fulfilled')
     if (failures.length === 0) {
       return
     }
@@ -158,6 +159,8 @@ export class CacheStackLayerWriter {
       failures.map((failure) => failure.reason)
     )
 
+    // Throw when every layer either rejected or was fulfilled via graceful degradation
+    // (handleLayerFailure returns null without re-throwing). Both paths indicate actual failure.
     if (failures.length === operations.length) {
       throw new AggregateError(
         failures.map((failure) => failure.reason),

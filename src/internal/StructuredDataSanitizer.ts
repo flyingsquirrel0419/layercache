@@ -27,7 +27,11 @@ function sanitizeValue(
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeValue(entry, depth + 1, state, options))
+    const sanitized: unknown[] = []
+    for (const entry of value) {
+      sanitized.push(sanitizeValue(entry, depth + 1, state, options))
+    }
+    return sanitized
   }
 
   if (!isPlainObject(value)) {

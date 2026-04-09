@@ -16,7 +16,7 @@ import {
   stripGenerationPrefix
 } from './internal/CacheStackGeneration'
 import { CacheStackInvalidationSupport } from './internal/CacheStackInvalidationSupport'
-import { CacheStackLayerWriter } from './internal/CacheStackLayerWriter'
+import { CacheStackLayerWriter, type CacheWriteKind } from './internal/CacheStackLayerWriter'
 import { CacheStackMaintenance } from './internal/CacheStackMaintenance'
 import {
   planFreshReadPolicies,
@@ -87,7 +87,6 @@ const DEFAULT_INVALIDATION_MAX_KEYS = 10_000
 const DEFAULT_MAX_PROFILE_ENTRIES = 100_000
 
 type ReadMode = 'allow-stale' | 'fresh-only'
-type CacheWriteKind = 'value' | 'empty'
 
 type ReadHit<T> =
   | {
@@ -159,6 +158,7 @@ export class CacheStack extends EventEmitter {
   private readonly layerWriter: CacheStackLayerWriter
   private readonly snapshots: CacheStackSnapshotManager
   private readonly backgroundRefreshes = new Map<string, Promise<void>>()
+  private readonly backgroundRefreshAbort = new Map<string, boolean>()
   private readonly layerDegradedUntil = new Map<string, number>()
   private readonly maintenance = new CacheStackMaintenance()
   private readonly ttlResolver: TtlResolver
@@ -256,6 +256,8 @@ export class CacheStack extends EventEmitter {
       tagIndex: this.tagIndex,
       snapshotSerializer: this.snapshotSerializer,
       readLayerEntry: this.readLayerEntry.bind(this),
+      shouldSkipLayer: (layer) => this.shouldSkipLayer(layer),
+      handleLayerFailure: async (layer, operation, error) => this.handleLayerFailure(layer, operation, error),
       qualifyKey: this.qualifyKey.bind(this),
       stripQualifiedKey: this.stripQualifiedKey.bind(this),
       validateCacheKey,
@@ -540,7 +542,7 @@ export class CacheStack extends EventEmitter {
 
       for (let layerIndex = 0; layerIndex < this.layers.length; layerIndex += 1) {
         const layer = this.layers[layerIndex]
-        if (!layer) continue
+        if (!layer || this.shouldSkipLayer(layer)) continue
         const keys = [...pending]
         if (keys.length === 0) {
           break
@@ -561,6 +563,10 @@ export class CacheStack extends EventEmitter {
           if (resolved.state === 'expired') {
             await layer.delete(key)
             continue
+          }
+
+          if (resolved.state === 'stale-while-revalidate' || resolved.state === 'stale-if-error') {
+            this.metricsCollector.increment('staleHits', indexesByKey.get(key)?.length ?? 1)
           }
 
           await this.tagIndex.touch(key)
@@ -871,7 +877,26 @@ export class CacheStack extends EventEmitter {
         await this.unsubscribeInvalidation?.()
         await this.flushWriteBehindQueue()
         await this.maintenance.waitForGenerationCleanup()
-        await Promise.allSettled([...this.backgroundRefreshes.values()])
+        // Signal all background refreshes to abort, then wait with a timeout
+        for (const key of this.backgroundRefreshAbort.keys()) {
+          this.backgroundRefreshAbort.set(key, true)
+        }
+        await Promise.allSettled(
+          [...this.backgroundRefreshes.values()].map((promise) => {
+            let timer: ReturnType<typeof setTimeout> | undefined
+            return Promise.race([
+              promise,
+              new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, 5_000)
+                timer.unref?.()
+              })
+            ]).finally(() => {
+              if (timer) clearTimeout(timer)
+            })
+          })
+        )
+        this.backgroundRefreshes.clear()
+        this.backgroundRefreshAbort.clear()
         this.maintenance.disposeWriteBehindTimer()
         this.fetchRateLimiter.dispose()
         await Promise.allSettled(this.layers.map((layer) => layer.dispose?.() ?? Promise.resolve()))
@@ -1227,15 +1252,19 @@ export class CacheStack extends EventEmitter {
 
     const clearEpoch = this.maintenance.currentClearEpoch()
     const keyEpoch = this.maintenance.currentKeyEpoch(key)
+    this.backgroundRefreshAbort.set(key, false)
     const refresh = (async () => {
       this.metricsCollector.increment('refreshes')
       try {
+        if (this.backgroundRefreshAbort.get(key)) return
         await this.runBackgroundRefresh(key, fetcher, options, clearEpoch, keyEpoch)
       } catch (error) {
+        if (this.backgroundRefreshAbort.get(key)) return
         this.metricsCollector.increment('refreshErrors')
         this.logger.debug?.('refresh-error', { key, error: this.formatError(error) })
       } finally {
         this.backgroundRefreshes.delete(key)
+        this.backgroundRefreshAbort.delete(key)
       }
     })()
 
@@ -1364,7 +1393,7 @@ export class CacheStack extends EventEmitter {
           timer.unref?.()
         })
       ])
-      if (result && typeof result === 'object' && 'kind' in result) {
+      if (result !== null && result !== undefined && typeof result === 'object' && 'kind' in result) {
         if (result.kind === 'error') {
           throw result.error
         }
@@ -1388,7 +1417,7 @@ export class CacheStack extends EventEmitter {
     execute: () => Promise<T>
   ): Promise<T> {
     const id = this.nextOperationId
-    this.nextOperationId += 1
+    this.nextOperationId = (this.nextOperationId + 1) % Number.MAX_SAFE_INTEGER
     this.emit('operation-start', { id, name, attributes })
 
     try {

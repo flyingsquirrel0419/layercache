@@ -142,36 +142,41 @@ describe('FetchRateLimiter', () => {
 
   it('respects maxConcurrent limits and drains queued work later', async () => {
     vi.useFakeTimers()
-    const limiter = new FetchRateLimiter()
-    const order: string[] = []
-    let release: (() => void) | undefined
+    try {
+      const limiter = new FetchRateLimiter()
+      const order: string[] = []
+      let release: (() => void) | undefined
 
-    const first = limiter.schedule(
-      { maxConcurrent: 1, scope: 'global' },
-      { key: 'user:1', fetcher: async () => 'a' },
-      () =>
-        new Promise<string>((resolve) => {
-          order.push('first-start')
-          release = () => resolve('a')
-        })
-    )
-    const second = limiter.schedule(
-      { maxConcurrent: 1, scope: 'global' },
-      { key: 'user:2', fetcher: async () => 'b' },
-      async () => {
-        order.push('second-start')
-        return 'b'
-      }
-    )
+      const first = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        () =>
+          new Promise<string>((resolve) => {
+            order.push('first-start')
+            release = () => resolve('a')
+          })
+      )
+      const second = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'user:2', fetcher: async () => 'b' },
+        async () => {
+          order.push('second-start')
+          return 'b'
+        }
+      )
 
-    await vi.advanceTimersByTimeAsync(1)
-    expect(order).toEqual(['first-start'])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(order).toEqual(['first-start'])
 
-    release?.()
-    await expect(first).resolves.toBe('a')
-    await expect(second).resolves.toBe('b')
-    expect(order).toEqual(['first-start', 'second-start'])
-    vi.useRealTimers()
+      release?.()
+      await expect(first).resolves.toBe('a')
+      // drain() schedules via setTimeout(0) after task completion, advance to trigger it
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toBe('b')
+      expect(order).toEqual(['first-start', 'second-start'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clears an existing cleanup timer when rearming an interval bucket', () => {
