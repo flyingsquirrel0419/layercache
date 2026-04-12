@@ -684,4 +684,52 @@ describe('CacheStack internals', () => {
     })
     expect(entries).toEqual(['user:1'])
   })
+
+  it('covers setMany fallback to individual set calls and best-effort write policy', async () => {
+    const entries: Array<{ key: string; value: unknown; ttl?: number }> = []
+    const layerWithoutSetMany = makeLayer('no-setmany', {
+      set: vi.fn(async (key, value, ttl) => {
+        entries.push({ key, value, ttl })
+      })
+    })
+
+    const strictCache = new CacheStack([layerWithoutSetMany], { writePolicy: 'strict' })
+    await strictCache.mset([
+      { key: 'a', value: 1 },
+      { key: 'b', value: 2 }
+    ])
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({ key: 'a', value: expect.any(Object) })
+    expect(entries[1]).toMatchObject({ key: 'b', value: expect.any(Object) })
+    // ttl can be a number or undefined
+    expect(entries[0].ttl === undefined || typeof entries[0].ttl === 'number').toBe(true)
+
+    const errorLayer = makeLayer('error-layer', {
+      set: vi.fn(async () => {
+        throw new Error('write failed')
+      })
+    })
+    const bestEffortCache = new CacheStack([errorLayer], {
+      writePolicy: 'best-effort'
+    })
+
+    // When ALL layers fail in best-effort mode, it still throws AggregateError
+    await expect(
+      bestEffortCache.mset([
+        { key: 'x', value: 1 },
+        { key: 'y', value: 2 }
+      ])
+    ).rejects.toThrow(AggregateError)
+    // Verify write failures were counted in metrics
+    expect(bestEffortCache.getMetrics().writeFailures).toBeGreaterThan(0)
+
+    const workingLayer = makeLayer('working', {
+      set: vi.fn(async () => undefined)
+    })
+    const mixedCache = new CacheStack([errorLayer, workingLayer], {
+      writePolicy: 'best-effort'
+    })
+    // When at least one layer succeeds, best-effort mode should not throw
+    await expect(mixedCache.mset([{ key: 'mixed', value: 1 }])).resolves.toBeUndefined()
+  })
 })

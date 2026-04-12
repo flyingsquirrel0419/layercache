@@ -179,4 +179,42 @@ describe('MemoryLayer', () => {
     const layer = new MemoryLayer()
     await expect(layer.getMany([])).resolves.toEqual([])
   })
+
+  it('covers eviction callback paths for all eviction policies', async () => {
+    const lruEvictions: Array<{ key: string; value: unknown }> = []
+    const lru = new MemoryLayer({
+      maxSize: 2,
+      evictionPolicy: 'lru',
+      onEvict: (key, value) => lruEvictions.push({ key, value })
+    })
+    await lru.set('x', 1)
+    await lru.set('y', 2)
+    await lru.set('z', 3)
+    expect(lruEvictions).toHaveLength(1)
+    expect(lruEvictions[0].key).toBe('x')
+
+    const fifoEvictions: Array<{ key: string; value: unknown }> = []
+    const fifo = new MemoryLayer({
+      maxSize: 2,
+      evictionPolicy: 'fifo',
+      onEvict: (key, value) => fifoEvictions.push({ key, value })
+    })
+    await fifo.set('a', 1)
+    await fifo.set('b', 2)
+    await fifo.set('c', 3)
+    expect(fifoEvictions).toHaveLength(1)
+    expect(fifoEvictions[0].key).toBe('a')
+
+    const lfuEvictions: Array<{ key: string; value: unknown }> = []
+    const lfu = new MemoryLayer({
+      maxSize: 2,
+      evictionPolicy: 'lfu',
+      onEvict: (key, value) => lfuEvictions.push({ key, value })
+    })
+    await lfu.set('i', 1)
+    await lfu.set('j', 2)
+    await lfu.set('k', 3)
+    expect(lfuEvictions).toHaveLength(1)
+    expect(lfuEvictions[0].key).toBe('i')
+  })
 })

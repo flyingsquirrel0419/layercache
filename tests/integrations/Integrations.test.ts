@@ -232,6 +232,53 @@ describe('createFastifyLayercachePlugin', () => {
     expect(reply.send).toHaveBeenCalledWith({ error: 'Forbidden' })
     expect(result).toBeUndefined()
   })
+
+  it('grants access when authorizeStatsRoute returns true and allowPublicStatsRoute is false', async () => {
+    const cache = makeCache()
+    await cache.set('test:key', { data: 'value' })
+    const plugin = createFastifyLayercachePlugin(cache, {
+      exposeStatsRoute: true,
+      allowPublicStatsRoute: false,
+      authorizeStatsRoute: async (request) => request === 'authorized'
+    })
+
+    let routeHandler:
+      | ((
+          request: unknown,
+          reply: {
+            header?: (name: string, value: string) => unknown
+            send?: (body: unknown) => unknown
+            statusCode?: number
+          }
+        ) => unknown | Promise<unknown>)
+      | undefined
+
+    await plugin({
+      decorate: vi.fn(),
+      get: (_path, handler) => {
+        routeHandler = handler
+      }
+    })
+
+    // Without send method, body is returned directly (statusCode is not modified on success)
+    const replyWithoutSend = { header: vi.fn(), statusCode: 0 }
+    const result = await routeHandler?.('authorized', replyWithoutSend)
+
+    expect(replyWithoutSend.statusCode).toBe(0) // statusCode is not set on success
+    expect(result).toEqual(expect.objectContaining({ metrics: expect.any(Object), layers: expect.any(Array) }))
+
+    // With send method, body is sent and undefined is returned
+    const replyWithSend = { header: vi.fn(), send: vi.fn(), statusCode: 0 }
+    const resultWithSend = await routeHandler?.('authorized', replyWithSend)
+
+    expect(replyWithSend.send).toHaveBeenCalledWith(expect.objectContaining({ metrics: expect.any(Object) }))
+    expect(resultWithSend).toBeUndefined()
+
+    // Unauthorized request should set statusCode to 403
+    const unauthorizedReply = { header: vi.fn(), statusCode: 0 }
+    await routeHandler?.('unauthorized', unauthorizedReply)
+    expect(unauthorizedReply.statusCode).toBe(403)
+  })
 })
 
 // ---------------------------------------------------------------------------

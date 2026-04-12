@@ -605,4 +605,87 @@ describe('growth features', () => {
 
     expect(next).toHaveBeenCalledTimes(1)
   })
+
+  it('evicts oldest spans when MAX_SPANS is exceeded', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const evictedSpans: string[] = []
+    const tracer = {
+      startSpan: (name: string) => {
+        return {
+          setAttribute: () => undefined,
+          recordException: () => undefined,
+          end: () => {
+            evictedSpans.push(name)
+          }
+        }
+      }
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+
+    // Create enough spans to trigger eviction by starting operations but not completing them
+    // We need to trigger the operation-start event without operation-end to fill the map
+    const operationCount = 10001 // MAX_SPANS + 1
+
+    // Manually emit operation-start events to fill the span map
+    for (let i = 0; i < operationCount; i++) {
+      cache.emit('operation-start', { id: i, name: `operation-${i}`, attributes: {} })
+    }
+
+    // The oldest span should have been evicted and ended
+    expect(evictedSpans.length).toBeGreaterThan(0)
+    expect(evictedSpans[0]).toBe('operation-0')
+
+    plugin.uninstall()
+  })
+
+  it('handles missing spans gracefully on operation-end', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const endedSpans: number[] = []
+    const tracer = {
+      startSpan: (name: string) => ({
+        setAttribute: () => undefined,
+        recordException: () => undefined,
+        end: () => {
+          endedSpans.push(1)
+        }
+      })
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+
+    // Emit operation-end for an operation that never had an operation-start
+    cache.emit('operation-end', { id: 99999, success: true, result: undefined, error: undefined })
+
+    // Should not throw, and no span should be ended (since the span map didn't contain this id)
+    expect(endedSpans.length).toBe(0)
+
+    plugin.uninstall()
+  })
+
+  it('ends all active spans on uninstall', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const endedSpans: string[] = []
+    const tracer = {
+      startSpan: (name: string) => ({
+        setAttribute: () => undefined,
+        recordException: () => undefined,
+        end: () => {
+          endedSpans.push(name)
+        }
+      })
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+
+    // Start some operations but don't complete them
+    cache.emit('operation-start', { id: 1, name: 'op1', attributes: {} })
+    cache.emit('operation-start', { id: 2, name: 'op2', attributes: {} })
+    cache.emit('operation-start', { id: 3, name: 'op3', attributes: {} })
+
+    // Uninstall should end all active spans
+    plugin.uninstall()
+
+    expect(endedSpans).toEqual(['op1', 'op2', 'op3'])
+  })
 })
