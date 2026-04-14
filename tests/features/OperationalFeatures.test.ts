@@ -101,6 +101,30 @@ class AlwaysWaitCoordinator implements CacheSingleFlightCoordinator {
   }
 }
 
+class ThrowingCoordinator implements CacheSingleFlightCoordinator {
+  constructor(private readonly error: Error) {}
+
+  async execute<T>(
+    _key: string,
+    _options: CacheSingleFlightExecutionOptions,
+    _worker: () => Promise<T>,
+    _waiter: () => Promise<T>
+  ): Promise<T> {
+    throw this.error
+  }
+}
+
+class ImmediateWorkerCoordinator implements CacheSingleFlightCoordinator {
+  async execute<T>(
+    _key: string,
+    _options: CacheSingleFlightExecutionOptions,
+    worker: () => Promise<T>,
+    _waiter: () => Promise<T>
+  ): Promise<T> {
+    return worker()
+  }
+}
+
 class InMemoryInvalidationBus implements InvalidationBus {
   private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
 
@@ -733,6 +757,65 @@ describe('operational features', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(cache.getMetrics().singleFlightWaits).toBe(1)
+  })
+
+  it('falls back to local fetching when the single-flight coordinator fails and graceful degradation is enabled', async () => {
+    const fetcher = vi.fn(async () => 'fresh')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      gracefulDegradation: true,
+      singleFlightCoordinator: new ThrowingCoordinator(new Error('coordinator offline'))
+    })
+
+    await expect(cache.get('user:1', fetcher)).resolves.toBe('fresh')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces single-flight coordinator failures when graceful degradation is disabled', async () => {
+    const fetcher = vi.fn(async () => 'fresh')
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      singleFlightCoordinator: new ThrowingCoordinator(new Error('coordinator offline'))
+    })
+
+    await expect(cache.get('user:1', fetcher)).rejects.toThrow(/coordinator offline/i)
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('skips the second cache read on a coordinator-backed cold miss when the worker already owns the fetch', async () => {
+    let reads = 0
+    const layer: CacheLayer = {
+      name: 'single-pass-read',
+      get: async () => {
+        reads += 1
+        return null
+      },
+      set: async () => undefined,
+      delete: async () => undefined,
+      clear: async () => undefined
+    }
+    const fetcher = vi.fn(async () => 'fetched')
+    const cache = new CacheStack([layer], {
+      singleFlightCoordinator: new ImmediateWorkerCoordinator()
+    })
+
+    await expect(cache.get('user:1', fetcher)).resolves.toBe('fetched')
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(reads).toBe(1)
+  })
+
+  it('preserves local single-flight collapse for concurrent misses when a coordinator is configured', async () => {
+    const fetcher = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return 'fetched'
+    })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      singleFlightCoordinator: new ImmediateWorkerCoordinator()
+    })
+
+    const results = await Promise.all(Array.from({ length: 25 }, () => cache.get('user:1', fetcher)))
+
+    expect(results.every((value) => value === 'fetched')).toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
   it('allows duplicate concurrent fetches when stampede prevention is disabled', async () => {

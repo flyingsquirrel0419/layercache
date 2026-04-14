@@ -332,7 +332,7 @@ export class CacheStack extends EventEmitter {
       return null
     }
 
-    return this.fetchWithGuards(normalizedKey, fetcher, options)
+    return this.fetchWithGuards(normalizedKey, fetcher, options, undefined, undefined, true)
   }
 
   /**
@@ -921,13 +921,17 @@ export class CacheStack extends EventEmitter {
     fetcher: () => Promise<T>,
     options?: CacheGetOptions,
     expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
+    expectedKeyEpoch?: number,
+    initialMissConfirmed = false
   ): Promise<T | null> {
     const fetchTask = async (): Promise<T | null> => {
-      const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
-      if (secondHit.found) {
-        this.metricsCollector.increment('hits')
-        return secondHit.value
+      const shouldRecheckFreshLayers = !(initialMissConfirmed && this.options.singleFlightCoordinator)
+      if (shouldRecheckFreshLayers) {
+        const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
+        if (secondHit.found) {
+          this.metricsCollector.increment('hits')
+          return secondHit.value
+        }
       }
 
       return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
@@ -938,9 +942,23 @@ export class CacheStack extends EventEmitter {
         return fetchTask()
       }
 
-      return this.options.singleFlightCoordinator.execute(key, this.resolveSingleFlightOptions(), fetchTask, () =>
-        this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
-      )
+      try {
+        return await this.options.singleFlightCoordinator.execute(
+          key,
+          this.resolveSingleFlightOptions(),
+          fetchTask,
+          () => this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
+        )
+      } catch (error) {
+        if (!this.isGracefulDegradationEnabled()) {
+          throw error
+        }
+
+        this.metricsCollector.increment('degradedOperations')
+        this.logger.warn?.('single-flight-coordinator-degraded', { key, error: this.formatError(error) })
+        this.emitError('single-flight', { key, degraded: true, error: this.formatError(error) })
+        return fetchTask()
+      }
     }
 
     if (this.options.stampedePrevention === false) {

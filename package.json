@@ -74,7 +74,15 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "bench:latency": "tsx benchmarks/latency.ts",
-    "bench:stampede": "tsx benchmarks/stampede.ts"
+    "bench:stampede": "tsx benchmarks/stampede.ts",
+    "bench:direct": "tsx benchmarks/direct.ts",
+    "bench:http": "tsx benchmarks/http.ts",
+    "bench:edge": "tsx benchmarks/edge.ts",
+    "bench:slow-redis": "tsx benchmarks/slow-redis.ts",
+    "bench:memory-pressure": "tsx benchmarks/memory-pressure.ts",
+    "bench:queue-amplification": "tsx benchmarks/queue-amplification.ts",
+    "bench:multi-process-fanout": "tsx benchmarks/multi-process-fanout.ts",
+    "bench:all": "npm run bench:direct && npm run bench:edge && npm run bench:slow-redis && npm run bench:queue-amplification && npm run bench:http && npm run bench:multi-process-fanout"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.0.0",
@@ -90,8 +98,10 @@
     "@biomejs/biome": "^1.9.4",
     "@nestjs/common": "^11.1.0",
     "@nestjs/core": "^11.1.0",
+    "@types/autocannon": "^7.12.7",
     "@types/node": "^22.15.2",
     "@vitest/coverage-v8": "^4.1.2",
+    "autocannon": "^8.0.0",
     "ioredis": "^5.6.1",
     "ioredis-mock": "^8.13.0",
     "reflect-metadata": "^0.2.2",

@@ -13,6 +13,12 @@ import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import type { CacheLayer } from '../../src/types'
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
 class ExplodingLayer implements CacheLayer {
   readonly name = 'exploding'
 
@@ -275,6 +281,27 @@ describe('growth features', () => {
       breakerCache.get('circuit:key', fetcher, { circuitBreaker: { failureThreshold: 1, cooldownMs: 1_000 } })
     ).rejects.toThrow(/Circuit breaker is open/i)
     expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('degrades a slow redis layer when command timeouts are enabled', async () => {
+    const memory = new MemoryLayer({ ttl: 60 })
+    await memory.set('user:1', { id: 1 })
+
+    const client = {
+      getBuffer: vi.fn(async () => {
+        await sleep(40)
+        return null
+      }),
+      set: vi.fn(async () => 'OK'),
+      disconnect: vi.fn()
+    } as unknown as Redis
+    const redisLayer = new RedisLayer({ client, commandTimeoutMs: 10 })
+    const cache = new CacheStack([redisLayer, memory], {
+      gracefulDegradation: { retryAfterMs: 1_000 }
+    })
+
+    await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
+    expect(cache.getStats().layers.find((layer) => layer.name === 'redis')?.degradedUntil).not.toBeNull()
   })
 
   it('supports compressed redis payloads and stats handlers', async () => {

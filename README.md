@@ -329,9 +329,15 @@ const cache = new CacheStack(
 Run benchmarks locally:
 
 ```bash
-npm run bench:latency
-npm run bench:stampede
+npm run bench:direct
+npm run bench:edge
+npm run bench:slow-redis
+npm run bench:queue-amplification
+npm run bench:http
+npm run bench:multi-process-fanout
 ```
+
+The benchmark harness defaults to `/root/cache-test/data/users.json` so the in-repo scripts stay aligned with the external reproduction workspace. Set `LAYERCACHE_BENCH_FIXTURE_PATH` if you want to point at a different workload fixture.
 
 ---
 

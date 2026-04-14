@@ -33,6 +33,32 @@ describe('Stampede prevention', () => {
       )
     )
 
-    expect((guard as { mutexes: Map<string, unknown> }).mutexes.size).toBe(0)
+    expect((guard as unknown as { inFlight: Map<string, unknown> }).inFlight.size).toBe(0)
+  })
+
+  it('shares the same in-flight promise for concurrent callers', async () => {
+    const guard = new StampedeGuard()
+    let executions = 0
+
+    const [first, second, third] = await Promise.all([
+      guard.execute('shared-key', async () => {
+        executions += 1
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return 'value'
+      }),
+      guard.execute('shared-key', async () => {
+        executions += 1
+        return 'duplicate'
+      }),
+      guard.execute('shared-key', async () => {
+        executions += 1
+        return 'duplicate'
+      })
+    ])
+
+    expect(first).toBe('value')
+    expect(second).toBe('value')
+    expect(third).toBe('value')
+    expect(executions).toBe(1)
   })
 })
