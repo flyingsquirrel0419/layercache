@@ -9,6 +9,16 @@ async function sleep(ms: number): Promise<void> {
 }
 
 describe('RedisSingleFlightCoordinator', () => {
+  it('rejects invalid commandTimeoutMs values', () => {
+    const client = {
+      set: vi.fn(),
+      eval: vi.fn()
+    } as unknown as Redis
+
+    expect(() => new RedisSingleFlightCoordinator({ client, commandTimeoutMs: 0 })).toThrow(/positive number/i)
+    expect(() => new RedisSingleFlightCoordinator({ client, commandTimeoutMs: Number.NaN })).toThrow(/positive number/i)
+  })
+
   it('times out slow lock acquisition when commandTimeoutMs is configured', async () => {
     const client = {
       set: vi.fn(async () => {

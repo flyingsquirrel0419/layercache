@@ -227,6 +227,13 @@ describe('RedisLayer', () => {
     await expect(layer.get('slow')).rejects.toThrow(/timed out after 10ms/i)
   })
 
+  it('rejects invalid commandTimeoutMs values', () => {
+    const client = new Redis()
+
+    expect(() => new RedisLayer({ client, commandTimeoutMs: 0 })).toThrow(/positive number/i)
+    expect(() => new RedisLayer({ client, commandTimeoutMs: Number.NaN })).toThrow(/positive number/i)
+  })
+
   it('can clear unprefixed keys when explicitly allowed', async () => {
     const client = new Redis()
     const layer = new RedisLayer({ client, allowUnprefixedClear: true })
