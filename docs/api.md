@@ -407,11 +407,14 @@ new RedisLayer({
   prefix: 'myapp:cache:',
   compression: 'gzip',
   compressionThreshold: 1_024,
+  commandTimeoutMs: 200,
   serializer: new MsgpackSerializer(),
   name: 'redis',
   allowUnprefixedClear: false
 })
 ```
+
+`commandTimeoutMs` applies a per-command timeout to Redis round-trips. When a Redis command exceeds this threshold, the layer surfaces an error so `CacheStack` can trigger graceful degradation instead of waiting on a slow dependency indefinitely.
 
 ### DiskLayer
 
@@ -668,6 +671,8 @@ new RedisLayer({
 })
 ```
 
+For large payloads such as HTML fragments, denormalized API responses, or MB-scale documents, prefer `compression: 'brotli'` with a threshold around `1_024 * 1_024` so small values avoid compression overhead while large values pay less network cost.
+
 ### MessagePack Serializer
 
 ```ts
@@ -689,7 +694,10 @@ new RedisLayer({
 ```ts
 import { RedisSingleFlightCoordinator } from 'layercache'
 
-const coordinator = new RedisSingleFlightCoordinator({ client: redis })
+const coordinator = new RedisSingleFlightCoordinator({
+  client: redis,
+  commandTimeoutMs: 200
+})
 
 new CacheStack([...], {
   singleFlightCoordinator: coordinator,

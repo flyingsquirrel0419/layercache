@@ -15,7 +15,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
-  <img src="https://img.shields.io/badge/tests-417_passing-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/tests-431_passing-brightgreen" alt="tests">
   <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260410" alt="Coveralls"></a>
 </p>
 
@@ -329,9 +329,15 @@ const cache = new CacheStack(
 Run benchmarks locally:
 
 ```bash
-npm run bench:latency
-npm run bench:stampede
+npm run bench:direct
+npm run bench:edge
+npm run bench:slow-redis
+npm run bench:queue-amplification
+npm run bench:http
+npm run bench:multi-process-fanout
 ```
+
+The benchmark harness defaults to `/root/cache-test/data/users.json` so the in-repo scripts stay aligned with the external reproduction workspace. Set `LAYERCACHE_BENCH_FIXTURE_PATH` if you want to point at a different workload fixture.
 
 ---
 

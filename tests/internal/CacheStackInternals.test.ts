@@ -587,6 +587,77 @@ describe('CacheStack internals', () => {
     scheduleSpy.mockRestore()
   })
 
+  it('covers tag fallback and sliding-ttl failure handling branches', async () => {
+    const fallbackTagCache = new CacheStack([makeLayer('layer')], {
+      tagIndex: {
+        keysForTag: vi.fn(async () => []),
+        matchPattern: vi.fn(async () => []),
+        track: vi.fn(async () => undefined),
+        touch: vi.fn(async () => undefined),
+        remove: vi.fn(async () => undefined),
+        clear: vi.fn(async () => undefined)
+      } as never
+    })
+
+    await expect(
+      (fallbackTagCache as unknown as { getTagsForKey: (key: string) => Promise<string[]> }).getTagsForKey('user:1')
+    ).resolves.toEqual([])
+
+    const failingSet = vi.fn(async () => {
+      throw new Error('set failed')
+    })
+    const cache = new CacheStack([makeLayer('layer', { set: failingSet })])
+    const handleLayerFailure = vi
+      .spyOn(
+        cache as unknown as {
+          handleLayerFailure: (layer: CacheLayer, operation: string, error: unknown) => Promise<void>
+        },
+        'handleLayerFailure'
+      )
+      .mockResolvedValue(undefined)
+
+    await (
+      cache as unknown as {
+        applyFreshReadPolicies: (
+          key: string,
+          hit: {
+            found: true
+            value: string
+            stored: unknown
+            state: 'fresh'
+            layerIndex: number
+            layerName: string
+          },
+          options: { refreshAhead?: number; slidingTtl?: boolean },
+          fetcher?: () => Promise<string>
+        ) => Promise<void>
+      }
+    ).applyFreshReadPolicies(
+      'user:1',
+      {
+        found: true,
+        value: 'value',
+        stored: createStoredValueEnvelope({
+          kind: 'value',
+          value: 'value',
+          freshTtlSeconds: 30
+        }),
+        state: 'fresh',
+        layerIndex: 0,
+        layerName: 'layer'
+      },
+      { slidingTtl: true }
+    )
+
+    expect(failingSet).toHaveBeenCalled()
+    expect(handleLayerFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'layer' }),
+      'sliding-ttl',
+      expect.any(Error)
+    )
+    handleLayerFailure.mockRestore()
+  })
+
   it('covers circuit recording, error emission, snapshot validation, tag fallback, and export-key branches', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
       circuitBreaker: { failureThreshold: 1, cooldownMs: 50 }

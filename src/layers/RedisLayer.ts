@@ -28,6 +28,11 @@ interface RedisLayerOptions {
    * Prevents decompression bomb attacks. Defaults to 64 MiB.
    */
   decompressionMaxBytes?: number
+  /**
+   * Per-command timeout in milliseconds for Redis round-trips.
+   * Slow commands reject so CacheStack can treat the layer as degraded.
+   */
+  commandTimeoutMs?: number
   disconnectOnDispose?: boolean
 }
 
@@ -44,6 +49,7 @@ export class RedisLayer implements CacheLayer {
   private readonly compression?: CompressionAlgorithm
   private readonly compressionThreshold: number
   private readonly decompressionMaxBytes: number
+  private readonly commandTimeoutMs: number | undefined
   private readonly disconnectOnDispose: boolean
 
   constructor(options: RedisLayerOptions) {
@@ -59,6 +65,7 @@ export class RedisLayer implements CacheLayer {
     this.compression = options.compression
     this.compressionThreshold = options.compressionThreshold ?? 1_024
     this.decompressionMaxBytes = options.decompressionMaxBytes ?? 64 * 1_024 * 1_024
+    this.commandTimeoutMs = this.normalizeCommandTimeoutMs(options.commandTimeoutMs)
     this.disconnectOnDispose = options.disconnectOnDispose ?? false
   }
 
@@ -68,7 +75,7 @@ export class RedisLayer implements CacheLayer {
   }
 
   async getEntry<T = unknown>(key: string): Promise<T | null> {
-    const payload = await this.client.getBuffer(this.withPrefix(key))
+    const payload = await this.runCommand(`get("${key}")`, () => this.client.getBuffer(this.withPrefix(key)))
     if (payload === null) {
       return null
     }
@@ -86,7 +93,7 @@ export class RedisLayer implements CacheLayer {
       pipeline.getBuffer(this.withPrefix(key))
     }
 
-    const results = await pipeline.exec()
+    const results = await this.runCommand(`mget(${keys.length})`, () => pipeline.exec())
     if (results === null) {
       return keys.map(() => null)
     }
@@ -120,7 +127,7 @@ export class RedisLayer implements CacheLayer {
       }
     }
 
-    await pipeline.exec()
+    await this.runCommand(`mset(${entries.length})`, () => pipeline.exec())
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
@@ -129,31 +136,33 @@ export class RedisLayer implements CacheLayer {
     const normalizedKey = this.withPrefix(key)
 
     if (ttl && ttl > 0) {
-      await this.client.set(normalizedKey, payload as never, 'EX', ttl)
+      await this.runCommand(`set("${key}")`, () => this.client.set(normalizedKey, payload as never, 'EX', ttl))
       return
     }
 
-    await this.client.set(normalizedKey, payload as never)
+    await this.runCommand(`set("${key}")`, () => this.client.set(normalizedKey, payload as never))
   }
 
   async delete(key: string): Promise<void> {
-    await this.client.del(this.withPrefix(key))
+    await this.runCommand(`delete("${key}")`, () => this.client.del(this.withPrefix(key)))
   }
 
   async deleteMany(keys: string[]): Promise<void> {
     if (keys.length === 0) {
       return
     }
-    await this.client.del(...keys.map((key) => this.withPrefix(key)))
+    await this.runCommand(`deleteMany(${keys.length})`, () =>
+      this.client.del(...keys.map((key) => this.withPrefix(key)))
+    )
   }
 
   async has(key: string): Promise<boolean> {
-    const exists = await this.client.exists(this.withPrefix(key))
+    const exists = await this.runCommand(`has("${key}")`, () => this.client.exists(this.withPrefix(key)))
     return exists > 0
   }
 
   async ttl(key: string): Promise<number | null> {
-    const remaining = await this.client.ttl(this.withPrefix(key))
+    const remaining = await this.runCommand(`ttl("${key}")`, () => this.client.ttl(this.withPrefix(key)))
     // -2 = key does not exist, -1 = key exists but no TTL
     if (remaining < 0) {
       return null
@@ -163,7 +172,7 @@ export class RedisLayer implements CacheLayer {
 
   async size(): Promise<number> {
     if (!this.prefix) {
-      return this.client.dbsize()
+      return this.runCommand('dbsize()', () => this.client.dbsize())
     }
 
     const pattern = `${this.prefix}*`
@@ -171,7 +180,9 @@ export class RedisLayer implements CacheLayer {
     let count = 0
 
     do {
-      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      const [nextCursor, keys] = await this.runCommand(`scan("${pattern}")`, () =>
+        this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      )
       cursor = nextCursor
       count += keys.length
     } while (cursor !== '0')
@@ -181,7 +192,7 @@ export class RedisLayer implements CacheLayer {
 
   async ping(): Promise<boolean> {
     try {
-      return (await this.client.ping()) === 'PONG'
+      return (await this.runCommand('ping()', () => this.client.ping())) === 'PONG'
     } catch {
       return false
     }
@@ -208,7 +219,9 @@ export class RedisLayer implements CacheLayer {
     let cursor = '0'
 
     do {
-      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      const [nextCursor, keys] = await this.runCommand(`scan("${pattern}")`, () =>
+        this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      )
       cursor = nextCursor
 
       if (keys.length === 0) {
@@ -218,7 +231,7 @@ export class RedisLayer implements CacheLayer {
       // Delete in batches to avoid blocking Redis with huge DEL commands
       for (let i = 0; i < keys.length; i += BATCH_DELETE_SIZE) {
         const batch = keys.slice(i, i + BATCH_DELETE_SIZE)
-        await this.client.del(...batch)
+        await this.runCommand(`clear-del(${batch.length})`, () => this.client.del(...batch))
       }
     } while (cursor !== '0')
   }
@@ -237,7 +250,9 @@ export class RedisLayer implements CacheLayer {
     let cursor = '0'
 
     do {
-      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      const [nextCursor, keys] = await this.runCommand(`scan("${pattern}")`, () =>
+        this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      )
       cursor = nextCursor
 
       for (const key of keys) {
@@ -251,7 +266,9 @@ export class RedisLayer implements CacheLayer {
     let cursor = '0'
 
     do {
-      const [nextCursor, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      const [nextCursor, keys] = await this.runCommand(`scan("${pattern}")`, () =>
+        this.client.scan(cursor, 'MATCH', pattern, 'COUNT', this.scanCount)
+      )
       cursor = nextCursor
       matches.push(...keys)
     } while (cursor !== '0')
@@ -290,7 +307,7 @@ export class RedisLayer implements CacheLayer {
 
   private async deleteCorruptedKey(key: string): Promise<void> {
     try {
-      await this.client.del(this.withPrefix(key))
+      await this.runCommand(`deleteCorrupted("${key}")`, () => this.client.del(this.withPrefix(key)))
     } catch (deleteError) {
       // Log but don't throw — the original deserialization failure is the primary issue.
       // The corrupted key will be retried on next access.
@@ -301,13 +318,15 @@ export class RedisLayer implements CacheLayer {
   private async rewriteWithPrimarySerializer(key: string, value: unknown): Promise<void> {
     const serialized = this.primarySerializer().serialize(value)
     const payload = await this.encodePayload(serialized)
-    const ttl = await this.client.ttl(this.withPrefix(key))
+    const ttl = await this.runCommand(`rewrite-ttl("${key}")`, () => this.client.ttl(this.withPrefix(key)))
     if (ttl > 0) {
-      await this.client.set(this.withPrefix(key), payload as never, 'EX', ttl)
+      await this.runCommand(`rewrite-set("${key}")`, () =>
+        this.client.set(this.withPrefix(key), payload as never, 'EX', ttl)
+      )
       return
     }
 
-    await this.client.set(this.withPrefix(key), payload as never)
+    await this.runCommand(`rewrite-set("${key}")`, () => this.client.set(this.withPrefix(key), payload as never))
   }
 
   private primarySerializer(): CacheSerializer {
@@ -419,6 +438,41 @@ export class RedisLayer implements CacheLayer {
       })
 
       source.pipe(decompressor)
+    })
+  }
+
+  private normalizeCommandTimeoutMs(value: number | undefined): number | undefined {
+    if (value === undefined) {
+      return undefined
+    }
+
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error('RedisLayer.commandTimeoutMs must be a positive number.')
+    }
+
+    return value
+  }
+
+  private async runCommand<T>(operation: string, command: () => Promise<T>): Promise<T> {
+    const promise = command()
+    if (!this.commandTimeoutMs) {
+      return promise
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`RedisLayer command ${operation} timed out after ${this.commandTimeoutMs}ms.`))
+        }, this.commandTimeoutMs)
+        timer.unref?.()
+      })
+    ]).finally(() => {
+      if (timer) {
+        clearTimeout(timer)
+      }
     })
   }
 }

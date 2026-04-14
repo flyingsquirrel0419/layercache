@@ -5,6 +5,12 @@ import { RedisLayer } from '../../src/layers/RedisLayer'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
 class EchoTransform extends Transform {
   override _transform(
     chunk: Buffer,
@@ -205,6 +211,27 @@ describe('RedisLayer', () => {
 
     const layer = new RedisLayer({ client })
     await expect(layer.ping()).resolves.toBe(false)
+  })
+
+  it('fails slow commands when commandTimeoutMs is configured', async () => {
+    const client = {
+      getBuffer: vi.fn(async () => {
+        await sleep(40)
+        return Buffer.from(JSON.stringify({ ok: true }))
+      }),
+      disconnect: vi.fn()
+    } as unknown as Redis
+
+    const layer = new RedisLayer({ client, commandTimeoutMs: 10 })
+
+    await expect(layer.get('slow')).rejects.toThrow(/timed out after 10ms/i)
+  })
+
+  it('rejects invalid commandTimeoutMs values', () => {
+    const client = new Redis()
+
+    expect(() => new RedisLayer({ client, commandTimeoutMs: 0 })).toThrow(/positive number/i)
+    expect(() => new RedisLayer({ client, commandTimeoutMs: Number.NaN })).toThrow(/positive number/i)
   })
 
   it('can clear unprefixed keys when explicitly allowed', async () => {

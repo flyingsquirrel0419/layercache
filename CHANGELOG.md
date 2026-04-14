@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-04-14
+
+### Added
+- Real Redis-backed benchmark harnesses for direct cache behavior, HTTP throughput, edge cases, slow Redis, queue amplification, and multi-process fan-out.
+- New benchmark utility coverage and Redis single-flight coordinator tests.
+
+### Changed
+- Version bumped from `1.2.9` to `1.3.0`.
+- `README.md` now reflects the current validation baseline with **431 passing tests**.
+
+### Fixed
+- `RedisLayer` and `RedisSingleFlightCoordinator` now support per-command Redis timeouts via `commandTimeoutMs`.
+- `CacheStack` now degrades gracefully when the distributed single-flight coordinator fails and preserves local single-flight collapse for concurrent misses.
+- `StampedeGuard` now shares in-flight promises across concurrent callers instead of serializing them through a mutex queue.
+
 ## [1.2.9] — 2026-04-10
 
 ### Fixed

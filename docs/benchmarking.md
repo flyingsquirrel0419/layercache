@@ -1,6 +1,6 @@
 # Benchmarking Guide
 
-How to measure and report layercache performance.
+How to reproduce the real Redis-backed benchmark suite shipped with this repository.
 
 > [Back to README](../README.md)
 
@@ -11,126 +11,92 @@ How to measure and report layercache performance.
 Run the included benchmarks:
 
 ```bash
-npm run bench:latency    # Layer hit latency comparison
-npm run bench:stampede   # Stampede prevention verification
+npm run bench:direct
+npm run bench:edge
+npm run bench:slow-redis
+npm run bench:queue-amplification
+npm run bench:http
+npm run bench:multi-process-fanout
 ```
 
-These use `ioredis-mock` and synthetic delays. Treat results as a sanity check - for production numbers, benchmark against your actual Redis instance.
+The suite starts a dedicated Docker Redis container named `layercache-bench-redis` on port `6390`. The workload fixture defaults to `/root/cache-test/data/users.json`, then falls back to `LAYERCACHE_BENCH_FIXTURE_PATH`, then `./data/users.json`.
 
 ---
 
 ## Included Benchmarks
 
-### Latency Benchmark (`npm run bench:latency`)
+### Direct Cache Benchmark (`npm run bench:direct`)
 
-Measures per-layer read latency:
+Measures direct cache behavior against a real workload with file I/O plus CPU hashing:
 
 | Scenario | What it measures |
 |---|---|
-| L1 memory hit | In-process read with no network |
-| L2 Redis hit | Redis GET + deserialization + L1 backfill |
-| Full miss | Fetcher execution + write to all layers |
+| `cold-miss` | Origin fetch plus cache fill |
+| `warm-hit` | Memory and layered hot-hit latency |
+| `stampede` | Concurrent cold-key collapse and fetch count |
 
-Example output:
+### HTTP Benchmark (`npm run bench:http`)
 
-```
-┌─────────────────────┬──────────────┐
-│ Scenario            │ Avg Latency  │
-├─────────────────────┼──────────────┤
-│ L1 memory hit       │   ~0.006 ms  │
-│ L2 Redis hit        │   ~0.020 ms  │
-│ No cache (sim. DB)  │   ~1.08  ms  │
-└─────────────────────┴──────────────┘
-```
+Runs `autocannon` against a local HTTP server exposing `/nocache`, `/memory`, and `/layered`.
 
-### Stampede Benchmark (`npm run bench:stampede`)
+### Edge Benchmark (`npm run bench:edge`)
 
-Verifies that concurrent requests for the same key result in a single fetcher execution:
+Covers production edge cases that do not show up in a simple latency chart:
 
-```
-┌─────────────────────┬────────┐
-│ concurrentRequests  │  100   │
-│ fetcherExecutions   │    1   │
-└─────────────────────┴────────┘
-```
+| Scenario | What it measures |
+|---|---|
+| TTL expiry stampede | Post-expiry collapse under burst traffic |
+| Payload variation | 1KB vs 1MB warm-hit latency |
+| Redis outage | strict vs graceful degradation behavior |
+| Multi-instance invalidation | Redis pub/sub invalidation propagation |
+| Distributed single-flight | cross-instance fetch collapse |
+
+### Slow Redis Benchmark (`npm run bench:slow-redis`)
+
+Combines two reports:
+
+| Scenario | What it measures |
+|---|---|
+| `slow-redis-latency` | 0ms, 100ms, and 500ms induced Redis RTT with `commandTimeoutMs` enabled |
+| `memory-pressure` | L1 eviction churn, revisit latency, GC, and event-loop lag |
+
+### Queue Amplification (`npm run bench:queue-amplification`)
+
+Measures how L2-hit latency scales under concurrent demand when Redis latency is injected through a proxy.
+
+### Multi-Process Fan-Out (`npm run bench:multi-process-fanout`)
+
+Runs multiple Node worker processes against one Redis instance to validate:
+
+| Scenario | What it measures |
+|---|---|
+| `multi-process-invalidation` | cross-process invalidation visibility delay |
+| `multi-process-distributed-single-flight` | origin fetch count under cross-process burst traffic |
 
 ---
 
-## Recommended Test Scenarios
+## Environment
 
-For comprehensive benchmarking, test these scenarios:
+- Node.js 20+
+- Docker daemon available locally
+- Redis image `redis:7-alpine`
+- Fixture file at `/root/cache-test/data/users.json`, `LAYERCACHE_BENCH_FIXTURE_PATH`, or `./data/users.json`
 
-### 1. L1 Hit Latency (Memory Only)
+The benchmark utilities automatically prefer `/root/cache-test/data/users.json` so results stay aligned with the external benchmark workspace the reports were generated from.
 
-Measures pure in-process read performance.
+---
 
-```ts
-const cache = new CacheStack([new MemoryLayer({ ttl: 60, maxSize: 10_000 })])
-await cache.set('key', value)
+## Compression Guidance
 
-// Benchmark: repeated get('key')
-```
-
-### 2. L2 Hit Latency (Redis + Backfill)
-
-Measures Redis read + automatic L1 backfill.
+`RedisLayer` compression is intentionally opt-in, but large payload benchmarks show it matters for multi-hundred-KB and MB-sized values. For large cached documents or API payloads, start with:
 
 ```ts
-const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
-])
-
-// Prime L2 only, then benchmark get()
-```
-
-### 3. Full Miss with Single-Flight
-
-Measures fetcher execution with distributed dedup.
-
-```ts
-const cache = new CacheStack([...], {
-  singleFlightCoordinator: new RedisSingleFlightCoordinator({ client: redis })
+new RedisLayer({
+  client: redis,
+  ttl: 300,
+  compression: 'brotli',
+  compressionThreshold: 1_024 * 1_024
 })
-
-// Benchmark: 100 concurrent get() calls for the same uncached key
-```
-
-### 4. Warm-Start Latency
-
-Measures time to pre-populate cache from cold start.
-
-```ts
-const entries = Array.from({ length: 1000 }, (_, i) => ({
-  key: `item:${i}`,
-  fetcher: () => fetchItem(i)
-}))
-
-// Benchmark: cache.warm(entries, { concurrency: 10 })
-```
-
-### 5. Compression Impact
-
-Compare Redis payload sizes and latency with and without compression.
-
-```ts
-// Without compression
-new RedisLayer({ client: redis, ttl: 300 })
-
-// With gzip
-new RedisLayer({ client: redis, ttl: 300, compression: 'gzip' })
-
-// With brotli
-new RedisLayer({ client: redis, ttl: 300, compression: 'brotli' })
-```
-
-### 6. Tag Invalidation at Scale
-
-Measure invalidation throughput with many tagged keys.
-
-```ts
-// Write 10,000 keys with tags
-// Benchmark: cache.invalidateByTag('common-tag')
 ```
 
 ---
@@ -139,18 +105,18 @@ Measure invalidation throughput with many tagged keys.
 
 When sharing benchmark results, include:
 
-- **Environment**: Node.js version, Redis version, OS, CPU, memory
+- **Environment**: Node.js version, Redis version, OS, CPU, memory, Docker version
 - **Layer configuration**: Layers, TTLs, max sizes, compression settings
 - **Metrics**: Average latency, p50, p95, p99
 - **Concurrency**: Number of concurrent requests
-- **Fetcher execution count**: Especially for stampede tests
+- **Fetcher execution count**: Especially for stampede and multi-process tests
 - **Sample size**: Number of iterations
 
 Example:
 
 ```
-Environment: Node 22.1.0, Redis 7.2, macOS M2, 16GB RAM
-Layers: MemoryLayer(ttl=60, maxSize=5000) + RedisLayer(ttl=300, gzip)
+Environment: Node 22.1.0, Redis 7.2, Docker 28.x, Linux x64, 16GB RAM
+Layers: MemoryLayer(ttl=60, maxSize=5000) + RedisLayer(ttl=300, brotli)
 Concurrency: 50 parallel requests
 
 | Scenario      | avg    | p50    | p95    | p99    | samples |
@@ -168,5 +134,6 @@ Concurrency: 50 parallel requests
 - **Isolate Redis**: Use a dedicated Redis instance for benchmarks, not your development server.
 - **Test realistic payloads**: Use JSON objects similar in size and shape to your actual data.
 - **Test under load**: Single-request latency is less interesting than behavior under concurrent load.
+- **Use command timeouts**: Slow Redis only degrades gracefully if slow commands are surfaced as errors. Set `commandTimeoutMs` on `RedisLayer` and `RedisSingleFlightCoordinator` when benchmarking degradation behavior.
 
 > [Back to README](../README.md)

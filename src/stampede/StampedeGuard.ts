@@ -1,37 +1,40 @@
-import { Mutex } from 'async-mutex'
-
-interface MutexEntry {
-  mutex: Mutex
+interface InFlightEntry<T = unknown> {
+  promise: Promise<T>
   references: number
 }
 
 export class StampedeGuard {
-  private readonly mutexes = new Map<string, MutexEntry>()
+  private readonly inFlight = new Map<string, InFlightEntry>()
 
   async execute<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const entry = this.getMutexEntry(key)
+    const existing = this.inFlight.get(key) as InFlightEntry<T> | undefined
+    if (existing) {
+      existing.references += 1
+      try {
+        return await existing.promise
+      } finally {
+        this.releaseEntry(key, existing)
+      }
+    }
+
+    const entry: InFlightEntry<T> = {
+      promise: Promise.resolve().then(task),
+      references: 1
+    }
+    this.inFlight.set(key, entry)
 
     try {
-      return await entry.mutex.runExclusive(task)
+      return await entry.promise
     } finally {
-      entry.references -= 1
-      // Re-read from the map to ensure we're operating on the current entry,
-      // not a stale reference that may have been replaced under concurrency.
-      const current = this.mutexes.get(key)
-      if (current === entry && entry.references === 0 && !entry.mutex.isLocked()) {
-        this.mutexes.delete(key)
-      }
+      this.releaseEntry(key, entry)
     }
   }
 
-  private getMutexEntry(key: string): MutexEntry {
-    let entry = this.mutexes.get(key)
-    if (!entry) {
-      entry = { mutex: new Mutex(), references: 0 }
-      this.mutexes.set(key, entry)
+  private releaseEntry(key: string, entry: InFlightEntry): void {
+    entry.references -= 1
+    const current = this.inFlight.get(key)
+    if (current === entry && entry.references === 0) {
+      this.inFlight.delete(key)
     }
-
-    entry.references += 1
-    return entry
   }
 }
