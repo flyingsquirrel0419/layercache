@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New CLI coverage for `--require-tls`, plus new RedisLayer, DiskLayer, StampedeGuard, and CacheStack stampede-option regression tests.
 
 ### Changed
-- `README.md` now reflects the current validation baseline with **457 passing tests**.
+- `README.md` now reflects the current validation baseline with **463 passing tests**.
 - `README.md` performance docs now include a recent `bench:slow-redis` sample plus the matching `memory-pressure` results.
 - `DiskLayer.maxFiles` now defaults to `50_000`; `Infinity` remains available as an explicit opt-out for bounded file eviction.
 - `StampedeGuard` now supports configurable in-flight limits and entry timeouts, and `CacheStack` now wires those options through its built-in fetch dedupe path.

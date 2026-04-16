@@ -129,4 +129,17 @@ describe('Stampede prevention', () => {
       expect(message).toContain('...')
     }
   })
+
+  it('propagates task rejections before the timeout fires and releases the entry', async () => {
+    const guard = new StampedeGuard({ entryTimeoutMs: 100 })
+
+    await expect(
+      guard.execute('reject-key', async () => {
+        throw new Error('fetch failed')
+      })
+    ).rejects.toThrow('fetch failed')
+
+    const result = await guard.execute('reject-key', async () => 'recovered')
+    expect(result).toBe('recovered')
+  })
 })

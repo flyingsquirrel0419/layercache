@@ -1,0 +1,47 @@
+import { describe, expect, it } from 'vitest'
+import { PayloadProtection, PayloadProtectionError } from '../../src/internal/PayloadProtection'
+
+describe('PayloadProtection', () => {
+  it('reports whether protection is enabled', () => {
+    expect(new PayloadProtection({}).isEnabled).toBe(false)
+    expect(new PayloadProtection({ encryptionKey: 'secret' }).isEnabled).toBe(true)
+    expect(new PayloadProtection({ signingKey: 'secret' }).isEnabled).toBe(true)
+  })
+
+  it('returns short unprotected payloads unchanged', () => {
+    const protection = new PayloadProtection({})
+    const payload = Buffer.from('LCP')
+    expect(protection.unprotect(payload)).toEqual(payload)
+  })
+
+  it('throws when decrypting an encrypted payload without an encryption key', () => {
+    const writer = new PayloadProtection({ encryptionKey: 'enc-key' })
+    const reader = new PayloadProtection({})
+
+    const payload = writer.protect(Buffer.from('secret'))
+
+    expect(() => reader.unprotect(payload)).toThrow(PayloadProtectionError)
+    expect(() => reader.unprotect(payload)).toThrow(/no encryptionKey configured/)
+  })
+
+  it('throws when verifying a signed payload without a signing key', () => {
+    const writer = new PayloadProtection({ signingKey: 'sig-key' })
+    const reader = new PayloadProtection({})
+
+    const payload = writer.protect(Buffer.from('signed'))
+
+    expect(() => reader.unprotect(payload)).toThrow(PayloadProtectionError)
+    expect(() => reader.unprotect(payload)).toThrow(/no signingKey configured/)
+  })
+
+  it('prefers encryption when both encryptionKey and signingKey are provided', () => {
+    const protection = new PayloadProtection({
+      encryptionKey: 'enc-key',
+      signingKey: 'sig-key'
+    })
+
+    const payload = protection.protect(Buffer.from('secret'))
+
+    expect(payload.subarray(0, 5).toString()).toBe('LCP1:')
+  })
+})
