@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-04-17
+
 ### Added
 - `PayloadProtection` for optional DiskLayer at-rest protection with AES-256-GCM encryption or HMAC-SHA256 signing.
 - `DiskLayer` options `encryptionKey` and `signingKey` for protected on-disk payloads, plus regression coverage for encrypted, signed, tampered, wrong-key, and MessagePack-backed disk entries.
@@ -14,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New CLI coverage for `--require-tls`, plus new RedisLayer, DiskLayer, StampedeGuard, and CacheStack stampede-option regression tests.
 
 ### Changed
+- Version bumped from `1.3.0` to `1.3.1`.
 - `README.md` now reflects the current validation baseline with **467 passing tests**.
 - `README.md` performance docs now include a recent `bench:slow-redis` sample plus the matching `memory-pressure` results.
 - `DiskLayer.maxFiles` now defaults to `50_000`; `Infinity` remains available as an explicit opt-out for bounded file eviction.
