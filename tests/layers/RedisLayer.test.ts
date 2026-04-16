@@ -326,4 +326,60 @@ describe('RedisLayer', () => {
       ).decompressWithLimit(new ErrorTransform(), Buffer.from('payload'))
     ).rejects.toThrow('boom')
   })
+
+  describe('key validation', () => {
+    it('rejects empty keys in single operations', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      await expect(layer.get('')).rejects.toThrow(/must not be empty/)
+      await expect(layer.set('', 'x')).rejects.toThrow(/must not be empty/)
+      await expect(layer.delete('')).rejects.toThrow(/must not be empty/)
+      await expect(layer.has('')).rejects.toThrow(/must not be empty/)
+      await expect(layer.ttl('')).rejects.toThrow(/must not be empty/)
+    })
+
+    it('rejects keys exceeding 1024 characters in single operations', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      const longKey = 'x'.repeat(1_025)
+      await expect(layer.get(longKey)).rejects.toThrow(/at most 1 024/)
+      await expect(layer.set(longKey, 'x')).rejects.toThrow(/at most 1 024/)
+    })
+
+    it('rejects keys with control characters in single operations', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      await expect(layer.get('bad\x00key')).rejects.toThrow(/control characters/)
+      await expect(layer.set('bad\x01key', 'x')).rejects.toThrow(/control characters/)
+    })
+
+    it('rejects empty keys in getMany', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      await expect(layer.getMany(['valid', ''])).rejects.toThrow(/must not be empty/)
+    })
+
+    it('rejects keys exceeding 1024 characters in setMany', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      await expect(layer.setMany([{ key: 'x'.repeat(1_025), value: 1 }])).rejects.toThrow(/at most 1 024/)
+    })
+
+    it('rejects keys with control characters in deleteMany', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      await expect(layer.deleteMany(['bad\x00key'])).rejects.toThrow(/control characters/)
+    })
+
+    it('accepts valid keys in batch operations', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client, ttl: 60 })
+      await layer.setMany([
+        { key: 'a', value: 1, ttl: 10 },
+        { key: 'b', value: 2 }
+      ])
+      await expect(layer.getMany(['a', 'b'])).resolves.toEqual([1, 2])
+      await expect(layer.deleteMany(['a'])).resolves.toBeUndefined()
+    })
+  })
 })

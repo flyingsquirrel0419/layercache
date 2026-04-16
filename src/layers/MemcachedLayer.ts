@@ -119,7 +119,10 @@ export class MemcachedLayer implements CacheLayer {
   private validateKey(key: string): void {
     const fullKey = this.withPrefix(key)
     if (Buffer.byteLength(fullKey, 'utf8') > 250) {
-      throw new Error(`MemcachedLayer: key exceeds 250-byte Memcached limit: "${fullKey.slice(0, 60)}..."`)
+      const displayKey = fullKey.slice(0, 64)
+      throw new Error(
+        `MemcachedLayer: key exceeds 250-byte Memcached limit: "${displayKey}${fullKey.length > 64 ? '...' : ''}"`
+      )
     }
     if (/[\s\x00-\x1f\x7f]/.test(fullKey)) {
       throw new Error(

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { PayloadProtection, type PayloadProtectionOptions } from '../internal/PayloadProtection'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
@@ -13,7 +14,8 @@ interface DiskLayerOptions {
   /**
    * Maximum number of cache files to store on disk. When exceeded, the oldest
    * entries (by file mtime) are evicted to keep the directory bounded.
-   * Defaults to unlimited.
+   * Defaults to 50 000. Set to `Infinity` to disable the limit (not recommended
+   * in production — unbounded growth will eventually exhaust disk space).
    */
   maxFiles?: number
   /**
@@ -22,6 +24,19 @@ interface DiskLayerOptions {
    * Set to `false` to disable the limit.
    */
   maxEntryBytes?: number | false
+  /**
+   * Encrypt cached data at rest using AES-256-GCM. Accepts a string or Buffer.
+   * The key material is hashed with SHA-256 to derive the actual cipher key.
+   * Encryption also provides authenticated integrity — a separate signingKey
+   * is unnecessary when encryption is enabled.
+   */
+  encryptionKey?: string | Buffer
+  /**
+   * Sign cached data at rest using HMAC-SHA256 for integrity verification.
+   * Accepts a string or Buffer. Ignored when `encryptionKey` is also provided
+   * (AES-GCM already provides integrity).
+   */
+  signingKey?: string | Buffer
 }
 
 interface DiskEntry {
@@ -53,6 +68,7 @@ export class DiskLayer implements CacheLayer {
   private readonly serializer: CacheSerializer
   private readonly maxFiles: number | undefined
   private readonly maxEntryBytes: number | false
+  private readonly protection: PayloadProtection
   private writeQueue = Promise.resolve()
 
   constructor(options: DiskLayerOptions) {
@@ -62,6 +78,10 @@ export class DiskLayer implements CacheLayer {
     this.serializer = options.serializer ?? new JsonSerializer()
     this.maxFiles = this.normalizeMaxFiles(options.maxFiles)
     this.maxEntryBytes = this.normalizeMaxEntryBytes(options.maxEntryBytes)
+    this.protection = new PayloadProtection({
+      encryptionKey: options.encryptionKey,
+      signingKey: options.signingKey
+    })
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -100,10 +120,12 @@ export class DiskLayer implements CacheLayer {
         expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null
       }
       const payload = this.serializer.serialize(entry)
+      const raw = Buffer.isBuffer(payload) ? payload : Buffer.from(payload as string, 'utf8')
+      const protectedPayload = this.protection.protect(raw)
       const targetPath = this.keyToPath(key)
       const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${randomBytes(8).toString('hex')}.tmp`
       try {
-        await fs.writeFile(tempPath, payload)
+        await fs.writeFile(tempPath, protectedPayload)
         await fs.rename(tempPath, targetPath)
       } catch (error) {
         await this.safeDelete(tempPath)
@@ -237,11 +259,15 @@ export class DiskLayer implements CacheLayer {
 
   private normalizeMaxFiles(maxFiles: number | undefined): number | undefined {
     if (maxFiles === undefined) {
+      return 50_000
+    }
+
+    if (maxFiles === Number.POSITIVE_INFINITY) {
       return undefined
     }
 
     if (!Number.isInteger(maxFiles) || maxFiles <= 0) {
-      throw new Error('DiskLayer.maxFiles must be a positive integer.')
+      throw new Error('DiskLayer.maxFiles must be a positive integer or Infinity.')
     }
 
     return maxFiles
@@ -376,7 +402,8 @@ export class DiskLayer implements CacheLayer {
   }
 
   private deserializeEntry(raw: Buffer): DiskEntry {
-    const entry = this.serializer.deserialize<unknown>(raw)
+    const unprotected = this.protection.unprotect(raw)
+    const entry = this.serializer.deserialize<unknown>(unprotected)
     if (!isDiskEntry(entry)) {
       throw new Error('Invalid disk cache entry.')
     }

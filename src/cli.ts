@@ -12,6 +12,7 @@ interface ParsedArgs {
   tag?: string
   key?: string
   tagIndexPrefix?: string
+  requireTls?: boolean
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -27,6 +28,21 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     process.stderr.write('Error: invalid Redis URL. Expected format: redis://[user:password@]host[:port][/db]\n')
     process.exitCode = 1
     return
+  }
+
+  if (isPlaintextRedisUrl(redisUrl)) {
+    if (args.requireTls) {
+      process.stderr.write(
+        'Error: --require-tls is set but the URL uses redis:// (plaintext). ' +
+          'Use rediss:// for TLS-encrypted connections.\n'
+      )
+      process.exitCode = 1
+      return
+    }
+    process.stderr.write(
+      'Warning: connecting to Redis without TLS (redis://). All data including cached values and credentials ' +
+        'will be transmitted in plaintext. Use rediss:// in production environments, or set --require-tls.\n'
+    )
   }
 
   const redis = new Redis(redisUrl, {
@@ -158,6 +174,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (token === '--tag-index-prefix') {
       parsed.tagIndexPrefix = value
       index += 1
+    } else if (token === '--require-tls') {
+      parsed.requireTls = true
     }
   }
 
@@ -206,7 +224,8 @@ function printUsage(): void {
       '  --pattern <glob>            Glob pattern to filter keys (default: *)\n' +
       '  --key <key>                 Exact cache key to inspect\n' +
       '  --tag <tag>                 Invalidate by tag name\n' +
-      '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n'
+      '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n' +
+      '  --require-tls               Reject non-TLS (redis://) connections\n'
   )
 }
 
@@ -235,6 +254,16 @@ function summarizeInspectableValue(value: unknown): unknown {
   }
 
   return value
+}
+
+function isPlaintextRedisUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'redis:'
+  } catch {
+    // Bare host:port — no TLS
+    return true
+  }
 }
 
 function maskRedisUrl(url: string): string {

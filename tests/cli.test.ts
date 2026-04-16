@@ -123,4 +123,25 @@ describe('CLI — main()', () => {
     expect(stderrOutput.join('')).toContain('redis://default:***@localhost:6379')
     expect(stderrOutput.join('')).not.toContain('secret')
   })
+
+  it('rejects plaintext redis:// when --require-tls is set', async () => {
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379', '--require-tls'])
+    expect(process.exitCode).toBe(1)
+    expect(stderrOutput.join('')).toContain('--require-tls')
+  })
+
+  it('allows rediss:// when --require-tls is set', async () => {
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'rediss://localhost:6379', '--require-tls'])
+    expect(process.exitCode).toBeUndefined()
+    expect(stdoutOutput.join('')).toContain('totalKeys')
+  })
+
+  it('warns about plaintext redis:// without --require-tls', async () => {
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379'])
+    expect(stderrOutput.join('')).toContain('Warning')
+    expect(stderrOutput.join('')).toContain('redis://')
+  })
 })

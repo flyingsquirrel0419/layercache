@@ -15,7 +15,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
-  <img src="https://img.shields.io/badge/tests-431_passing-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/tests-457_passing-brightgreen" alt="tests">
   <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260410" alt="Coveralls"></a>
 </p>
 
@@ -338,6 +338,29 @@ npm run bench:multi-process-fanout
 ```
 
 The benchmark harness defaults to `/root/cache-test/data/users.json` so the in-repo scripts stay aligned with the external reproduction workspace. Set `LAYERCACHE_BENCH_FIXTURE_PATH` if you want to point at a different workload fixture.
+
+Recent `npm run bench:slow-redis` sample:
+
+| Scenario | Result |
+|---|---|
+| 100ms RTT, strict L2 hit | ~100.932 ms |
+| 100ms RTT, strict cold miss | ~404.867 ms |
+| 500ms RTT, graceful L2 hit | ~199.988 ms |
+| 500ms RTT, graceful cold miss | ~201.243 ms |
+| 500ms RTT, strict L2 hit | timed out at 200 ms |
+| Dead Redis, graceful cold miss | ~401.625 ms |
+
+Recent `memory-pressure` sample from the same run:
+
+| Metric | Result |
+|---|---|
+| L1 max size / unique keys | 25 / 180 |
+| Evictions / retained L1 keys | 180 / 25 |
+| Revisit avg / p95 | 1.665 ms / 4.598 ms |
+| Revisit origin fetches | 0 |
+| GC count / total / max | 36 / 74.948 ms / 6.243 ms |
+| Event-loop max lag | 16.72 ms |
+| Heap delta | 10.631 MB |
 
 ---
 

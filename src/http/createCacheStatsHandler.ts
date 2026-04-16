@@ -1,12 +1,24 @@
 import type { CacheStack } from '../CacheStack'
 
 interface CacheStatsHandlerOptions {
+  /**
+   * @deprecated Exposing cache stats without authentication is a security risk.
+   * Provide an `authorize` callback instead. This option will be removed in a
+   * future release.
+   */
   allowPublicAccess?: boolean
   authorize?: (request: unknown) => boolean | Promise<boolean>
   unauthorizedStatusCode?: number
 }
 
 export function createCacheStatsHandler(cache: CacheStack, options: CacheStatsHandlerOptions = {}) {
+  if (options.allowPublicAccess === true) {
+    console.warn(
+      '[layercache] WARNING: Stats endpoint is publicly accessible without authentication. ' +
+        'Set allowPublicAccess: false (or provide an authorize callback) before deploying to production.'
+    )
+  }
+
   return async (
     request: unknown,
     response: {
