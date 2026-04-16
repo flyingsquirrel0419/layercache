@@ -75,7 +75,10 @@ export class RedisLayer implements CacheLayer {
   }
 
   async getEntry<T = unknown>(key: string): Promise<T | null> {
-    const payload = await this.runCommand(`get("${key}")`, () => this.client.getBuffer(this.withPrefix(key)))
+    this.validateKey(key)
+    const payload = await this.runCommand(`get(${this.displayKey(key)})`, () =>
+      this.client.getBuffer(this.withPrefix(key))
+    )
     if (payload === null) {
       return null
     }
@@ -86,6 +89,10 @@ export class RedisLayer implements CacheLayer {
   async getMany<T>(keys: string[]): Promise<Array<T | null>> {
     if (keys.length === 0) {
       return []
+    }
+
+    for (const key of keys) {
+      this.validateKey(key)
     }
 
     const pipeline = this.client.pipeline()
@@ -115,6 +122,10 @@ export class RedisLayer implements CacheLayer {
       return
     }
 
+    for (const entry of entries) {
+      this.validateKey(entry.key)
+    }
+
     const pipeline = this.client.pipeline()
     for (const entry of entries) {
       const serialized = this.primarySerializer().serialize(entry.value)
@@ -131,25 +142,32 @@ export class RedisLayer implements CacheLayer {
   }
 
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
+    this.validateKey(key)
     const serialized = this.primarySerializer().serialize(value)
     const payload = await this.encodePayload(serialized)
     const normalizedKey = this.withPrefix(key)
 
     if (ttl && ttl > 0) {
-      await this.runCommand(`set("${key}")`, () => this.client.set(normalizedKey, payload as never, 'EX', ttl))
+      await this.runCommand(`set(${this.displayKey(key)})`, () =>
+        this.client.set(normalizedKey, payload as never, 'EX', ttl)
+      )
       return
     }
 
-    await this.runCommand(`set("${key}")`, () => this.client.set(normalizedKey, payload as never))
+    await this.runCommand(`set(${this.displayKey(key)})`, () => this.client.set(normalizedKey, payload as never))
   }
 
   async delete(key: string): Promise<void> {
-    await this.runCommand(`delete("${key}")`, () => this.client.del(this.withPrefix(key)))
+    this.validateKey(key)
+    await this.runCommand(`delete(${this.displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
   }
 
   async deleteMany(keys: string[]): Promise<void> {
     if (keys.length === 0) {
       return
+    }
+    for (const key of keys) {
+      this.validateKey(key)
     }
     await this.runCommand(`deleteMany(${keys.length})`, () =>
       this.client.del(...keys.map((key) => this.withPrefix(key)))
@@ -157,12 +175,14 @@ export class RedisLayer implements CacheLayer {
   }
 
   async has(key: string): Promise<boolean> {
-    const exists = await this.runCommand(`has("${key}")`, () => this.client.exists(this.withPrefix(key)))
+    this.validateKey(key)
+    const exists = await this.runCommand(`has(${this.displayKey(key)})`, () => this.client.exists(this.withPrefix(key)))
     return exists > 0
   }
 
   async ttl(key: string): Promise<number | null> {
-    const remaining = await this.runCommand(`ttl("${key}")`, () => this.client.ttl(this.withPrefix(key)))
+    this.validateKey(key)
+    const remaining = await this.runCommand(`ttl(${this.displayKey(key)})`, () => this.client.ttl(this.withPrefix(key)))
     // -2 = key does not exist, -1 = key exists but no TTL
     if (remaining < 0) {
       return null
@@ -280,6 +300,28 @@ export class RedisLayer implements CacheLayer {
     return `${this.prefix}${key}`
   }
 
+  private validateKey(key: string): void {
+    if (key.length === 0) {
+      throw new Error('RedisLayer: key must not be empty.')
+    }
+
+    if (key.length > 1_024) {
+      throw new Error(`RedisLayer: key length must be at most 1 024 characters (got ${key.length}).`)
+    }
+
+    if (/[\u0000-\u001F\u007F]/.test(key)) {
+      throw new Error('RedisLayer: key contains unsupported control characters.')
+    }
+
+    if (/[\uD800-\uDFFF]/.test(key)) {
+      throw new Error('RedisLayer: key contains unsupported surrogate code points.')
+    }
+  }
+
+  private displayKey(key: string): string {
+    return key.length > 64 ? `${key.slice(0, 64)}...` : key
+  }
+
   private async deserializeOrDelete<T>(key: string, payload: string | Buffer): Promise<T | null> {
     let decodedPayload: string | Buffer
     try {
@@ -307,26 +349,31 @@ export class RedisLayer implements CacheLayer {
 
   private async deleteCorruptedKey(key: string): Promise<void> {
     try {
-      await this.runCommand(`deleteCorrupted("${key}")`, () => this.client.del(this.withPrefix(key)))
+      await this.runCommand(`deleteCorrupted(${this.displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
     } catch (deleteError) {
       // Log but don't throw — the original deserialization failure is the primary issue.
       // The corrupted key will be retried on next access.
-      console.warn(`[layercache] RedisLayer: failed to delete corrupted key "${key}"`, deleteError)
+      const displayKey = key.length > 64 ? `${key.slice(0, 64)}...` : key
+      console.warn(`[layercache] RedisLayer: failed to delete corrupted key "${displayKey}"`, deleteError)
     }
   }
 
   private async rewriteWithPrimarySerializer(key: string, value: unknown): Promise<void> {
     const serialized = this.primarySerializer().serialize(value)
     const payload = await this.encodePayload(serialized)
-    const ttl = await this.runCommand(`rewrite-ttl("${key}")`, () => this.client.ttl(this.withPrefix(key)))
+    const ttl = await this.runCommand(`rewrite-ttl(${this.displayKey(key)})`, () =>
+      this.client.ttl(this.withPrefix(key))
+    )
     if (ttl > 0) {
-      await this.runCommand(`rewrite-set("${key}")`, () =>
+      await this.runCommand(`rewrite-set(${this.displayKey(key)})`, () =>
         this.client.set(this.withPrefix(key), payload as never, 'EX', ttl)
       )
       return
     }
 
-    await this.runCommand(`rewrite-set("${key}")`, () => this.client.set(this.withPrefix(key), payload as never))
+    await this.runCommand(`rewrite-set(${this.displayKey(key)})`, () =>
+      this.client.set(this.withPrefix(key), payload as never)
+    )
   }
 
   private primarySerializer(): CacheSerializer {

@@ -144,7 +144,7 @@ export interface CacheStack {
 }
 
 export class CacheStack extends EventEmitter {
-  private readonly stampedeGuard = new StampedeGuard()
+  private readonly stampedeGuard: StampedeGuard
   private readonly metricsCollector = new MetricsCollector()
   private readonly instanceId = createInstanceId()
   private readonly startup: Promise<void>
@@ -183,6 +183,10 @@ export class CacheStack extends EventEmitter {
     const maxProfileEntries = options.maxProfileEntries ?? DEFAULT_MAX_PROFILE_ENTRIES
     this.ttlResolver = new TtlResolver({ maxProfileEntries })
     this.circuitBreakerManager = new CircuitBreakerManager({ maxEntries: maxProfileEntries })
+    this.stampedeGuard = new StampedeGuard({
+      maxInFlight: options.stampedeMaxInFlight,
+      entryTimeoutMs: options.stampedeEntryTimeoutMs
+    })
     this.currentGeneration = options.generation
 
     if (options.publishSetInvalidation !== undefined) {
@@ -517,7 +521,8 @@ export class CacheStack extends EventEmitter {
             }
 
             if (existing.fetch !== entry.fetch || existing.optionsSignature !== optionsSignature) {
-              throw new Error(`mget received conflicting entries for key "${entry.key}".`)
+              const displayKey = entry.key.length > 64 ? `${entry.key.slice(0, 64)}...` : entry.key
+              throw new Error(`mget received conflicting entries for key "${displayKey}".`)
             }
 
             return existing.promise

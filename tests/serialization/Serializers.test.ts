@@ -1,10 +1,14 @@
 import { encode } from '@msgpack/msgpack'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
 
 describe('JsonSerializer', () => {
   const serializer = new JsonSerializer()
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
   it('round-trips plain objects', () => {
     const value = { id: 1, name: 'alice', active: true }
@@ -51,6 +55,16 @@ describe('JsonSerializer', () => {
   it('rejects excessively wide payloads during deserialize', () => {
     const wide = Array.from({ length: 10_500 }, (_, index) => ({ [`k${index}`]: index }))
     expect(() => serializer.deserialize(JSON.stringify(wide))).toThrow(/max node count/i)
+  })
+
+  it('surfaces non-Error JSON.parse failures with a stringified message', () => {
+    vi.spyOn(JSON, 'parse').mockImplementation(() => {
+      throw 'parse failed'
+    })
+
+    expect(() => serializer.deserialize('{"ok":true}')).toThrow(
+      'JsonSerializer: failed to parse JSON payload: parse failed'
+    )
   })
 })
 

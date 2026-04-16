@@ -213,6 +213,8 @@ export interface CacheStackOptions {
   logger?: CacheLogger | boolean
   metrics?: boolean
   stampedePrevention?: boolean
+  stampedeMaxInFlight?: number
+  stampedeEntryTimeoutMs?: number
   invalidationBus?: InvalidationBus
   tagIndex?: CacheTagIndex
   generation?: number

@@ -36,7 +36,8 @@ export class CircuitBreakerManager {
 
     const remainingMs = state.openUntil - now
     const remainingSecs = Math.ceil(remainingMs / 1_000)
-    throw new Error(`Circuit breaker is open for key "${key}" (resets in ${remainingSecs}s).`)
+    const displayKey = key.length > 64 ? `${key.slice(0, 64)}...` : key
+    throw new Error(`Circuit breaker is open for key "${displayKey}" (resets in ${remainingSecs}s).`)
   }
 
   recordFailure(key: string, options: CacheCircuitBreakerOptions | undefined): void {

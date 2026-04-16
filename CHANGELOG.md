@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-04-17
+
+### Added
+- `PayloadProtection` for optional DiskLayer at-rest protection with AES-256-GCM encryption or HMAC-SHA256 signing.
+- `DiskLayer` options `encryptionKey` and `signingKey` for protected on-disk payloads, plus regression coverage for encrypted, signed, tampered, wrong-key, and MessagePack-backed disk entries.
+- `CacheStackOptions.stampedeMaxInFlight` and `CacheStackOptions.stampedeEntryTimeoutMs` so stampede-guard limits and per-entry timeouts can be configured from the main `CacheStack` API.
+- New CLI coverage for `--require-tls`, plus new RedisLayer, DiskLayer, StampedeGuard, and CacheStack stampede-option regression tests.
+
+### Changed
+- Version bumped from `1.3.0` to `1.3.1`.
+- `README.md` now reflects the current validation baseline with **467 passing tests**.
+- `README.md` performance docs now include a recent `bench:slow-redis` sample plus the matching `memory-pressure` results.
+- `DiskLayer.maxFiles` now defaults to `50_000`; `Infinity` remains available as an explicit opt-out for bounded file eviction.
+- `StampedeGuard` now supports configurable in-flight limits and entry timeouts, and `CacheStack` now wires those options through its built-in fetch dedupe path.
+- Error messages that include cache keys now truncate long keys across `CacheStack`, `CircuitBreakerManager`, `MemcachedLayer`, `RedisLayer`, and `StampedeGuard`.
+
+### Fixed
+- `DiskLayer` now preserves `Buffer` serializer payloads while applying optional payload protection, so MessagePack-backed disk entries continue to round-trip correctly.
+- `RedisLayer` key validation now applies consistently to batch operations (`getMany`, `setMany`, `deleteMany`) as well as single-key operations.
+- `JsonSerializer.deserialize()` now wraps `JSON.parse` failures with a clearer serializer-specific error message.
+- `createInstanceId()` no longer falls back to `Math.random()` and now requires a cryptographic random source.
+- CLI Redis handling now warns on plaintext `redis://` URLs and can reject them outright with `--require-tls`.
+
+### Security
+- Disk-backed cache payloads can now be encrypted or signed at rest, with tampering and wrong-key reads treated as cache misses.
+- Stats endpoint helpers now emit explicit warnings when public access is enabled without authorization callbacks.
+- `RedisLayer` now rejects empty keys, overly long keys, control characters, and surrogate code points even when used directly outside `CacheStack`.
+
 ## [1.3.0] — 2026-04-14
 
 ### Added

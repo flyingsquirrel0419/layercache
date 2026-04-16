@@ -3,10 +3,30 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiskLayer } from '../../src/layers/DiskLayer'
+import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
 
 describe('DiskLayer', () => {
   let dir: string
   let layer: DiskLayer
+
+  async function readLcFile(directory: string): Promise<Buffer> {
+    const files = await fs.readdir(directory)
+    const lcFile = files.find((f) => f.endsWith('.lc'))
+    if (!lcFile) throw new Error('No .lc file found in directory')
+    return fs.readFile(join(directory, lcFile))
+  }
+
+  async function tamperLastByte(directory: string): Promise<void> {
+    const files = await fs.readdir(directory)
+    const lcFile = files.find((f) => f.endsWith('.lc'))
+    if (!lcFile) throw new Error('No .lc file found in directory')
+    const filePath = join(directory, lcFile)
+    const raw = await fs.readFile(filePath)
+    const last = raw.length - 1
+    const byte = raw[last] ?? 0
+    raw.set([byte ^ 0xff], last)
+    await fs.writeFile(filePath, raw)
+  }
 
   beforeEach(async () => {
     dir = join(tmpdir(), `layercache-disk-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -277,5 +297,132 @@ describe('DiskLayer', () => {
 
     await expect(layer.keys()).resolves.toEqual([])
     await expect(fs.stat(invalidFile)).rejects.toThrow()
+  })
+
+  it('treats missing directories as empty scans', async () => {
+    const missingDir = join(dir, 'missing')
+    const missingLayer = new DiskLayer({ directory: missingDir, ttl: 60 })
+
+    const visited: string[] = []
+    await expect(missingLayer.keys()).resolves.toEqual([])
+    await expect(missingLayer.size()).resolves.toBe(0)
+    await expect(
+      missingLayer.forEachKey(async (key) => {
+        visited.push(key)
+      })
+    ).resolves.toBeUndefined()
+    expect(visited).toEqual([])
+  })
+
+  it('treats primitive disk payloads as invalid entries and removes them', async () => {
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const hash = createHash('sha256').update('primitive-bad').digest('hex')
+    const filePath = join(dir, `${hash}.lc`)
+    await fs.writeFile(filePath, JSON.stringify('oops'))
+
+    await expect(layer.get('primitive-bad')).resolves.toBeNull()
+    await expect(fs.stat(filePath)).rejects.toThrow()
+  })
+
+  describe('encryption (encryptionKey)', () => {
+    it('round-trips values with AES-256-GCM encryption', async () => {
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'test-secret-key' })
+      await encrypted.set('secret', { token: 'abc123' })
+      const result = await encrypted.get<{ token: string }>('secret')
+      expect(result).toEqual({ token: 'abc123' })
+    })
+
+    it('round-trips with encryption using MsgpackSerializer (Buffer serializer)', async () => {
+      const encrypted = new DiskLayer({
+        directory: dir,
+        ttl: 60,
+        serializer: new MsgpackSerializer(),
+        encryptionKey: 'msgpack-secret'
+      })
+      await encrypted.set('binary-key', { nums: [1, 2, 3], flag: true })
+      const result = await encrypted.get<{ nums: number[]; flag: boolean }>('binary-key')
+      expect(result).toEqual({ nums: [1, 2, 3], flag: true })
+    })
+
+    it('writes encrypted bytes that are not plaintext JSON', async () => {
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'test-key' })
+      await encrypted.set('data', { secret: 'value' })
+      const raw = await readLcFile(dir)
+      const asText = raw.toString('utf8')
+      expect(asText).not.toContain('"secret"')
+      expect(asText).not.toContain('"value"')
+    })
+
+    it('rejects reading tampered encrypted files', async () => {
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'original-key' })
+      await encrypted.set('tamper-test', { important: true })
+      await tamperLastByte(dir)
+
+      const result = await encrypted.get('tamper-test')
+      expect(result).toBeNull()
+    })
+
+    it('rejects encrypted data with the wrong key', async () => {
+      const writer = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'correct-key' })
+      await writer.set('locked', { data: 42 })
+
+      const reader = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'wrong-key' })
+      const result = await reader.get('locked')
+      expect(result).toBeNull()
+    })
+  })
+
+  describe('signing (signingKey)', () => {
+    it('round-trips values with HMAC-SHA256 signing', async () => {
+      const signed = new DiskLayer({ directory: dir, ttl: 60, signingKey: 'hmac-secret' })
+      await signed.set('signed-key', { payload: 'data' })
+      const result = await signed.get<{ payload: string }>('signed-key')
+      expect(result).toEqual({ payload: 'data' })
+    })
+
+    it('round-trips with signing using MsgpackSerializer (Buffer serializer)', async () => {
+      const signed = new DiskLayer({
+        directory: dir,
+        ttl: 60,
+        serializer: new MsgpackSerializer(),
+        signingKey: 'msgpack-hmac-key'
+      })
+      await signed.set('signed-binary', [1, 2, 3])
+      const result = await signed.get<number[]>('signed-binary')
+      expect(result).toEqual([1, 2, 3])
+    })
+
+    it('rejects tampered signed files', async () => {
+      const signed = new DiskLayer({ directory: dir, ttl: 60, signingKey: 'sign-key' })
+      await signed.set('verify-me', { val: 1 })
+      await tamperLastByte(dir)
+
+      const result = await signed.get('verify-me')
+      expect(result).toBeNull()
+    })
+
+    it('ignores signingKey when encryptionKey is also provided', async () => {
+      const both = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'enc-key', signingKey: 'sig-key' })
+      await both.set('both', { x: 1 })
+      const result = await both.get<{ x: number }>('both')
+      expect(result).toEqual({ x: 1 })
+
+      const raw = await readLcFile(dir)
+      expect(raw.subarray(0, 5).toString()).toBe('LCP1:')
+    })
+  })
+
+  describe('MsgpackSerializer without protection', () => {
+    it('round-trips values using binary serializer without encryption or signing', async () => {
+      const msgpackLayer = new DiskLayer({
+        directory: dir,
+        ttl: 60,
+        serializer: new MsgpackSerializer()
+      })
+      await msgpackLayer.set('binary', { arr: [1, 2, 3], nested: { a: true } })
+      const result = await msgpackLayer.get<{ arr: number[]; nested: { a: boolean } }>('binary')
+      expect(result).toEqual({ arr: [1, 2, 3], nested: { a: true } })
+    })
   })
 })

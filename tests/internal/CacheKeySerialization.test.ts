@@ -34,9 +34,8 @@ describe('CacheKeySerialization', () => {
     expect(serializeOptions({ tags: ['users'], shouldCache: undefined })).toContain('"tags":["users"]')
   })
 
-  it('creates instance ids using randomUUID, getRandomValues, or Math.random fallbacks', () => {
+  it('creates instance ids using randomUUID or getRandomValues, and throws when neither is available', () => {
     const originalCrypto = globalThis.crypto
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5)
 
     try {
       vi.stubGlobal('crypto', {
@@ -53,9 +52,8 @@ describe('CacheKeySerialization', () => {
       expect(createInstanceId()).toBe(`layercache-${'ab'.repeat(16)}`)
 
       vi.stubGlobal('crypto', undefined)
-      expect(createInstanceId()).toBe(`layercache-${'80'.repeat(16)}`)
+      expect(() => createInstanceId()).toThrow('layercache requires a cryptographic random source.')
     } finally {
-      randomSpy.mockRestore()
       vi.unstubAllGlobals()
       vi.stubGlobal('crypto', originalCrypto)
     }

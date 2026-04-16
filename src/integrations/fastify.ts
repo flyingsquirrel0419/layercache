@@ -14,12 +14,24 @@ interface FastifyLikeReply {
 interface FastifyLayercachePluginOptions {
   exposeStatsRoute?: boolean
   statsPath?: string
+  /**
+   * @deprecated Exposing cache stats without authentication is a security risk.
+   * Provide an `authorizeStatsRoute` callback instead. This option will be
+   * removed in a future release.
+   */
   allowPublicStatsRoute?: boolean
   authorizeStatsRoute?: (request: unknown) => boolean | Promise<boolean>
   unauthorizedStatusCode?: number
 }
 
 export function createFastifyLayercachePlugin(cache: CacheStack, options: FastifyLayercachePluginOptions = {}) {
+  if (options.exposeStatsRoute === true && options.allowPublicStatsRoute === true) {
+    console.warn(
+      '[layercache] WARNING: Cache stats route is publicly accessible without authentication. ' +
+        'Set allowPublicStatsRoute: false (or provide an authorizeStatsRoute callback) before deploying to production.'
+    )
+  }
+
   return async (fastify: FastifyLike): Promise<void> => {
     fastify.decorate('cache', cache)
 
