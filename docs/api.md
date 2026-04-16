@@ -776,7 +776,7 @@ app.get('/api/users', createExpressCacheMiddleware(cache, {
 ### Fastify
 
 ```ts
-import { createFastifyLayercachePlugin } from 'layercache/integrations/fastify'
+import { createFastifyLayercachePlugin } from 'layercache'
 
 await fastify.register(createFastifyLayercachePlugin(cache, {
   statsPath: '/cache/stats'
@@ -786,7 +786,7 @@ await fastify.register(createFastifyLayercachePlugin(cache, {
 ### Hono
 
 ```ts
-import { createHonoCacheMiddleware } from 'layercache/integrations/hono'
+import { createHonoCacheMiddleware } from 'layercache'
 
 app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60 }))
 ```
@@ -794,7 +794,7 @@ app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60 }))
 ### tRPC
 
 ```ts
-import { createTrpcCacheMiddleware } from 'layercache/integrations/trpc'
+import { createTrpcCacheMiddleware } from 'layercache'
 
 const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60 })
 export const cachedProcedure = t.procedure.use(cacheMiddleware)
@@ -803,7 +803,7 @@ export const cachedProcedure = t.procedure.use(cacheMiddleware)
 ### GraphQL
 
 ```ts
-import { cacheGraphqlResolver } from 'layercache/integrations/graphql'
+import { cacheGraphqlResolver } from 'layercache'
 
 const resolvers = {
   Query: {
@@ -818,7 +818,7 @@ const resolvers = {
 ### OpenTelemetry
 
 ```ts
-import { createOpenTelemetryPlugin } from 'layercache/integrations/opentelemetry'
+import { createOpenTelemetryPlugin } from 'layercache'
 
 createOpenTelemetryPlugin(cache, tracer)
 ```
