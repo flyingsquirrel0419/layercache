@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-04-17
+
+### Changed
+- Version bumped from `1.3.1` to `1.3.2`.
+- The separate NestJS workspace package and example were removed; `layercache` is now the only published package path documented in this repository.
+
+### Fixed
+- Framework integration examples in `docs/api.md` now import from the root `layercache` package, matching the actual package export map.
+
 ## [1.3.1] — 2026-04-17
 
 ### Added
