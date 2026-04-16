@@ -815,25 +815,6 @@ const resolvers = {
 }
 ```
 
-### NestJS
-
-```bash
-npm install @cachestack/nestjs
-```
-
-```ts
-import { CacheStackModule } from '@cachestack/nestjs'
-
-@Module({
-  imports: [
-    CacheStackModule.forRoot({
-      layers: [new MemoryLayer({ ttl: 20 }), new RedisLayer({ client: redis, ttl: 300 })]
-    })
-  ]
-})
-export class AppModule {}
-```
-
 ### OpenTelemetry
 
 ```ts

@@ -24,7 +24,7 @@ Run all checks before opening a PR:
 ```bash
 npm run lint        # Biome linting & formatting
 npm test            # Vitest test suite
-npm run build:all   # ESM + CJS + NestJS package
+npm run build:all   # ESM + CJS build
 ```
 
 Run tests in watch mode during development:
@@ -59,7 +59,6 @@ src/
   metrics/              # Prometheus exporter
   http/                 # Stats HTTP handler
 tests/                  # Mirror of src/ structure
-packages/nestjs/        # NestJS module workspace
 examples/               # Ready-to-run example projects
 benchmarks/             # Performance benchmarks
 docs/                   # Documentation

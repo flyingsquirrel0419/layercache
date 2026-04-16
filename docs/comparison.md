@@ -24,7 +24,6 @@ How does layercache compare to other popular Node.js caching libraries?
 | Persistence / snapshots | **Yes** | -- | -- | -- |
 | Compression | **Yes** | -- | -- | Yes |
 | Admin CLI | **Yes** | -- | -- | -- |
-| NestJS module | **Yes** | -- | -- | -- |
 | TypeScript-first | **Yes** | Partial | Yes | Yes |
 | Wrap / decorator API | **Yes** | Yes | -- | -- |
 | Namespaces | **Yes** | -- | Yes | Yes |

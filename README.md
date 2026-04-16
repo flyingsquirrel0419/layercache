@@ -182,7 +182,6 @@ layercache plugs into the frameworks you already use:
 | **Hono** | `createHonoCacheMiddleware(cache, opts)` - edge-compatible middleware |
 | **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - procedure middleware |
 | **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - field resolver wrapper |
-| **NestJS** | `@cachestack/nestjs` - `CacheStackModule.forRoot()`, `@Cacheable()` decorator |
 | **Next.js** | Works natively with App Router and API routes |
 | **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - event-driven tracing spans without monkey-patching |
 
@@ -201,42 +200,6 @@ app.get('/api/users', createExpressCacheMiddleware(cache, {
 }), async (req, res) => {
   res.json(await db.getUsers())
 })
-```
-
-</details>
-
-<details>
-<summary><b>NestJS example</b></summary>
-
-```bash
-npm install @cachestack/nestjs
-```
-
-```ts
-// app.module.ts
-import { CacheStackModule } from '@cachestack/nestjs'
-
-@Module({
-  imports: [
-    CacheStackModule.forRoot({
-      layers: [
-        new MemoryLayer({ ttl: 20 }),
-        new RedisLayer({ client: redis, ttl: 300 })
-      ]
-    })
-  ]
-})
-export class AppModule {}
-
-// user.service.ts
-@Injectable()
-export class UserService {
-  constructor(@InjectCacheStack() private readonly cache: CacheStack) {}
-
-  async getUser(id: number) {
-    return this.cache.get(`user:${id}`, () => this.db.findUser(id))
-  }
-}
 ```
 
 </details>
@@ -348,7 +311,6 @@ Benchmark commands, fixtures, and scenario notes live in [docs/benchmarking.md](
 | Persistence / snapshots | -- | -- | -- | **Yes** |
 | Compression | -- | -- | Yes | **Yes** |
 | Admin CLI | -- | -- | -- | **Yes** |
-| NestJS module | -- | -- | -- | **Yes** |
 | TypeScript-first | Partial | Yes | Yes | **Yes** |
 | Wrap / decorator API | Yes | -- | -- | **Yes** |
 | Namespaces | -- | Yes | Yes | **Yes** |
@@ -377,7 +339,6 @@ Benchmark commands, fixtures, and scenario notes live in [docs/benchmarking.md](
 The [`examples/`](./examples) directory contains ready-to-run projects:
 
 - [`express-api/`](./examples/express-api/) - Express REST API with layered caching
-- [`nestjs-module/`](./examples/nestjs-module/) - NestJS module integration
 - [`nextjs-api-routes/`](./examples/nextjs-api-routes/) - Next.js App Router with layercache
 
 ---
