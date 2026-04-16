@@ -44,4 +44,19 @@ describe('PayloadProtection', () => {
 
     expect(payload.subarray(0, 5).toString()).toBe('LCP1:')
   })
+
+  it('accepts Buffer key material for encryption and signing', () => {
+    const encrypted = new PayloadProtection({
+      encryptionKey: Buffer.from('enc-key')
+    })
+    const signed = new PayloadProtection({
+      signingKey: Buffer.from('sig-key')
+    })
+
+    const encryptedPayload = encrypted.protect(Buffer.from('secret'))
+    const signedPayload = signed.protect(Buffer.from('signed'))
+
+    expect(encrypted.unprotect(encryptedPayload).toString()).toBe('secret')
+    expect(signed.unprotect(signedPayload).toString()).toBe('signed')
+  })
 })
