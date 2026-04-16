@@ -299,6 +299,32 @@ describe('DiskLayer', () => {
     await expect(fs.stat(invalidFile)).rejects.toThrow()
   })
 
+  it('treats missing directories as empty scans', async () => {
+    const missingDir = join(dir, 'missing')
+    const missingLayer = new DiskLayer({ directory: missingDir, ttl: 60 })
+
+    const visited: string[] = []
+    await expect(missingLayer.keys()).resolves.toEqual([])
+    await expect(missingLayer.size()).resolves.toBe(0)
+    await expect(
+      missingLayer.forEachKey(async (key) => {
+        visited.push(key)
+      })
+    ).resolves.toBeUndefined()
+    expect(visited).toEqual([])
+  })
+
+  it('treats primitive disk payloads as invalid entries and removes them', async () => {
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const hash = createHash('sha256').update('primitive-bad').digest('hex')
+    const filePath = join(dir, `${hash}.lc`)
+    await fs.writeFile(filePath, JSON.stringify('oops'))
+
+    await expect(layer.get('primitive-bad')).resolves.toBeNull()
+    await expect(fs.stat(filePath)).rejects.toThrow()
+  })
+
   describe('encryption (encryptionKey)', () => {
     it('round-trips values with AES-256-GCM encryption', async () => {
       const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'test-secret-key' })
