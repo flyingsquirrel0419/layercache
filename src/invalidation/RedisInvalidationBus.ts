@@ -96,6 +96,9 @@ export class RedisInvalidationBus implements InvalidationBus {
       return
     }
 
+    // Invariant: handlers are snapshot-copied before iteration so that
+    // concurrent unsubscribe() calls during dispatch cannot skip a handler
+    // that was still registered when this dispatch started.
     await Promise.all(
       [...this.handlers].map(async (handler) => {
         try {

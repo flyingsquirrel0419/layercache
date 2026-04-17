@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `KeyDisplay` utility and dedicated regression tests to keep cache-key truncation consistent across logs and error messages.
+- New `CacheKeySerialization` coverage for flat primitive objects and mixed primitive/object arrays.
+
+### Changed
+- `README.md` now reflects the current validation baseline with **475 passing tests**.
+- OpenTelemetry docs now document the returned plugin handle and the need to call `plugin.uninstall()` during shutdown.
+- Cache-key display formatting is now centralized across `CacheStack`, `CircuitBreakerManager`, `MemcachedLayer`, `RedisLayer`, and `StampedeGuard`.
+
+### Fixed
+- `normalizeForSerialization()` now avoids unnecessary array/object rebuilding for already-flat primitive inputs while preserving recursive normalization for nested values.
+
 ## [1.3.2] — 2026-04-17
 
 ### Changed

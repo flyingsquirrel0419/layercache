@@ -820,7 +820,14 @@ const resolvers = {
 ```ts
 import { createOpenTelemetryPlugin } from 'layercache'
 
-createOpenTelemetryPlugin(cache, tracer)
+const plugin = createOpenTelemetryPlugin(cache, tracer)
+```
+
+The plugin subscribes to `operation-start` / `operation-end` events on the cache instance. Call `plugin.uninstall()` during shutdown to remove listeners and end any active spans — otherwise the listeners will remain attached for the lifetime of the cache.
+
+```ts
+// On shutdown:
+plugin.uninstall()
 ```
 
 ### Stats HTTP Handler

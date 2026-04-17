@@ -2,6 +2,7 @@ import { Readable, type Transform } from 'node:stream'
 import { promisify } from 'node:util'
 import { brotliCompress, createBrotliDecompress, createGunzip, gzip } from 'node:zlib'
 import type Redis from 'ioredis'
+import { displayKey } from '../internal/KeyDisplay'
 import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
@@ -76,9 +77,7 @@ export class RedisLayer implements CacheLayer {
 
   async getEntry<T = unknown>(key: string): Promise<T | null> {
     this.validateKey(key)
-    const payload = await this.runCommand(`get(${this.displayKey(key)})`, () =>
-      this.client.getBuffer(this.withPrefix(key))
-    )
+    const payload = await this.runCommand(`get(${displayKey(key)})`, () => this.client.getBuffer(this.withPrefix(key)))
     if (payload === null) {
       return null
     }
@@ -148,18 +147,18 @@ export class RedisLayer implements CacheLayer {
     const normalizedKey = this.withPrefix(key)
 
     if (ttl && ttl > 0) {
-      await this.runCommand(`set(${this.displayKey(key)})`, () =>
+      await this.runCommand(`set(${displayKey(key)})`, () =>
         this.client.set(normalizedKey, payload as never, 'EX', ttl)
       )
       return
     }
 
-    await this.runCommand(`set(${this.displayKey(key)})`, () => this.client.set(normalizedKey, payload as never))
+    await this.runCommand(`set(${displayKey(key)})`, () => this.client.set(normalizedKey, payload as never))
   }
 
   async delete(key: string): Promise<void> {
     this.validateKey(key)
-    await this.runCommand(`delete(${this.displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
+    await this.runCommand(`delete(${displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
   }
 
   async deleteMany(keys: string[]): Promise<void> {
@@ -176,13 +175,13 @@ export class RedisLayer implements CacheLayer {
 
   async has(key: string): Promise<boolean> {
     this.validateKey(key)
-    const exists = await this.runCommand(`has(${this.displayKey(key)})`, () => this.client.exists(this.withPrefix(key)))
+    const exists = await this.runCommand(`has(${displayKey(key)})`, () => this.client.exists(this.withPrefix(key)))
     return exists > 0
   }
 
   async ttl(key: string): Promise<number | null> {
     this.validateKey(key)
-    const remaining = await this.runCommand(`ttl(${this.displayKey(key)})`, () => this.client.ttl(this.withPrefix(key)))
+    const remaining = await this.runCommand(`ttl(${displayKey(key)})`, () => this.client.ttl(this.withPrefix(key)))
     // -2 = key does not exist, -1 = key exists but no TTL
     if (remaining < 0) {
       return null
@@ -318,10 +317,6 @@ export class RedisLayer implements CacheLayer {
     }
   }
 
-  private displayKey(key: string): string {
-    return key.length > 64 ? `${key.slice(0, 64)}...` : key
-  }
-
   private async deserializeOrDelete<T>(key: string, payload: string | Buffer): Promise<T | null> {
     let decodedPayload: string | Buffer
     try {
@@ -349,29 +344,26 @@ export class RedisLayer implements CacheLayer {
 
   private async deleteCorruptedKey(key: string): Promise<void> {
     try {
-      await this.runCommand(`deleteCorrupted(${this.displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
+      await this.runCommand(`deleteCorrupted(${displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
     } catch (deleteError) {
       // Log but don't throw — the original deserialization failure is the primary issue.
       // The corrupted key will be retried on next access.
-      const displayKey = key.length > 64 ? `${key.slice(0, 64)}...` : key
-      console.warn(`[layercache] RedisLayer: failed to delete corrupted key "${displayKey}"`, deleteError)
+      console.warn(`[layercache] RedisLayer: failed to delete corrupted key "${displayKey(key)}"`, deleteError)
     }
   }
 
   private async rewriteWithPrimarySerializer(key: string, value: unknown): Promise<void> {
     const serialized = this.primarySerializer().serialize(value)
     const payload = await this.encodePayload(serialized)
-    const ttl = await this.runCommand(`rewrite-ttl(${this.displayKey(key)})`, () =>
-      this.client.ttl(this.withPrefix(key))
-    )
+    const ttl = await this.runCommand(`rewrite-ttl(${displayKey(key)})`, () => this.client.ttl(this.withPrefix(key)))
     if (ttl > 0) {
-      await this.runCommand(`rewrite-set(${this.displayKey(key)})`, () =>
+      await this.runCommand(`rewrite-set(${displayKey(key)})`, () =>
         this.client.set(this.withPrefix(key), payload as never, 'EX', ttl)
       )
       return
     }
 
-    await this.runCommand(`rewrite-set(${this.displayKey(key)})`, () =>
+    await this.runCommand(`rewrite-set(${displayKey(key)})`, () =>
       this.client.set(this.withPrefix(key), payload as never)
     )
   }

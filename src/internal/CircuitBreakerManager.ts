@@ -1,4 +1,5 @@
 import type { CacheCircuitBreakerOptions } from '../types'
+import { displayKey } from './KeyDisplay'
 
 interface CircuitBreakerState {
   failures: number
@@ -36,8 +37,7 @@ export class CircuitBreakerManager {
 
     const remainingMs = state.openUntil - now
     const remainingSecs = Math.ceil(remainingMs / 1_000)
-    const displayKey = key.length > 64 ? `${key.slice(0, 64)}...` : key
-    throw new Error(`Circuit breaker is open for key "${displayKey}" (resets in ${remainingSecs}s).`)
+    throw new Error(`Circuit breaker is open for key "${displayKey(key)}" (resets in ${remainingSecs}s).`)
   }
 
   recordFailure(key: string, options: CacheCircuitBreakerOptions | undefined): void {

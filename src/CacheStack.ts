@@ -40,6 +40,7 @@ import {
 } from './internal/CacheStackValidation'
 import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
 import { FetchRateLimiter } from './internal/FetchRateLimiter'
+import { displayKey } from './internal/KeyDisplay'
 import { MetricsCollector } from './internal/MetricsCollector'
 import { isStoredValueEnvelope, remainingStoredTtlSeconds, resolveStoredValue } from './internal/StoredValue'
 import { TtlResolver } from './internal/TtlResolver'
@@ -521,8 +522,7 @@ export class CacheStack extends EventEmitter {
             }
 
             if (existing.fetch !== entry.fetch || existing.optionsSignature !== optionsSignature) {
-              const displayKey = entry.key.length > 64 ? `${entry.key.slice(0, 64)}...` : entry.key
-              throw new Error(`mget received conflicting entries for key "${displayKey}".`)
+              throw new Error(`mget received conflicting entries for key "${displayKey(entry.key)}".`)
             }
 
             return existing.promise

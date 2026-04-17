@@ -58,4 +58,19 @@ describe('CacheKeySerialization', () => {
       vi.stubGlobal('crypto', originalCrypto)
     }
   })
+
+  it('normalizes flat primitive-only objects without sorting when already sorted', () => {
+    const input = { a: 1, b: 'two', c: true }
+    expect(normalizeForSerialization(input)).toEqual({ a: 1, b: 'two', c: true })
+  })
+
+  it('normalizes arrays of primitives without re-creating the array', () => {
+    const input = ['x', 1, true, null]
+    expect(normalizeForSerialization(input)).toEqual(['x', 1, true, null])
+  })
+
+  it('normalizes arrays containing nested objects correctly', () => {
+    const input = [{ b: 2, a: 1 }, 'flat']
+    expect(normalizeForSerialization(input)).toEqual([{ a: 1, b: 2 }, 'flat'])
+  })
 })

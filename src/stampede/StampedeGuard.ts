@@ -1,3 +1,5 @@
+import { displayKey } from '../internal/KeyDisplay'
+
 interface InFlightEntry<T = unknown> {
   promise: Promise<T>
   references: number
@@ -64,11 +66,7 @@ export class StampedeGuard {
   private withTimeout<T>(key: string, promise: Promise<T>, timeoutMs: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(
-          new Error(
-            `StampedeGuard: task for key "${key.slice(0, 64)}${key.length > 64 ? '...' : ''}" timed out after ${timeoutMs}ms.`
-          )
-        )
+        reject(new Error(`StampedeGuard: task for key "${displayKey(key)}" timed out after ${timeoutMs}ms.`))
       }, timeoutMs)
 
       promise.then(
