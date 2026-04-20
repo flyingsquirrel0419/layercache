@@ -281,18 +281,18 @@ const cache = new CacheStack(
 ## Rendimiento
 
 ```
-┌──────────────────────┬────────────────┐
-│ Escenario             │ Latencia prom. │
-├──────────────────────┼────────────────┤
-│ Hit L1 memoria        │   ~0.006 ms   │
-│ Hit L2 Redis          │   ~0.020 ms   │
-│ Sin caché (sim. DB)   │   ~1.08  ms   │
-└──────────────────────┴────────────────┘
+┌─────────────────────────┬──────────────┐
+│ Scenario                │ Avg Latency  │
+├─────────────────────────┼──────────────┤
+│ L1 memory hit           │   ~0.006 ms  │
+│ L2 Redis hit            │   ~0.020 ms  │
+│ No cache (simulated DB) │   ~1.08  ms  │
+└─────────────────────────┴──────────────┘
 
-┌──────────────────────┬────────┐
-│ Requests concurrentes │  100   │
-│ Ejecuciones fetcher   │    1   │  <-- prevención de avalanchas
-└──────────────────────┴────────┘
+┌───────────────────────────┬────────┐
+│ Concurrent requests        │  100   │
+│ Fetcher executions         │    1   │  <-- stampede prevention
+└───────────────────────────┴────────┘
 ```
 
 Los comandos de benchmark, fixtures y escenarios están en la [doc de benchmarks](../benchmarking.md).
