@@ -55,7 +55,7 @@ Solución casera       --> Funciona... hasta que necesitas prevenir avalanchas,
 
 ```
               ┌───────────────────────────────────────┐
-  your app ---->│             layercache                │
+your app ---->│             layercache                │
               │                                       │
               │  L1 Memory   ~0.01ms  (in-process)    │
               │      |                                │

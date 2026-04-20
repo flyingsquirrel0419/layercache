@@ -54,7 +54,7 @@ Redis만 쓰면             --> 공유는 되지만, 매번 네트워크 비용�
 
 ```
               ┌───────────────────────────────────────┐
-  your app ---->│             layercache                │
+your app ---->│             layercache                │
               │                                       │
               │  L1 Memory   ~0.01ms  (in-process)    │
               │      |                                │
