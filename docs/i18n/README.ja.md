@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>Node.js にふさわしいマルチレイヤーキャッシュツールキット。</strong><br>
-  <em>メモリ + Redis + ディスクをスタック。ひとつの API。スタンピードゼロ。</em>
+  <strong>Node.js にこそ届けたい、マルチレイヤーキャッシュツールキット。</strong><br>
+  <em>メモリ + Redis + ディスクをまとめて。スタンピードの心配なし。</em>
 </p>
 
 <p align="center">
@@ -36,36 +36,37 @@
 
 ---
 
-## 課題
+## みんなぶつかる壁
 
-成長する Node.js サービスはすべて、同じキャッシュの壁にぶつかる：
+Node.js サービスが大きくなると、誰もが同じキャッシュの壁にぶつかる：
 
 ```
-メモリオンリーキャッシュ     --> 高速だが、各インスタンスが異なるデータを保持
-Redis オンリーキャッシュ     --> 共有されるが、リクエストごとにネットワーク往復コストが発生
-手作りのハイブリッド         --> 動く... スタンピード防止、無効化、
-                               期限切れデータの提供、オブザーバビリティ、分散整合性が必要になるまでは
+メモリだけ              --> 速いけど、インスタンスごとにデータが違う
+Redis だけ              --> 共享できるけど、毎回ネットワーク往復がかかる
+手作りのハイブリッド    --> とりあえず動く…スタンピード防止、無効化、
+                          期限切れデータの配信、可観測性、分散整合性が
+                          必要になったらもうお手上げ
 ```
 
-## ソリューション
+## layercache のやり方
 
-**layercache** は、プロダクションレベルの機能を組み込んだ統合マルチレイヤーキャッシュを提供する：
+**layercache** は、プロダクションですぐ使えるマルチレイヤーキャッシュです：
 
 ```
               ┌───────────────────────────────────────┐
-あなたのアプリ ---->│             layercache                │
+  your app ---->│             layercache                │
               │                                       │
-              │  L1 メモリ     ~0.01ms  (プロセス内)     │
+              │  L1 Memory   ~0.01ms  (in-process)    │
               │      |                                │
-              │  L2 Redis      ~0.5ms   (共有)         │
+              │  L2 Redis    ~0.5ms   (shared)        │
               │      |                                │
-              │  L3 ディスク   ~2ms     (永続的)       │
+              │  L3 Disk     ~2ms     (persistent)    │
               │      |                                │
-              │  Fetcher       ~20ms    (1回のみ実行)  │
+              │  Fetcher     ~20ms    (runs once)     │
               └───────────────────────────────────────┘
 
-ヒット時  --> 最速レイヤーから提供、残りのレイヤーに自動バックフィル
-ミス時 --> fetcher が1回のみ実行される（100倍の同時リクエストでも）
+ヒット   --> 一番速いレイヤーから返して、残りにも自動でバックフィル
+ミス   --> fetcher は 1 回しか走らない（100 倍の同時リクエストでも）
 ```
 
 ---
@@ -82,15 +83,15 @@ import Redis from 'ioredis'
 
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: プロセス内
-  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: 共有
+  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: Redis
 ])
 
-// リードスルー(read-through): fetcher が1回実行され、全レイヤーにフィルされる
+// 自動で取ってきて、自動で詰めてくれる（read-through）
 const user = await cache.get('user:123', () => db.findUser(123))
 ```
 
 <details>
-<summary><b>メモリオンリー（Redis 不要）</b></summary>
+<summary><b>メモリだけでいい場合（Redis 不要）</b></summary>
 
 ```ts
 const cache = new CacheStack([
@@ -101,7 +102,7 @@ const cache = new CacheStack([
 </details>
 
 <details>
-<summary><b>ディスク永続化を含む3層構成</b></summary>
+<summary><b>ディスクまで 3 層にする場合</b></summary>
 
 ```ts
 import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
@@ -123,71 +124,71 @@ const cache = new CacheStack([
 
 | 機能 | 説明 |
 |---|---|
-| **階層型読み取り + 自動バックフィル** | L1 を先に読み取り、部分ヒット時は上層を自動フィル |
-| **スタンピード防止(stampede prevention)** | 同一キーへの100の同時リクエスト = fetcher の実行は1回 |
-| **分散シングルフライト(single-flight)** | Redis ロックとリース更新によるインスタンス間重複排除 |
-| **バルク操作** | `getMany()` / `setMany()` / `mdelete()` — レイヤーレベルの高速パス |
-| **`wrap()` API** | 自動キー導出による透過的関数キャッシング |
-| **ネームスペース** | 階層プレフィックス対応のスコープ付きキャッシュビュー |
-| **キャッシュウォーミング** | 起動時の優先度ベースローディングでレイヤーを事前フィル |
-| **ネガティブキャッシュ** | キャッシュミス（例：「ユーザーが見つかりません」）を短い TTL でキャッシュ |
+| **階層読み取り + 自動バックフィル** | L1 を先に見て、空いているレイヤーに自動で詰める |
+| **スタンピード防止** | 同じキーに 100 リクエスト来ても fetcher は 1 回しか実行しない |
+| **分散シングルフライト** | Redis ロックでインスタンス間の重複 fetch を排除 |
+| **バルク操作** | `getMany()` / `setMany()` / `mdelete()` でまとめて処理 |
+| **`wrap()` API** | 関数をくるむだけでキーを自動導出してキャッシュしてくれる |
+| **ネームスペース** | 階層プレフィックスでキャッシュ領域をきれいに分けられる |
+| **キャッシュウォーミング** | 起動時に優先度順にホットデータを詰めておく |
+| **ネガティブキャッシュ** | 「ユーザーなし」のような結果も短い TTL でキャッシュして DB を守る |
 
 ### 無効化と鮮度
 
 | 機能 | 説明 |
 |---|---|
-| **タグ無効化** | 指定タグを持つすべてのキーを全レイヤーから削除 |
-| **バッチタグ無効化** | `any` / `all` セマンティクスによるマルチタグ操作 |
-| **ワイルドカード & プレフィックス無効化** | glob スタイルおよび階層キーパターン |
-| **ジェネレーションベースローテーション** | スキャンなしでネームスペースを一括無効化 |
-| **Stale-while-revalidate** | キャッシュ値を返しつつバックグラウンドでリフレッシュ |
-| **Stale-if-error** | 上流障害時に期限切れデータを提供し続ける |
-| **スライディング TTL(sliding TTL)** | 頻繁にアクセスされるキーの有効期限を読み取りごとにリセット |
-| **アダプティブ TTL(adaptive TTL)** | ホットキーの TTL を上限まで自動増加 |
-| **Refresh-ahead** | 有効期限切れ前にプロアクティブにリフレッシュ |
-| **TTL ポリシー** | 有効期限をカレンダー境界に合わせる（`until-midnight`、`next-hour`、カスタム） |
+| **タグ無効化** | タグ一つで、全レイヤーの関連キーをまとめて削除 |
+| **バッチタグ無効化** | `any` / `all` セマンティクスで複数タグを一括処理 |
+| **ワイルドカード / プレフィックス無効化** | `user:*` のようなパターンマッチで範囲削除 |
+| **ジェネレーションローテーション** | スキャンなしでネームスペースごと丸ごと切り替え |
+| **Stale-while-revalidate** | キャッシュ値を先に返して、バックグラウンドでこっそりリフレッシュ |
+| **Stale-if-error** | 上流が落ちたら期限切れデータでもとにかく返す |
+| **スライディング TTL** | よく読まれるキーは読むたびに有効期限が延びる |
+| **アダプティブ TTL** | 人気キーほど TTL が自動で伸びていく |
+| **Refresh-ahead** | 期限切れになる前に裏でリフレッシュしておく |
+| **TTL ポリシー** | 0 時ぴったり、n 時ぴったりなど、期限をカレンダー境界に合わせられる |
 
 ### レジリエンスと運用
 
 | 機能 | 説明 |
 |---|---|
-| **グレースフルデグラデーション(graceful degradation)** | 障害レイヤーを一時的にスキップし、キャッシュを利用可能に維持 |
-| **サーキットブレーカー(circuit breaker)** | 繰り返しの失敗後、故障した上流へのリクエストを停止 |
-| **Fetcher レートリミット** | グローバル、キー単位、fetcher 単位のスコープとカスタムバケット |
-| **書き込みポリシー** | `strict`（いずれかのレイヤーが失敗すれば全体失敗）または `best-effort` |
-| **Write-behind** | 設定可能なフラッシュ間隔によるバッチ書き込み |
-| **圧縮** | RedisLayer での gzip / brotli（設定可能なしきい値） |
-| **MessagePack** | プラグイン可能なシリアライザー（JSON デフォルト、MessagePack 代替） |
-| **永続性** | メモリまたはディスクへのスナップショットのエクスポート/インポート |
+| **グレースフルデグラデーション** | レイヤーが死んだら一時スキップ、キャッシュ自体は動き続ける |
+| **サーキットブレーカー** | 何度も失敗する上流には自動でストップをかける |
+| **Fetcher レートリミット** | グローバル / キーごと / fetcher ごとに呼び出しを制御 |
+| **書き込みポリシー** | `strict`（1 レイヤーでも失敗したらロールバック）か `best-effort` |
+| **Write-behind** | 書き込みをまとめて、設定間隔で一気にフラッシュ |
+| **圧縮** | RedisLayer で gzip / brotli をそのまま使える |
+| **MessagePack** | JSON と MessagePack を差し替え可能なシリアライザー |
+| **スナップショット** | メモリやディスクに状態を保存して、いつでも復元 |
 
-### オブザーバビリティ
+### 可観測性
 
 | 機能 | 説明 |
 |---|---|
-| **メトリクス** | ヒット、ミス、フェッチ、ステールヒット、サーキットブレーカートリップなど |
-| **レイヤー別レイテンシ** | Welford アルゴリズムによる平均、最大、サンプル数 |
-| **ヘルスチェック** | レイテンシ測定付きのレイヤー別非同期ヘルスエンドポイント |
+| **メトリクス** | ヒット、ミス、フェッチ、ステールヒット、サーキットブレーカートリップをすべて追跡 |
+| **レイヤー別レイテンシ** | Welford アルゴリズムで平均・最大・サンプル数を計測 |
+| **ヘルスチェック** | レイヤーごとの非同期ヘルスエンドポイント、レイテンシも測れる |
 | **イベントフック** | `hit`、`miss`、`set`、`delete`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
-| **OpenTelemetry** | メソッドのモンキーパッチなしのフックベース分散トレーシング |
-| **Prometheus エクスポーター** | レイテンシゲージを含むメトリクスエクスポート |
-| **HTTP 統計ハンドラー** | ダッシュボード向け JSON エンドポイント |
-| **管理 CLI** | Redis 対応キャッシュ向け `npx layercache stats|keys|invalidate` |
+| **OpenTelemetry** | コードに手を入れず、イベントフックだけで分散トレーシングに接続 |
+| **Prometheus エクスポーター** | レイテンシゲージ付きでメトリクスをエクスポート |
+| **HTTP 統計ハンドラー** | ダッシュボードにそのまま使える JSON エンドポイント |
+| **管理 CLI** | `npx layercache stats\|keys\|invalidate` |
 
 ---
 
 ## 統合
 
-layercache は利用中のフレームワークにプラグインできる：
+使い慣れたフレームワークに数行でつなげる：
 
 | フレームワーク | 統合 |
 |---|---|
-| **Express** | `createExpressCacheMiddleware(cache, opts)` - `x-cache: HIT/MISS` ヘッダー付きでレスポンスを自動キャッシュ |
-| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` - `fastify.cache` を登録、オプションの統計ルート |
-| **Hono** | `createHonoCacheMiddleware(cache, opts)` - エッジ対応ミドルウェア |
-| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - プロシージャミドルウェア |
-| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - フィールドリゾルバーラッパー |
-| **Next.js** | App Router と API ルートでネイティブ動作 |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - モンキーパッチなしのイベント駆動トレーシングスパン |
+| **Express** | `createExpressCacheMiddleware(cache, opts)` — `x-cache: HIT/MISS` ヘッダー付きでレスポンスを自動キャッシュ |
+| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` — `fastify.cache` プラグイン登録、統計ルートも選べる |
+| **Hono** | `createHonoCacheMiddleware(cache, opts)` — エッジ環境でも動くミドルウェア |
+| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` — プロシージャミドルウェア |
+| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` — フィールドリゾルバーラッパー |
+| **Next.js** | App Router、API ルートでそのまま使える |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` — monkey-patch 不要のイベント駆動トレーシング |
 
 <details>
 <summary><b>Express の例</b></summary>
@@ -222,27 +223,27 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
 ---
 
-## 分散デプロイメント
+## 分散デプロイ
 
-layercache はマルチインスタンスのプロダクション環境向けに設計されている：
+マルチインスタンスのプロダクションでも問題なし：
 
 ```
   ┌───────────┐    ┌───────────┐    ┌───────────┐
-  │ サーバー A  │    │ サーバー B  │    │ サーバー C  │
+  │ Server A  │    │ Server B  │    │ Server C  │
   │ [Memory]  │    │ [Memory]  │    │ [Memory]  │
   └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
         │                │                │
-        └──── Redis Pub/Sub ──────────────┘  <-- L1 無効化バス
+        └──── Redis Pub/Sub ──────────────┘  <-- L1 invalidation bus
                      │
                ┌─────┴──────┐
-               │   Redis    │  <-- 共有 L2 + タグインデックス + シングルフライト
+               │   Redis    │  <-- shared L2 + tag index + single-flight
                └────────────┘
 ```
 
-- **Redis シングルフライト** - 分散ロックによるインスタンス間ミス重複排除
-- **Redis 無効化バス** - Pub/Sub ベースの L1 無効化でメモリ整合性を保証
-- **Redis タグインデックス** - オプションのシャーディング付き共有タグトラッキング
-- **スナップショット永続性** - インスタンス間での状態エクスポート/インポート
+- **Redis シングルフライト** — 分散ロックでインスタンス間の重複 fetch を防止
+- **Redis 無効化バス** — Pub/Sub で L1 キャッシュをリアルタイムに無効化
+- **Redis タグインデックス** — 共有タグトラッキング、シャーディングも OK
+- **スナップショット** — インスタンス間でキャッシュ状態をエクスポート / インポート
 
 <details>
 <summary><b>完全な分散構成</b></summary>
@@ -279,21 +280,21 @@ const cache = new CacheStack(
 ## パフォーマンス
 
 ```
-┌─────────────────────┬──────────────┐
-│ シナリオ             │ 平均レイテンシ │
-├─────────────────────┼──────────────┤
-│ L1 メモリヒット       │   ~0.006 ms  │
-│ L2 Redis ヒット      │   ~0.020 ms  │
+┌──────────────────────┬──────────────┐
+│ シナリオ              │ 平均レイテンシ │
+├──────────────────────┼──────────────┤
+│ L1 メモリヒット        │   ~0.006 ms  │
+│ L2 Redis ヒット       │   ~0.020 ms  │
 │ キャッシュなし(DB模擬) │   ~1.08  ms  │
-└─────────────────────┴──────────────┘
+└──────────────────────┴──────────────┘
 
-┌─────────────────────┬────────┐
-│ 同時リクエスト数       │  100   │
-│ fetcher 実行回数      │    1   │  <-- スタンピード防止
-└─────────────────────┴────────┘
+┌──────────────────────┬────────┐
+│ 同時リクエスト数        │  100   │
+│ fetcher 実行回数       │    1   │  <-- スタンピード防止
+└──────────────────────┴────────┘
 ```
 
-ベンチマークコマンド、フィクスチャ、シナリオノートは[ベンチマークドキュメント](../benchmarking.md)を参照。
+ベンチマークコマンドとシナリオ説明は[ベンチマークドキュメント](../benchmarking.md)にあります。
 
 ---
 
@@ -312,7 +313,7 @@ const cache = new CacheStack(
 | グレースフルデグラデーション | -- | -- | -- | **Yes** |
 | スライディング / アダプティブ TTL | -- | -- | -- | **Yes** |
 | キャッシュウォーミング | -- | -- | -- | **Yes** |
-| 永続性 / スナップショット | -- | -- | -- | **Yes** |
+| スナップショット永続性 | -- | -- | -- | **Yes** |
 | 圧縮 | -- | -- | Yes | **Yes** |
 | 管理 CLI | -- | -- | -- | **Yes** |
 | TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
@@ -321,7 +322,7 @@ const cache = new CacheStack(
 | イベントフック | Yes | Yes | Yes | **Yes** |
 | カスタムレイヤー | 部分 | -- | -- | **Yes** |
 
-> 詳細は[比較ガイド](../comparison.md)を参照。
+> 詳しい比較は[比較ガイド](../comparison.md)をどうぞ。
 
 ---
 
@@ -329,9 +330,9 @@ const cache = new CacheStack(
 
 | ドキュメント | 説明 |
 |---|---|
-| [API リファレンス](../api.md) | すべてのオプションを含む完全な API ドキュメント |
-| [チュートリアル](../tutorial.md) | ステップバイステップの操作ウォークスルー |
-| [比較ガイド](../comparison.md) | 代替ソリューションとの詳細な機能比較 |
+| [API リファレンス](../api.md) | すべてのオプションを網羅した完全な API ドキュメント |
+| [チュートリアル](../tutorial.md) | 手を動かしながら学ぶステップバイステップガイド |
+| [比較ガイド](../comparison.md) | 他のキャッシュライブラリとの詳細比較 |
 | [移行ガイド](../migration-guide.md) | node-cache-manager、keyv、cacheable からの移行 |
 | [ベンチマーキング](../benchmarking.md) | ベンチマークシナリオと方法論 |
 | [チェンジログ](../../CHANGELOG.md) | バージョン履歴と破壊的変更 |
@@ -340,26 +341,26 @@ const cache = new CacheStack(
 
 ## サンプル
 
-[`examples/`](../../examples) ディレクトリにすぐに実行できるプロジェクトが含まれている：
+[`examples/`](../../examples) ディレクトリにすぐ動かせるプロジェクトがあります：
 
-- [`express-api/`](../../examples/express-api/) - 階層キャッシュを使用した Express REST API
-- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) - layercache を使用した Next.js App Router
+- [`express-api/`](../../examples/express-api/) — Express REST API に階層キャッシュを適用
+- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) — Next.js App Router に layercache を統合
 
 ---
 
 ## 要件
 
 - **Node.js** >= 20
-- **TypeScript** >= 5.0（オプション - 完全な型サポート、`.d.ts` 同梱）
-- **ioredis** >= 5（オプション - Redis 機能にのみ必要）
+- **TypeScript** >= 5.0（オプション — 型定義付き、`.d.ts` 同梱）
+- **ioredis** >= 5（オプション — Redis を使わないなら不要）
 
-<sub>ランタイム依存関係: `async-mutex` および `@msgpack/msgpack`</sub>
+<sub>ランタイム依存は `async-mutex` と `@msgpack/msgpack` のみ</sub>
 
 ---
 
 ## コントリビュート
 
-コントリビュートを歓迎する - バグ修正、ドキュメント、パフォーマンス改善、新しいアダプター、Issue など。
+バグ修正、ドキュメント改善、パフォーマンス最適化、新しいアダプター — なんでも歓迎。
 
 ```bash
 git clone https://github.com/flyingsquirrel0419/layercache
@@ -368,16 +369,16 @@ npm install
 npm run lint && npm test && npm run build:all
 ```
 
-[コントリビュートガイド](../../CONTRIBUTING.md)と[行動規範](../../CODE_OF_CONDUCT.md)を参照。
+[コントリビュートガイド](../../CONTRIBUTING.md)と[行動規範](../../CODE_OF_CONDUCT.md)をご一読ください。
 
 ---
 
 ## ライセンス
 
-[Apache 2.0](../../LICENSE) - 個人・商用プロジェクトで自由に利用可能。
+[Apache 2.0](../../LICENSE) — 個人・商用問わず自由に使えます。
 
 ---
 
 <p align="center">
-  layercache が時間を節約してくれたら、<a href="https://github.com/flyingsquirrel0419/layercache">GitHub でスター</a>を付けてください。他の人にプロジェクトを見つけやすくなります。
+  layercache で時間が節約できたら、<a href="https://github.com/flyingsquirrel0419/layercache">GitHub で ⭐ スター</a>をお願いします。他の人に見つけてもらいやすくなります。
 </p>

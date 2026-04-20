@@ -10,7 +10,7 @@
 
 <p align="center">
   <strong>El toolkit de caché multicapa que Node.js merece.</strong><br>
-  <em>Memoria + Redis + disco en un stack. Una API. Cero avalanchas.</em>
+  <em>Memoria + Redis + disco en un solo stack. Una API. Cero avalanchas.</em>
 </p>
 
 <p align="center">
@@ -36,37 +36,38 @@
 
 ---
 
-## El problema
+## El problema que todos conocen
 
-Todo servicio Node.js en crecimiento choca con el mismo muro de caché:
+Todo servicio Node.js que crece se choca con el mismo muro:
 
 ```
-Caché solo en memoria    --> Rápido, pero cada instancia ve datos distintos
-Caché solo en Redis      --> Compartido, pero cada solicitud paga un viaje de red
-Solución híbrida manual  --> Funciona... hasta que necesitas prevención de avalanchas,
-                            invalidación, servicio de datos expirados,
-                            observabilidad y consistencia distribuida
+Solo memoria          --> Rápido, pero cada instancia ve datos distintos
+Solo Redis            --> Compartido, sí, pero cada request paga un round-trip
+Solución casera       --> Funciona... hasta que necesitas prevenir avalanchas,
+                          invalidar por tags, servir datos expirados cuando
+                          el origen falla, tener observabilidad y consistencia
+                          distribuida. Ahí se complica.
 ```
 
-## La solución
+## La propuesta de layercache
 
-**layercache** ofrece una caché multicapa unificada con funciones de nivel producción integradas:
+**layercache** te da una caché multicapa unificada, lista para producción:
 
 ```
               ┌───────────────────────────────────────┐
-tu app  ---->│             layercache                │
+  your app ---->│             layercache                │
               │                                       │
-              │  L1 Memoria    ~0.01ms  (por proceso) │
+              │  L1 Memory   ~0.01ms  (in-process)    │
               │      |                                │
-              │  L2 Redis      ~0.5ms   (compartido)  │
+              │  L2 Redis    ~0.5ms   (shared)        │
               │      |                                │
-              │  L3 Disco      ~2ms     (persistente) │
+              │  L3 Disk     ~2ms     (persistent)    │
               │      |                                │
-              │  Fetcher       ~20ms    (se ejecuta 1 vez) │
+              │  Fetcher     ~20ms    (runs once)     │
               └───────────────────────────────────────┘
 
-En hit   --> sirve desde la capa más rápida, rellena las demás automáticamente
-En miss  --> el fetcher se ejecuta UNA vez (incluso con 100x de concurrencia)
+Hit    --> devuelve de la capa más rápida y rellena las demás
+Miss   --> el fetcher se ejecuta UNA vez (incluso con 100x concurrencia)
 ```
 
 ---
@@ -83,15 +84,15 @@ import Redis from 'ioredis'
 
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: en proceso
-  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: compartido
+  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: Redis
 ])
 
-// Lectura pasiva(read-through): el fetcher se ejecuta una vez, todas las capas se llenan
+// Lee y rellena automáticamente (read-through)
 const user = await cache.get('user:123', () => db.findUser(123))
 ```
 
 <details>
-<summary><b>Solo memoria (no requiere Redis)</b></summary>
+<summary><b>Solo memoria (sin Redis)</b></summary>
 
 ```ts
 const cache = new CacheStack([
@@ -102,7 +103,7 @@ const cache = new CacheStack([
 </details>
 
 <details>
-<summary><b>Configuración de tres capas con persistencia en disco</b></summary>
+<summary><b>Tres capas con persistencia en disco</b></summary>
 
 ```ts
 import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
@@ -122,73 +123,73 @@ const cache = new CacheStack([
 
 ### Caché principal
 
-| Funcionalidad | Descripción |
+| Funcionalidad | Qué hace |
 |---|---|
-| **Lecturas en capas + autorrelleno** | Lee primero desde L1; en un hit parcial, las capas superiores se rellenan automáticamente |
-| **Prevención de avalanchas(stampede prevention)** | 100 solicitudes concurrentes para la misma clave = 1 ejecución del fetcher |
-| **Single-flight distribuido** | Desduplicación entre instancias mediante locks de Redis con renovación de lease |
-| **Operaciones en lote** | `getMany()` / `setMany()` / `mdelete()` con rutas rápidas a nivel de capa |
-| **API `wrap()`** | Caché transparente de funciones con derivación automática de claves |
-| **Namespaces** | Vistas de caché con alcance mediante soporte de prefijo jerárquico |
-| **Calentamiento de caché** | Pre-llena las capas al inicio con carga basada en prioridad |
-| **Caché negativo** | Almacena misses de caché (ej: "usuario no encontrado") con TTL corto |
+| **Lecturas en capas + autorrelleno** | Busca primero en L1; si falta en alguna capa, la rellena automáticamente |
+| **Prevención de avalanchas** | 100 requests concurrentes para la misma clave = 1 sola ejecución del fetcher |
+| **Single-flight distribuido** | Deduplica misses entre instancias con locks de Redis |
+| **Operaciones en lote** | `getMany()` / `setMany()` / `mdelete()` para procesar de golpe |
+| **API `wrap()`** | Envuelve una función y ya — la clave se genera sola y se cachea |
+| **Namespaces** | Prefijos jerárquicos para separar zonas de caché |
+| **Calentamiento** | Pre-llena las capas al arrancar, priorizando lo más importante |
+| **Caché de misses** | Resultados como "usuario no encontrado" también se cachean con TTL corto |
 
 ### Invalidación y frescura
 
-| Funcionalidad | Descripción |
+| Funcionalidad | Qué hace |
 |---|---|
-| **Invalidación por tags** | Elimina todas las claves con un tag dado en todas las capas |
-| **Invalidación por lotes de tags** | Operaciones multi-tag con semántica `any` / `all` |
-| **Invalidación por comodín y prefijo** | Patrones de claves estilo glob y jerárquicos |
-| **Rotación por generaciones** | Invalidación masiva de namespaces sin escaneo |
-| **Stale-while-revalidate** | Retorna el valor en caché, refresca en segundo plano |
-| **Stale-if-error** | Sigue sirviendo datos expirados cuando el upstream falla |
-| **TTL deslizante(sliding TTL)** | Reinicia la expiración en cada lectura para claves frecuentes |
-| **TTL adaptativo(adaptive TTL)** | Incrementa automáticamente el TTL de claves calientes hasta un límite |
-| **Refresh-ahead** | Refresca proactivamente antes de la expiración |
-| **Políticas de TTL** | Alinea las expiraciones a límites de calendario (`until-midnight`, `next-hour`, personalizado) |
+| **Invalidación por tags** | Un tag, y se borran todas las claves asociadas en todas las capas |
+| **Invalidación batch de tags** | Varios tags de una vez con semántica `any` / `all` |
+| **Comodines y prefijos** | `user:*` y listo, borra todo lo que coincida |
+| **Rotación por generaciones** | Cambia toda una generación de namespace sin escanear nada |
+| **Stale-while-revalidate** | Devuelve lo cacheado y refresca de fondo |
+| **Stale-if-error** | Si el origen falla, sigue sirviendo lo expirado sin pestañear |
+| **TTL deslizante** | Cada lectura renueva la expiración de las claves populares |
+| **TTL adaptativo** | Las claves calientes ven su TTL crecer automáticamente |
+| **Refresh-ahead** | Refresca antes de que expire, sin que nadie lo pida |
+| **Políticas de TTL** | Alinea expiraciones a medianoche, a la hora en punto, o como quieras |
 
 ### Resiliencia y operaciones
 
-| Funcionalidad | Descripción |
+| Funcionalidad | Qué hace |
 |---|---|
-| **Degradación graceful(graceful degradation)** | Omite temporalmente capas fallidas, mantiene la caché disponible |
-| **Disyuntor(circuit breaker)** | Deja de atacar upstreams defectuosos tras fallos repetidos |
-| **Limitación de tasa del fetcher** | Con alcance global, por clave, o por fetcher con buckets personalizados |
-| **Políticas de escritura** | `strict` (falla si cualquier capa falla) o `best-effort` |
-| **Write-behind** | Escrituras en lote con intervalo de flush configurable |
-| **Compresión** | gzip / brotli en RedisLayer con umbral configurable |
-| **MessagePack** | Serializadores intercambiables (JSON por defecto, MessagePack como alternativa) |
-| **Persistencia** | Exporta/importa snapshots a memoria o disco |
+| **Degradación elegante** | Si una capa falla, se salta temporalmente y la caché sigue funcionando |
+| **Circuit breaker** | Deja de mandar requests al upstream que viene fallando |
+| **Rate limit del fetcher** | Límites globales, por clave o por fetcher, con buckets configurables |
+| **Políticas de escritura** | `strict` (si una capa falla, todo falla) o `best-effort` |
+| **Write-behind** | Acumula escrituras y las flush de golpe cada N milisegundos |
+| **Compresión** | gzip / brotli en RedisLayer, con umbral configurable |
+| **MessagePack** | Serializadores intercambiables: JSON por defecto, MessagePack como alternativa |
+| **Snapshots** | Exporta e importa el estado de la caché a memoria o disco |
 
 ### Observabilidad
 
-| Funcionalidad | Descripción |
+| Funcionalidad | Qué hace |
 |---|---|
-| **Métricas** | Hits, misses, fetches, hits expirados, disparos del disyuntor, y más |
-| **Latencia por capa** | Promedio, máximo y conteo de muestras usando el algoritmo de Welford |
-| **Health checks** | Endpoint asíncrono de salud por capa con medición de latencia |
+| **Métricas** | Hits, misses, fetches, stale hits, trips del circuit breaker y más |
+| **Latencia por capa** | Promedio, máximo y muestras con el algoritmo de Welford |
+| **Health checks** | Endpoint de salud asíncrono por capa, con medición de latencia |
 | **Hooks de eventos** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
-| **OpenTelemetry** | Soporte de trazado distribuido basado en hooks sin monkey-patching de métodos |
-| **Exportador Prometheus** | Exportación de métricas incluyendo gauges de latencia |
-| **Handler HTTP de estadísticas** | Endpoint JSON para dashboards |
-| **CLI de administración** | `npx layercache stats\|keys\|invalidate` para cachés respaldados por Redis |
+| **OpenTelemetry** | Trazado distribuido vía hooks, sin tocar el código fuente |
+| **Exportador Prometheus** | Métricas listas para scrape, incluyendo gauges de latencia |
+| **Handler HTTP de stats** | Endpoint JSON para dashboards |
+| **CLI de administración** | `npx layercache stats\|keys\|invalidate` |
 
 ---
 
 ## Integraciones
 
-layercache se conecta con los frameworks que ya usas:
+Se conecta con los frameworks que ya estás usando:
 
 | Framework | Integración |
 |---|---|
-| **Express** | `createExpressCacheMiddleware(cache, opts)` - cachea respuestas automáticamente con header `x-cache: HIT/MISS` |
-| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` - registra `fastify.cache` con ruta de estadísticas opcional |
-| **Hono** | `createHonoCacheMiddleware(cache, opts)` - middleware compatible con edge |
-| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - middleware de procedimiento |
-| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - wrapper de resolver de campo |
+| **Express** | `createExpressCacheMiddleware(cache, opts)` — cachea respuestas con header `x-cache: HIT/MISS` |
+| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` — plugin `fastify.cache`, ruta de stats opcional |
+| **Hono** | `createHonoCacheMiddleware(cache, opts)` — middleware compatible con edge |
+| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` — middleware de procedimiento |
+| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` — wrapper de resolver |
 | **Next.js** | Funciona nativamente con App Router y API routes |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - spans de trazado basados en eventos sin monkey-patching |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` — trazado basado en eventos, sin monkey-patching |
 
 <details>
 <summary><b>Ejemplo con Express</b></summary>
@@ -225,25 +226,25 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
 ## Despliegues distribuidos
 
-layercache está diseñado para entornos de producción con múltiples instancias:
+Diseñado para producción con múltiples instancias:
 
 ```
   ┌───────────┐    ┌───────────┐    ┌───────────┐
-  │ Servidor A│    │ Servidor B│    │ Servidor C│
+  │ Server A  │    │ Server B  │    │ Server C  │
   │ [Memory]  │    │ [Memory]  │    │ [Memory]  │
   └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
         │                │                │
-        └──── Redis Pub/Sub ──────────────┘  <-- Bus de invalidación L1
+        └──── Redis Pub/Sub ──────────────┘  <-- L1 invalidation bus
                      │
                ┌─────┴──────┐
-               │   Redis    │  <-- L2 compartido + índice de tags + single-flight
+               │   Redis    │  <-- shared L2 + tag index + single-flight
                └────────────┘
 ```
 
-- **Single-flight con Redis** - desduplicación de misses entre instancias con locks distribuidos
-- **Bus de invalidación Redis** - invalidación L1 basada en Pub/Sub para consistencia de memoria
-- **Índice de tags Redis** - seguimiento de tags compartido con sharding opcional
-- **Persistencia de snapshots** - exporta/importa estado entre instancias
+- **Single-flight con Redis** — locks distribuidos para deduplicar misses entre instancias
+- **Bus de invalidación Redis** — invalidación L1 en tiempo real vía Pub/Sub
+- **Índice de tags Redis** — tags compartidos con sharding opcional
+- **Snapshots** — exportar e importar estado entre instancias
 
 <details>
 <summary><b>Configuración distribuida completa</b></summary>
@@ -280,21 +281,21 @@ const cache = new CacheStack(
 ## Rendimiento
 
 ```
-┌─────────────────────┬──────────────┐
-│ Escenario           │ Latencia promedio │
-├─────────────────────┼──────────────┤
-│ Hit L1 memoria      │   ~0.006 ms  │
-│ Hit L2 Redis        │   ~0.020 ms  │
-│ Sin caché (sim. DB) │   ~1.08  ms  │
-└─────────────────────┴──────────────┘
+┌──────────────────────┬────────────────┐
+│ Escenario             │ Latencia prom. │
+├──────────────────────┼────────────────┤
+│ Hit L1 memoria        │   ~0.006 ms   │
+│ Hit L2 Redis          │   ~0.020 ms   │
+│ Sin caché (sim. DB)   │   ~1.08  ms   │
+└──────────────────────┴────────────────┘
 
-┌─────────────────────┬────────┐
-│ Solicitudes concurrentes │  100   │
-│ Ejecuciones del fetcher  │    1   │  <-- prevención de avalanchas
-└─────────────────────┴────────┘
+┌──────────────────────┬────────┐
+│ Requests concurrentes │  100   │
+│ Ejecuciones fetcher   │    1   │  <-- prevención de avalanchas
+└──────────────────────┴────────┘
 ```
 
-Los comand de benchmark, fixtures y notas de escenarios están en [documentación de benchmarks](../benchmarking.md).
+Los comandos de benchmark, fixtures y escenarios están en la [doc de benchmarks](../benchmarking.md).
 
 ---
 
@@ -309,8 +310,8 @@ Los comand de benchmark, fixtures y notas de escenarios están en [documentació
 | Tags distribuidos | -- | -- | -- | **Yes** |
 | Flush L1 entre servidores | -- | -- | -- | **Yes** |
 | Stale-while-revalidate | -- | -- | -- | **Yes** |
-| Disyuntor | -- | -- | -- | **Yes** |
-| Degradación graceful | -- | -- | -- | **Yes** |
+| Circuit breaker | -- | -- | -- | **Yes** |
+| Degradación elegante | -- | -- | -- | **Yes** |
 | TTL deslizante / adaptativo | -- | -- | -- | **Yes** |
 | Calentamiento de caché | -- | -- | -- | **Yes** |
 | Persistencia / snapshots | -- | -- | -- | **Yes** |
@@ -322,7 +323,7 @@ Los comand de benchmark, fixtures y notas de escenarios están en [documentació
 | Hooks de eventos | Yes | Yes | Yes | **Yes** |
 | Capas personalizadas | Parcial | -- | -- | **Yes** |
 
-> Ver la [guía de comparación](../comparison.md) para un desglose detallado.
+> Para un desglose detallado, consulta la [guía de comparación](../comparison.md).
 
 ---
 
@@ -330,37 +331,37 @@ Los comand de benchmark, fixtures y notas de escenarios están en [documentació
 
 | Documento | Descripción |
 |---|---|
-| [Referencia API](../api.md) | Documentación completa de la API con todas las opciones |
-| [Tutorial](../tutorial.md) | Walkthrough operativo paso a paso |
-| [Guía de comparación](../comparison.md) | Comparación detallada de funcionalidades con alternativas |
+| [Referencia API](../api.md) | Documentación completa con todas las opciones |
+| [Tutorial](../tutorial.md) | Guía paso a paso para ponerlo en marcha |
+| [Guía de comparación](../comparison.md) | Comparación detallada con alternativas |
 | [Guía de migración](../migration-guide.md) | Migrar desde node-cache-manager, keyv o cacheable |
-| [Benchmarks](../benchmarking.md) | Escenarios de benchmark y metodología |
-| [Changelog](../../CHANGELOG.md) | Historial de versiones y cambios disruptivos |
+| [Benchmarks](../benchmarking.md) | Escenarios y metodología |
+| [Changelog](../../CHANGELOG.md) | Historial de versiones y cambios importantes |
 
 ---
 
 ## Ejemplos
 
-El directorio [`examples/`](../../examples) contiene proyectos listos para ejecutar:
+El directorio [`examples/`](../../examples) tiene proyectos listos para ejecutar:
 
-- [`express-api/`](../../examples/express-api/) - API REST con Express y caché en capas
-- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) - Next.js App Router con layercache
+- [`express-api/`](../../examples/express-api/) — API REST con Express y caché en capas
+- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) — Next.js App Router con layercache
 
 ---
 
 ## Requisitos
 
 - **Node.js** >= 20
-- **TypeScript** >= 5.0 (opcional - totalmente tipado, incluye `.d.ts`)
-- **ioredis** >= 5 (opcional - solo necesario para funcionalidad Redis)
+- **TypeScript** >= 5.0 (opcional — totalmente tipado, incluye `.d.ts`)
+- **ioredis** >= 5 (opcional — solo si usas Redis)
 
-<sub>Dependencias en runtime: `async-mutex` y `@msgpack/msgpack`</sub>
+<sub>Dependencias en runtime: solo `async-mutex` y `@msgpack/msgpack`</sub>
 
 ---
 
 ## Contribuir
 
-Las contribuciones son bienvenidas - correcciones de bugs, documentación, rendimiento, nuevos adaptadores, o issues.
+Fixes, docs, performance, nuevos adaptadores — todo suma.
 
 ```bash
 git clone https://github.com/flyingsquirrel0419/layercache
@@ -369,16 +370,16 @@ npm install
 npm run lint && npm test && npm run build:all
 ```
 
-Consulta la [guía de contribución](../../CONTRIBUTING.md) y el [código de conducta](../../CODE_OF_CONDUCT.md).
+Lee la [guía de contribución](../../CONTRIBUTING.md) y el [código de conducta](../../CODE_OF_CONDUCT.md).
 
 ---
 
 ## Licencia
 
-[Apache 2.0](../../LICENSE) - uso libre en proyectos personales y comerciales.
+[Apache 2.0](../../LICENSE) — úsalo libremente en lo que quieras.
 
 ---
 
 <p align="center">
-  Si layercache te ahorra tiempo, considera darle una <a href="https://github.com/flyingsquirrel0419/layercache">estrella en GitHub</a>. Ayuda a otros a descubrir el proyecto.
+  Si layercache te ahorró tiempo, dale una <a href="https://github.com/flyingsquirrel0419/layercache">⭐ estrella en GitHub</a>. Ayuda a que más gente lo encuentre.
 </p>

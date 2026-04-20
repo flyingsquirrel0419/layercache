@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>Node.js를 위한 멀티레이어 캐싱 툴킷.</strong><br>
-  <em>Memory + Redis + Disk를 하나의 API로. 스탬피드 제로.</em>
+  <strong>Node.js에 딱 맞는 멀티레이어 캐시 툴킷.</strong><br>
+  <em>메모리 + Redis + 디스크를 하나로. 캐시 스탬피드 걱정 없이.</em>
 </p>
 
 <p align="center">
@@ -36,36 +36,37 @@
 
 ---
 
-## 문제점
+## 왜 필요한가요?
 
-성장하는 모든 Node.js 서비스는 결국 같은 캐싱 한계에 부딪힙니다:
+규모가 커지는 Node.js 서비스라면 누구나 같은 문제를 겪습니다:
 
 ```
-메모리 전용 캐시       --> 빠르지만, 각 인스턴스가 서로 다른 데이터를 봅니다
-Redis 전용 캐시        --> 공유되지만, 모든 요청이 네트워크 왕복 비용을 지불합니다
-직접 구현한 하이브리드  --> 잘 동작하다가... 스탬피드 방지, 무효화,
-                          만료 데이터 서빙, 관측 가능성, 분산 일관성이 필요해지면 무너집니다
+메모리 캐시만 쓰면       --> 빠르지만, 인스턴스마다 데이터가 달라요
+Redis만 쓰면             --> 공유는 되지만, 매번 네트워크 비용이 듭니다
+대충 섞어서 쓰면         --> 동작은 하는데... 스탬피드 방지, 무효화,
+                           만료 데이터 처리, 모니터링, 분산 일관성까지
+                           필요해지면 감당이 안 됩니다
 ```
 
-## 해결책
+## layercache의 접근
 
-**layercache**는 프로덕션급 기능이 내장된 통합 멀티레이어 캐시를 제공합니다:
+**layercache**는 프로덕션에서 바로 써먹을 수 있는 멀티레이어 캐시입니다:
 
 ```
               ┌───────────────────────────────────────┐
-여러분의 앱 ---->│             layercache                │
+  your app ---->│             layercache                │
               │                                       │
-              │  L1 메모리     ~0.01ms  (프로세스 내)   │
+              │  L1 Memory   ~0.01ms  (in-process)    │
               │      |                                │
-              │  L2 Redis      ~0.5ms   (공유)         │
+              │  L2 Redis    ~0.5ms   (shared)        │
               │      |                                │
-              │  L3 디스크     ~2ms     (영속)         │
+              │  L3 Disk     ~2ms     (persistent)    │
               │      |                                │
-              │  Fetcher       ~20ms    (1회만 실행)   │
+              │  Fetcher     ~20ms    (runs once)     │
               └───────────────────────────────────────┘
 
-히트 시  --> 가장 빠른 레이어에서 서빙, 나머지 레이어에 자동 채움
-미스 시 --> fetcher가 1회만 실행됨 (100배 동시 요청에서도)
+히트   --> 가장 빠른 레이어에서 바로 돌려주고, 나머지 레이어도 채워둡니다
+미스   --> fetcher가 딱 한 번만 실행됩니다 (100배 동시 요청이 몰려도)
 ```
 
 ---
@@ -81,16 +82,16 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: 프로세스 내
-  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: 공유
+  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: 인메모리
+  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: Redis
 ])
 
-// 리드스루(read-through): fetcher가 1회 실행되고 모든 레이어에 채워집니다
+// 알아서 가져오고 알아서 채워줍니다 (read-through)
 const user = await cache.get('user:123', () => db.findUser(123))
 ```
 
 <details>
-<summary><b>메모리 전용 (Redis 불필요)</b></summary>
+<summary><b>메모리만 쓰고 싶다면 (Redis 없이)</b></summary>
 
 ```ts
 const cache = new CacheStack([
@@ -101,7 +102,7 @@ const cache = new CacheStack([
 </details>
 
 <details>
-<summary><b>디스크 영속성을 포함한 3계층 설정</b></summary>
+<summary><b>디스크까지 3계층으로 쓰고 싶다면</b></summary>
 
 ```ts
 import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
@@ -121,73 +122,73 @@ const cache = new CacheStack([
 
 ### 핵심 캐싱
 
-| 기능 | 설명 |
+| 기능 | 한 줄 설명 |
 |---|---|
-| **계층형 읽기 + 자동 백필** | L1에서 먼저 조회; 부분 히트 시 상위 레이어를 자동으로 채웁니다 |
-| **스탬피드 방지(stampede prevention)** | 같은 키에 100개의 동시 요청 = fetcher 1회 실행 |
-| **분산 싱글플라이트(single-flight)** | Redis 락과 리스 갱신으로 인스턴스 간 중복 제거 |
-| **벌크 연산** | `getMany()` / `setMany()` / `mdelete()` — 레이어 수준 빠른 경로 제공 |
-| **`wrap()` API** | 자동 키 파생으로 투명한 함수 캐싱 |
-| **네임스페이스** | 계층적 프리픽스 지원으로 스코프가 지정된 캐시 뷰 |
-| **캐시 워밍** | 시작 시 우선순위 기반 로딩으로 레이어 미리 채우기 |
-| **네거티브 캐싱** | 캐시 미스(예: "사용자를 찾을 수 없음")를 짧은 TTL로 캐싱 |
+| **계층형 읽기 + 자동 백필** | L1에서 먼저 찾고, 없는 레이어는 자동으로 채워줍니다 |
+| **스탬피드 방지** | 같은 키에 100개 요청이 동시에 와도 fetcher는 1번만 실행됩니다 |
+| **분산 싱글플라이트** | Redis 락으로 여러 인스턴스 간 중복 fetch를 막아줍니다 |
+| **벌크 연산** | `getMany()` / `setMany()` / `mdelete()`로 한 번에 처리 |
+| **`wrap()` API** | 함수를 감싸기만 하면 알아서 키를 만들고 캐싱합니다 |
+| **네임스페이스** | 프리픽스로 캐시 영역을 깔끔하게 나눌 수 있습니다 |
+| **캐시 워밍** | 시작할 때 미리 채워두어 첫 요청부터 빠르게 응답합니다 |
+| **미스 캐싱** | "사용자 없음" 같은 결과도 짧은 TTL로 캐싱해서 DB를 보호합니다 |
 
 ### 무효화 및 갱신
 
-| 기능 | 설명 |
+| 기능 | 한 줄 설명 |
 |---|---|
-| **태그 무효화** | 주어진 태그의 모든 키를 모든 레이어에서 삭제 |
-| **배치 태그 무효화** | `any` / `all` 시맨틱으로 다중 태그 연산 |
-| **와일드카드 및 프리픽스 무효화** | 글로브 스타일 및 계층적 키 패턴 |
-| **세대 기반 교체(generation rotation)** | 스캔 없이 대량 네임스페이스 무효화 |
-| **Stale-while-revalidate** | 캐시된 값을 반환하고 백그라운드에서 갱신 |
-| **Stale-if-error** | 업스트림 장애 시 만료된 값을 계속 서빙 |
-| **슬라이딩 TTL(sliding TTL)** | 자주 접근하는 키의 만료를 읽기 시마다 갱신 |
-| **적응형 TTL(adaptive TTL)** | 핫 키의 TTL을 상한까지 자동 증가 |
-| **Refresh-ahead** | 만료 전에 미리 갱신 |
-| **TTL 정책** | 만료를 캘린더 경계에 맞춤 (`until-midnight`, `next-hour`, 커스텀) |
+| **태그 무효화** | 태그 하나로 관련 키를 모든 레이어에서 한 번에 삭제합니다 |
+| **배치 태그 무효화** | 여러 태그를 `any` / `all` 조건으로 한 번에 처리합니다 |
+| **와일드카드 / 프리픽스 무효화** | `user:*` 같은 패턴으로 범위 삭제가 가능합니다 |
+| **세대 기반 무효화** | 스캔 없이 네임스페이스 전체를 통째로 갈아치웁니다 |
+| **Stale-while-revalidate** | 캐시된 값을 먼저 돌려주고, 백그라운드에서 조용히 갱신합니다 |
+| **Stale-if-error** | 원본이 장애 나면 만료된 데이터라도 계속 서빙합니다 |
+| **슬라이딩 TTL** | 자주 읽히는 키는 읽을 때마다 만료가 연장됩니다 |
+| **적응형 TTL** | 인기 있는 키일수록 TTL이 자동으로 길어집니다 |
+| **Refresh-ahead** | 만료되기 전에 미리 갱신해 둡니다 |
+| **TTL 정책** | 자정 맞춤, 정시 맞춤 등 만료 시점을 캘린더에 맞출 수 있습니다 |
 
-### 복원력 및 운영
+### 안정성 및 운영
 
-| 기능 | 설명 |
+| 기능 | 한 줄 설명 |
 |---|---|
-| **우아한 성능 저하(graceful degradation)** | 실패한 레이어를 일시적으로 건너뛰고 캐시 유지 |
-| **서킷 브레이커(circuit breaker)** | 반복 실패 후 고장난 업스트림에 대한 요청 중단 |
-| **Fetcher 속도 제한** | 전역, 키별, fetcher별 스코프와 커스텀 버킷 |
-| **쓰기 정책** | `strict` (어떤 레이어가 실패하면 전체 실패) 또는 `best-effort` |
-| **Write-behind** | 설정 가능한 플러시 간격으로 쓰기 일괄 처리 |
-| **압축** | RedisLayer에서 gzip / brotli (설정 가능한 임계값) |
-| **MessagePack** | 플러그형 직렬화기 (JSON 기본, MessagePack 대안) |
-| **영속성** | 메모리 또는 디스크로 스냅샷 내보내기/가져오기 |
+| **장애 복구** | 레이어에 문제가 생기면 잠시 건너뛰고, 캐시는 계속 동작합니다 |
+| **서킷 브레이커** | 연속 장애가 감지되면 해당 업스트림으로의 요청을 차단합니다 |
+| **Fetcher 호출 제한** | 전역 / 키별 / fetcher별로 동시 실행 수를 조절할 수 있습니다 |
+| **쓰기 정책** | `strict` (하나라도 실패하면 전체 실패) 또는 `best-effort` |
+| **Write-behind** | 쓰기를 모았다가 일정 주기로 한 번에 flush합니다 |
+| **압축** | RedisLayer에서 gzip / brotli 압축을 지원합니다 |
+| **MessagePack** | JSON 대신 MessagePack 직렬화를 쓸 수 있습니다 |
+| **스냅샷** | 메모리나 디스크로 상태를 저장하고 복원할 수 있습니다 |
 
-### 관측 가능성
+### 모니터링
 
-| 기능 | 설명 |
+| 기능 | 한 줄 설명 |
 |---|---|
-| **메트릭** | 히트, 미스, fetch, 스테일 히트, 서킷 브레이커 트립 등 |
-| **레이어별 지연 시간** | Welford 알고리즘으로 평균, 최대, 샘플 수 측정 |
-| **헬스 체크** | 레이어별 비동기 헬스 엔드포인트와 지연 시간 측정 |
+| **메트릭** | 히트, 미스, fetch, stale 히트, 서킷 브레이커 트립 등을 추적합니다 |
+| **레이어별 지연 시간** | Welford 알고리즘으로 평균·최대·샘플 수를 계산합니다 |
+| **헬스 체크** | 레이어별로 비동기 헬스 체크 엔드포인트를 제공합니다 |
 | **이벤트 훅** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
-| **OpenTelemetry** | 메서드 원숭이-패칭 없이 훅 기반 분산 추적 지원 |
-| **Prometheus 익스포터** | 지연 시간 게이지를 포함한 메트릭 내보내기 |
-| **HTTP 통계 핸들러** | 대시보드용 JSON 엔드포인트 |
-| **관리 CLI** | Redis 기반 캐시를 위한 `npx layercache stats|keys|invalidate` |
+| **OpenTelemetry** | 코드 수정 없이 훅만으로 분산 추적을 연동합니다 |
+| **Prometheus 익스포터** | 지연 시간 게이지를 포함해 메트릭을 내보냅니다 |
+| **HTTP 통계 핸들러** | 대시보드에 바로 쓸 수 있는 JSON 엔드포인트입니다 |
+| **관리 CLI** | `npx layercache stats\|keys\|invalidate`로 Redis 캐시를 관리합니다 |
 
 ---
 
 ## 통합
 
-layercache는 이미 사용 중인 프레임워크와 연동됩니다:
+이미 쓰고 있는 프레임워크에 몇 줄이면 붙입니다:
 
 | 프레임워크 | 통합 |
 |---|---|
-| **Express** | `createExpressCacheMiddleware(cache, opts)` - `x-cache: HIT/MISS` 헤더로 응답 자동 캐싱 |
-| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` - `fastify.cache` 등록, 선택적 통계 라우트 |
-| **Hono** | `createHonoCacheMiddleware(cache, opts)` - 엣지 호환 미들웨어 |
-| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - 프로시저 미들웨어 |
-| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - 필드 리졸버 래퍼 |
-| **Next.js** | App Router 및 API 라우트와 네이티브로 동작 |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - 원숭이-패칭 없이 이벤트 기반 트레이싱 스팬 |
+| **Express** | `createExpressCacheMiddleware(cache, opts)` — `x-cache: HIT/MISS` 헤더와 함께 응답 자동 캐싱 |
+| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` — `fastify.cache` 플러그인 등록, 통계 라우트 선택 |
+| **Hono** | `createHonoCacheMiddleware(cache, opts)` — 엣지 환경에서도 동작하는 미들웨어 |
+| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` — 프로시저 미들웨어 |
+| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` — 필드 리졸버 래퍼 |
+| **Next.js** | App Router, API 라우트에서 그대로 쓸 수 있습니다 |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` — 코드 수정 없이 이벤트 기반 트레이싱 |
 
 <details>
 <summary><b>Express 예시</b></summary>
@@ -224,28 +225,28 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
 ## 분산 배포
 
-layercache는 다중 인스턴스 프로덕션 환경에 맞게 설계되었습니다:
+여러 인스턴스를 띄우는 프로덕션 환경에서도 문제없이 동작합니다:
 
 ```
   ┌───────────┐    ┌───────────┐    ┌───────────┐
-  │ 서버 A     │    │ 서버 B     │    │ 서버 C     │
+  │ Server A  │    │ Server B  │    │ Server C  │
   │ [Memory]  │    │ [Memory]  │    │ [Memory]  │
   └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
         │                │                │
-        └──── Redis Pub/Sub ──────────────┘  <-- L1 무효화 버스
+        └──── Redis Pub/Sub ──────────────┘  <-- L1 invalidation bus
                      │
                ┌─────┴──────┐
-               │   Redis    │  <-- 공유 L2 + 태그 인덱스 + 싱글플라이트
+               │   Redis    │  <-- shared L2 + tag index + single-flight
                └────────────┘
 ```
 
-- **Redis 싱글플라이트** - 분산 락으로 인스턴스 간 미스 중복 제거
-- **Redis 무효화 버스** - Pub/Sub 기반 L1 무효화로 메모리 일관성 보장
-- **Redis 태그 인덱스** - 선택적 샤딩이 있는 공유 태그 추적
-- **스냅샷 영속성** - 인스턴스 간 상태 내보내기/가져오기
+- **Redis 싱글플라이트** — 분산 락으로 인스턴스 간 중복 fetch를 막습니다
+- **Redis 무효화 버스** — Pub/Sub으로 L1 캐시를 즉시 무효화합니다
+- **Redis 태그 인덱스** — 공유 태그 추적, 샤딩도 선택 가능합니다
+- **스냅샷 내보내기** — 인스턴스 간에 캐시 상태를 주고받을 수 있습니다
 
 <details>
-<summary><b>전체 분산 설정</b></summary>
+<summary><b>분산 환경 전체 설정</b></summary>
 
 ```ts
 import {
@@ -279,21 +280,21 @@ const cache = new CacheStack(
 ## 성능
 
 ```
-┌─────────────────────┬──────────────┐
-│ 시나리오             │ 평균 지연     │
-├─────────────────────┼──────────────┤
-│ L1 메모리 히트       │   ~0.006 ms  │
-│ L2 Redis 히트       │   ~0.020 ms  │
-│ 캐시 없음 (DB 시뮬)  │   ~1.08  ms  │
-└─────────────────────┴──────────────┘
+┌──────────────────────┬──────────────┐
+│ 시나리오              │ 평균 지연     │
+├──────────────────────┼──────────────┤
+│ L1 메모리 히트        │   ~0.006 ms  │
+│ L2 Redis 히트        │   ~0.020 ms  │
+│ 캐시 없음 (DB 시뮬)   │   ~1.08  ms  │
+└──────────────────────┴──────────────┘
 
-┌─────────────────────┬────────┐
-│ 동시 요청 수         │  100   │
-│ fetcher 실행 수      │    1   │  <-- 스탬피드 방지
-└─────────────────────┴────────┘
+┌──────────────────────┬────────┐
+│ 동시 요청 수          │  100   │
+│ fetcher 실행 횟수     │    1   │  <-- 스탬피드 방지
+└──────────────────────┴────────┘
 ```
 
-벤치마크 명령어, 픽스처, 시나리오 노트는 [벤치마킹 문서](../benchmarking.md)에서 확인할 수 있습니다.
+벤치마크 명령어와 시나리오 설명은 [벤치마킹 문서](../benchmarking.md)에 있습니다.
 
 ---
 
@@ -301,18 +302,18 @@ const cache = new CacheStack(
 
 |  | node-cache-manager | keyv | cacheable | **layercache** |
 |---|:---:|:---:|:---:|:---:|
-| 자동 백필이 있는 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
+| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
 | 스탬피드 방지 | -- | -- | -- | **Yes** |
 | 분산 싱글플라이트 | -- | -- | -- | **Yes** |
 | 태그 무효화 | -- | -- | Yes | **Yes** |
 | 분산 태그 | -- | -- | -- | **Yes** |
-| 크로스 서버 L1 플러시 | -- | -- | -- | **Yes** |
+| 크로스 서버 L1 무효화 | -- | -- | -- | **Yes** |
 | Stale-while-revalidate | -- | -- | -- | **Yes** |
 | 서킷 브레이커 | -- | -- | -- | **Yes** |
-| 우아한 성능 저하 | -- | -- | -- | **Yes** |
+| 장애 복구 | -- | -- | -- | **Yes** |
 | 슬라이딩 / 적응형 TTL | -- | -- | -- | **Yes** |
 | 캐시 워밍 | -- | -- | -- | **Yes** |
-| 영속성 / 스냅샷 | -- | -- | -- | **Yes** |
+| 스냅샷 영속성 | -- | -- | -- | **Yes** |
 | 압축 | -- | -- | Yes | **Yes** |
 | 관리 CLI | -- | -- | -- | **Yes** |
 | TypeScript 퍼스트 | 부분 | Yes | Yes | **Yes** |
@@ -321,7 +322,7 @@ const cache = new CacheStack(
 | 이벤트 훅 | Yes | Yes | Yes | **Yes** |
 | 커스텀 레이어 | 부분 | -- | -- | **Yes** |
 
-> 자세한 내용은 [비교 가이드](../comparison.md)를 참조하세요.
+> 자세히 비교하고 싶다면 [비교 가이드](../comparison.md)를 참고하세요.
 
 ---
 
@@ -329,37 +330,37 @@ const cache = new CacheStack(
 
 | 문서 | 설명 |
 |---|---|
-| [API 레퍼런스](../api.md) | 모든 옵션이 포함된 완전한 API 문서 |
-| [튜토리얼](../tutorial.md) | 단계별 실전 워크스루 |
-| [비교 가이드](../comparison.md) | 대안과의 상세 기능 비교 |
-| [마이그레이션 가이드](../migration-guide.md) | node-cache-manager, keyv, cacheable에서 마이그레이션 |
-| [벤치마킹](../benchmarking.md) | 벤치마크 시나리오와 방법론 |
-| [체인지로그](../../CHANGELOG.md) | 버전 히스토리와 파괴적 변경 |
+| [API 레퍼런스](../api.md) | 모든 옵션을 담은 완전한 API 문서 |
+| [튜토리얼](../tutorial.md) | 따라 하면서 익히는 실전 가이드 |
+| [비교 가이드](../comparison.md) | 다른 캐시 라이브러리와의 상세 비교 |
+| [마이그레이션 가이드](../migration-guide.md) | node-cache-manager, keyv, cacheable에서 옮겨오기 |
+| [벤치마킹](../benchmarking.md) | 벤치마크 방법론과 시나리오 |
+| [체인지로그](../../CHANGELOG.md) | 버전별 변경 이력과 주요 변경사항 |
 
 ---
 
 ## 예시
 
-[`examples/`](../../examples) 디렉토리에 바로 실행 가능한 프로젝트가 있습니다:
+[`examples/`](../../examples)에 바로 실행해볼 수 있는 프로젝트가 있습니다:
 
-- [`express-api/`](../../examples/express-api/) - 계층형 캐싱을 적용한 Express REST API
-- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) - layercache를 적용한 Next.js App Router
+- [`express-api/`](../../examples/express-api/) — Express REST API에 계층 캐시 적용하기
+- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) — Next.js App Router에 layercache 연동하기
 
 ---
 
 ## 요구 사항
 
 - **Node.js** >= 20
-- **TypeScript** >= 5.0 (선택 - 완전한 타입 지원, `.d.ts` 포함)
-- **ioredis** >= 5 (선택 - Redis 기능에만 필요)
+- **TypeScript** >= 5.0 (선택 — 타입이 다 들어있고 `.d.ts`도 포함)
+- **ioredis** >= 5 (선택 — Redis 안 쓰면 필요 없습니다)
 
-<sub>런타임 의존성: `async-mutex` 및 `@msgpack/msgpack`</sub>
+<sub>런타임 의존성은 `async-mutex`와 `@msgpack/msgpack` 딱 두 개입니다</sub>
 
 ---
 
 ## 기여
 
-기여를 환영합니다 - 버그 수정, 문서, 성능, 새 어댑터, 이슈 모두 좋습니다.
+버그 수정, 문서 개선, 성능 최적화, 새 어댑터 — 모든 형태의 기여를 환영합니다.
 
 ```bash
 git clone https://github.com/flyingsquirrel0419/layercache
@@ -368,16 +369,16 @@ npm install
 npm run lint && npm test && npm run build:all
 ```
 
-[기여 가이드](../../CONTRIBUTING.md)와 [행동 강령](../../CODE_OF_CONDUCT.md)을 참조하세요.
+[기여 가이드](../../CONTRIBUTING.md)와 [행동 강령](../../CODE_OF_CONDUCT.md)을 읽어주세요.
 
 ---
 
 ## 라이선스
 
-[Apache 2.0](../../LICENSE) - 개인 및 상업 프로젝트에서 자유롭게 사용할 수 있습니다.
+[Apache 2.0](../../LICENSE) — 개인이든 상용이든 자유롭게 쓰세요.
 
 ---
 
 <p align="center">
-  layercache가 시간을 절약해준다면, <a href="https://github.com/flyingsquirrel0419/layercache">GitHub에서 스타</a>를 눌러주세요. 다른 사람들이 프로젝트를 발견하는 데 도움이 됩니다.
+  layercache가 도움이 되셨다면 <a href="https://github.com/flyingsquirrel0419/layercache">GitHub에서 ⭐ 스타</a>를 눌러주세요. 다른 개발자들에게도 알리는 데 큰 도움이 됩니다.
 </p>

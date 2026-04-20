@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>Node.js 应得的多层缓存工具包。</strong><br>
-  <em>堆叠内存 + Redis + 磁盘。一套 API。零缓存击穿。</em>
+  <strong>Node.js 值得拥有的多层缓存工具包。</strong><br>
+  <em>内存 + Redis + 磁盘一键搞定，告别缓存击穿。</em>
 </p>
 
 <p align="center">
@@ -26,46 +26,46 @@
 <p align="center">
   <a href="https://layercache.flyingsquirrel.me">网站</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-快速开始">快速开始</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-功能">功能</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-功能一览">功能一览</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../api.md">API 参考</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-集成">集成</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-对比">对比</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-框架集成">框架集成</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-横向对比">横向对比</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../tutorial.md">教程</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../migration-guide.md">迁移指南</a>
 </p>
 
 ---
 
-## 问题所在
+## 你一定遇到过这个问题
 
-每个成长的 Node.js 服务都会遇到相同的缓存瓶颈：
+每个 Node.js 服务做到一定规模，都会碰到同样的缓存瓶颈：
 
 ```
-纯内存缓存        --> 快，但每个实例看到的数据不同
-纯 Redis 缓存     --> 共享，但每次请求都要支付网络往返开销
-手动混合方案       --> 能用... 直到你需要缓存击穿保护、失效、
-                    过期数据服务、可观测性和分布式一致性
+纯内存缓存       --> 快是快，但各实例数据不一致
+纯 Redis 缓存    --> 虽然共享了，可每次请求都得跑一趟网络
+自己拼的混合方案  --> 能跑…但等你需要缓存击穿保护、标签失效、
+                    过期兜底、可观测性和分布式一致性的时候，就扛不住了
 ```
 
-## 解决方案
+## layercache 怎么解决
 
-**layercache** 为你提供了一个内置生产级功能的统一多层缓存：
+**layercache** 是一个开箱即用的多层缓存方案，生产级功能全都给你准备好了：
 
 ```
               ┌───────────────────────────────────────┐
-你的应用 ---->│             layercache                │
+  your app ---->│             layercache                │
               │                                       │
-              │  L1 内存       ~0.01ms  (进程内)       │
+              │  L1 Memory   ~0.01ms  (in-process)    │
               │      |                                │
-              │  L2 Redis      ~0.5ms   (共享)         │
+              │  L2 Redis    ~0.5ms   (shared)        │
               │      |                                │
-              │  L3 磁盘       ~2ms     (持久化)       │
+              │  L3 Disk     ~2ms     (persistent)    │
               │      |                                │
-              │  Fetcher       ~20ms    (仅执行一次)   │
+              │  Fetcher     ~20ms    (runs once)     │
               └───────────────────────────────────────┘
 
-命中时  --> 从最快的层提供服务，自动回填其他层
-未命中 --> fetcher 仅执行一次（即使在 100 倍并发下）
+命中   --> 从最快的层拿数据，顺便把其他层也补上
+未命中 --> fetcher 只跑一次（100 倍并发也一样）
 ```
 
 ---
@@ -82,15 +82,15 @@ import Redis from 'ioredis'
 
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: 进程内
-  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: 共享
+  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: Redis
 ])
 
-// 透传读取(read-through)：fetcher 执行一次，所有层被填充
+// 自动读取、自动回填（read-through）
 const user = await cache.get('user:123', () => db.findUser(123))
 ```
 
 <details>
-<summary><b>纯内存模式（无需 Redis）</b></summary>
+<summary><b>只用内存就够了（不需要 Redis）</b></summary>
 
 ```ts
 const cache = new CacheStack([
@@ -101,7 +101,7 @@ const cache = new CacheStack([
 </details>
 
 <details>
-<summary><b>带磁盘持久化的三层配置</b></summary>
+<summary><b>三层一起上，加上磁盘持久化</b></summary>
 
 ```ts
 import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
@@ -117,77 +117,77 @@ const cache = new CacheStack([
 
 ---
 
-## 功能
+## 功能一览
 
 ### 核心缓存
 
 | 功能 | 说明 |
 |---|---|
-| **分层读取 + 自动回填** | 优先从 L1 读取；部分命中时自动填充上层 |
-| **缓存击穿保护(stampede prevention)** | 同一 key 的 100 个并发请求 = fetcher 仅执行 1 次 |
-| **分布式单飞(single-flight)** | 通过 Redis 锁和租约续期实现跨实例去重 |
-| **批量操作** | `getMany()` / `setMany()` / `mdelete()`，层级别快速路径 |
-| **`wrap()` API** | 自动推导 key 的透明函数缓存 |
-| **命名空间** | 支持层级前缀的作用域缓存视图 |
-| **缓存预热** | 启动时基于优先级预填充各层 |
-| **负面缓存(negative caching)** | 将缓存未命中（如"用户不存在"）以短 TTL 缓存 |
+| **分层读取 + 自动回填** | 优先查 L1，部分命中时自动把上层补齐 |
+| **缓存击穿保护** | 同一个 key 来 100 个并发请求，fetcher 只执行 1 次 |
+| **分布式单飞** | Redis 分布式锁 + 租约续期，跨实例去重 |
+| **批量操作** | `getMany()` / `setMany()` / `mdelete()`，一次搞定 |
+| **`wrap()` API** | 包一层函数就行，key 自动推导，缓存自动管理 |
+| **命名空间** | 层级前缀支持，把缓存区域划分得清清楚楚 |
+| **缓存预热** | 启动时按优先级把热数据先填进去 |
+| **穿透缓存** | "用户不存在"这类结果也能短 TTL 缓存，保护数据库 |
 
 ### 失效与刷新
 
 | 功能 | 说明 |
 |---|---|
-| **标签失效** | 删除所有层中具有给定标签的键 |
-| **批量标签失效** | 支持 `any` / `all` 语义的多标签操作 |
-| **通配符与前缀失效** | glob 风格和层级键模式 |
-| **代际轮换(generation rotation)** | 无需扫描即可批量使命名空间失效 |
-| **Stale-while-revalidate** | 返回缓存值，后台异步刷新 |
-| **Stale-if-error** | 上游故障时继续提供过期数据 |
-| **滑动 TTL(sliding TTL)** | 每次读取时重置频繁访问键的过期时间 |
-| **自适应 TTL(adaptive TTL)** | 热点 key 的 TTL 自动递增至上限 |
-| **Refresh-ahead** | 过期前主动刷新 |
-| **TTL 策略** | 将过期时间对齐到日历边界（`until-midnight`、`next-hour`、自定义） |
+| **标签失效** | 一个标签，所有层的关联 key 一起删 |
+| **批量标签失效** | `any` / `all` 语义，多标签一次搞定 |
+| **通配符 / 前缀失效** | `user:*` 这种模式匹配，批量删除 |
+| **代际轮换** | 不用扫描，整个命名空间直接换一代 |
+| **Stale-while-revalidate** | 先返回缓存值，后台默默刷新 |
+| **Stale-if-error** | 上游挂了？过期数据照样顶着用 |
+| **滑动 TTL** | 越热门的 key，每次读取都自动续期 |
+| **自适应 TTL** | 热点 key 的 TTL 自动往上涨，直到上限 |
+| **Refresh-ahead** | 还没过期就开始提前刷新 |
+| **TTL 策略** | 对齐到零点、整点，或者自定义日历边界 |
 
 ### 弹性与运维
 
 | 功能 | 说明 |
 |---|---|
-| **优雅降级(graceful degradation)** | 临时跳过失败层，保持缓存可用 |
-| **熔断器(circuit breaker)** | 反复失败后停止请求故障上游 |
-| **Fetcher 速率限制** | 支持全局、按 key、按 fetcher 作用域和自定义桶 |
-| **写入策略** | `strict`（任一层失败则整体失败）或 `best-effort` |
-| **Write-behind** | 可配置刷新间隔的批量写入 |
-| **压缩** | RedisLayer 中的 gzip / brotli，可配置阈值 |
-| **MessagePack** | 可插拔序列化器（JSON 默认，MessagePack 可选） |
-| **持久化** | 将快照导出/导入到内存或磁盘 |
+| **优雅降级** | 某层挂了就先跳过，缓存照样用 |
+| **熔断器** | 反复失败的上游自动熔断，不浪费请求 |
+| **Fetcher 限流** | 全局 / 按 key / 按 fetcher，怎么限都行 |
+| **写入策略** | `strict`（一层失败全部回滚）或 `best-effort` |
+| **Write-behind** | 写操作攒一批再刷，可配刷新间隔 |
+| **压缩** | RedisLayer 里直接开 gzip / brotli |
+| **MessagePack** | 内置可插拔序列化器，JSON 和 MessagePack 随你选 |
+| **持久化** | 快照导出到内存或磁盘，随时恢复 |
 
 ### 可观测性
 
 | 功能 | 说明 |
 |---|---|
-| **指标** | 命中、未命中、获取、过期命中、熔断器跳闸等 |
-| **层级延迟** | 使用 Welford 算法计算平均值、最大值和采样数 |
-| **健康检查** | 每层异步健康端点，带延迟测量 |
+| **指标采集** | 命中、未命中、fetch、过期命中、熔断跳闸，全都有 |
+| **层级延迟统计** | Welford 算法算平均、最大值和采样数 |
+| **健康检查** | 每层一个异步健康端点，延迟也能量 |
 | **事件钩子** | `hit`、`miss`、`set`、`delete`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
-| **OpenTelemetry** | 无需方法打补丁的钩子式分布式追踪支持 |
-| **Prometheus 导出器** | 包含延迟指标的指标导出 |
-| **HTTP 统计处理器** | 面向仪表盘的 JSON 端点 |
-| **管理 CLI** | `npx layercache stats|keys|invalidate`，适用于 Redis 缓存 |
+| **OpenTelemetry** | 不改代码，通过事件钩子接入分布式追踪 |
+| **Prometheus 导出器** | 延迟指标也给你导出去 |
+| **HTTP 统计接口** | 给仪表盘用的 JSON 端点 |
+| **管理 CLI** | `npx layercache stats\|keys\|invalidate` |
 
 ---
 
-## 集成
+## 框架集成
 
-layercache 可与你正在使用的框架无缝对接：
+你用什么框架，layercache 就能接什么框架：
 
 | 框架 | 集成方式 |
 |---|---|
-| **Express** | `createExpressCacheMiddleware(cache, opts)` - 自动缓存响应，添加 `x-cache: HIT/MISS` 头 |
-| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` - 注册 `fastify.cache`，可选统计路由 |
-| **Hono** | `createHonoCacheMiddleware(cache, opts)` - 边缘兼容中间件 |
-| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - 过程中间件 |
-| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - 字段解析器包装 |
-| **Next.js** | 原生支持 App Router 和 API 路由 |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - 无需打补丁的事件驱动追踪 |
+| **Express** | `createExpressCacheMiddleware(cache, opts)` — 自动缓存响应，加 `x-cache: HIT/MISS` 头 |
+| **Fastify** | `createFastifyLayercachePlugin(cache, opts)` — 注册 `fastify.cache`，可选统计路由 |
+| **Hono** | `createHonoCacheMiddleware(cache, opts)` — 边缘环境也能跑的中间件 |
+| **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` — 过程中间件 |
+| **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` — 字段解析器包装 |
+| **Next.js** | App Router、API 路由原生支持 |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` — 不用 monkey-patch，事件驱动追踪 |
 
 <details>
 <summary><b>Express 示例</b></summary>
@@ -224,25 +224,25 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
 ## 分布式部署
 
-layercache 专为多实例生产环境设计：
+多实例的生产环境，layercache 一样 hold 得住：
 
 ```
   ┌───────────┐    ┌───────────┐    ┌───────────┐
-  │  服务器 A   │    │  服务器 B   │    │  服务器 C   │
+  │ Server A  │    │ Server B  │    │ Server C  │
   │ [Memory]  │    │ [Memory]  │    │ [Memory]  │
   └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
         │                │                │
-        └──── Redis Pub/Sub ──────────────┘  <-- L1 失效总线
+        └──── Redis Pub/Sub ──────────────┘  <-- L1 invalidation bus
                      │
                ┌─────┴──────┐
-               │   Redis    │  <-- 共享 L2 + 标签索引 + 单飞协调
+               │   Redis    │  <-- shared L2 + tag index + single-flight
                └────────────┘
 ```
 
-- **Redis 单飞** - 通过分布式锁实现跨实例未命中去重
-- **Redis 失效总线** - 基于 Pub/Sub 的 L1 失效通知，确保内存一致性
-- **Redis 标签索引** - 支持可选分片的共享标签追踪
-- **快照持久化** - 在实例间导出/导入状态
+- **Redis 单飞** — 分布式锁保证跨实例不重复 fetch
+- **Redis 失效总线** — Pub/Sub 实时同步 L1 失效
+- **Redis 标签索引** — 共享标签追踪，支持分片
+- **快照持久化** — 实例间导入导出缓存状态
 
 <details>
 <summary><b>完整分布式配置</b></summary>
@@ -279,40 +279,40 @@ const cache = new CacheStack(
 ## 性能
 
 ```
-┌─────────────────────┬──────────────┐
-│ 场景                │ 平均延迟      │
-├─────────────────────┼──────────────┤
+┌──────────────────────┬──────────────┐
+│ 场景                 │ 平均延迟      │
+├──────────────────────┼──────────────┤
 │ L1 内存命中          │   ~0.006 ms  │
-│ L2 Redis 命中       │   ~0.020 ms  │
+│ L2 Redis 命中        │   ~0.020 ms  │
 │ 无缓存（模拟 DB）    │   ~1.08  ms  │
-└─────────────────────┴──────────────┘
+└──────────────────────┴──────────────┘
 
-┌─────────────────────┬────────┐
-│ 并发请求数           │  100   │
-│ fetcher 执行次数     │    1   │  <-- 缓存击穿保护
-└─────────────────────┴────────┘
+┌──────────────────────┬────────┐
+│ 并发请求数            │  100   │
+│ fetcher 执行次数      │    1   │  <-- 缓存击穿保护
+└──────────────────────┴────────┘
 ```
 
-基准测试命令、测试数据和场景说明详见[基准测试文档](../benchmarking.md)。
+基准测试命令和场景说明在[基准测试文档](../benchmarking.md)里。
 
 ---
 
-## 对比
+## 横向对比
 
 |  | node-cache-manager | keyv | cacheable | **layercache** |
 |---|:---:|:---:|:---:|:---:|
-| 自动回填的多层缓存 | 部分 | 插件 | -- | **Yes** |
+| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
 | 缓存击穿保护 | -- | -- | -- | **Yes** |
 | 分布式单飞 | -- | -- | -- | **Yes** |
 | 标签失效 | -- | -- | Yes | **Yes** |
 | 分布式标签 | -- | -- | -- | **Yes** |
-| 跨服务器 L1 刷新 | -- | -- | -- | **Yes** |
+| 跨实例 L1 刷新 | -- | -- | -- | **Yes** |
 | Stale-while-revalidate | -- | -- | -- | **Yes** |
 | 熔断器 | -- | -- | -- | **Yes** |
 | 优雅降级 | -- | -- | -- | **Yes** |
 | 滑动 / 自适应 TTL | -- | -- | -- | **Yes** |
 | 缓存预热 | -- | -- | -- | **Yes** |
-| 持久化 / 快照 | -- | -- | -- | **Yes** |
+| 快照持久化 | -- | -- | -- | **Yes** |
 | 压缩 | -- | -- | Yes | **Yes** |
 | 管理 CLI | -- | -- | -- | **Yes** |
 | TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
@@ -321,7 +321,7 @@ const cache = new CacheStack(
 | 事件钩子 | Yes | Yes | Yes | **Yes** |
 | 自定义层 | 部分 | -- | -- | **Yes** |
 
-> 详见[对比指南](../comparison.md)。
+> 详细对比看[对比指南](../comparison.md)。
 
 ---
 
@@ -329,37 +329,37 @@ const cache = new CacheStack(
 
 | 文档 | 说明 |
 |---|---|
-| [API 参考](../api.md) | 包含所有选项的完整 API 文档 |
-| [教程](../tutorial.md) | 分步操作指南 |
-| [对比指南](../comparison.md) | 与替代方案的详细功能对比 |
-| [迁移指南](../migration-guide.md) | 从 node-cache-manager、keyv 或 cacheable 迁移 |
-| [基准测试](../benchmarking.md) | 基准测试场景和方法论 |
-| [更新日志](../../CHANGELOG.md) | 版本历史和破坏性变更 |
+| [API 参考](../api.md) | 全部选项的完整 API 文档 |
+| [教程](../tutorial.md) | 手把手带你走一遍 |
+| [对比指南](../comparison.md) | 跟其他方案掰掰手腕 |
+| [迁移指南](../migration-guide.md) | 从 node-cache-manager、keyv、cacheable 迁过来 |
+| [基准测试](../benchmarking.md) | 测试场景和方法论 |
+| [更新日志](../../CHANGELOG.md) | 版本历史和重大变更 |
 
 ---
 
 ## 示例
 
-[`examples/`](../../examples) 目录包含可直接运行的项目：
+[`examples/`](../../examples) 目录里有拿来就能跑的项目：
 
-- [`express-api/`](../../examples/express-api/) - 使用分层缓存的 Express REST API
-- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) - 使用 layercache 的 Next.js App Router
+- [`express-api/`](../../examples/express-api/) — Express REST API + 分层缓存
+- [`nextjs-api-routes/`](../../examples/nextjs-api-routes/) — Next.js App Router + layercache
 
 ---
 
 ## 环境要求
 
 - **Node.js** >= 20
-- **TypeScript** >= 5.0（可选 - 完整类型支持，附带 `.d.ts`）
-- **ioredis** >= 5（可选 - 仅 Redis 功能需要）
+- **TypeScript** >= 5.0（可选 — 类型齐全，自带 `.d.ts`）
+- **ioredis** >= 5（可选 — 不用 Redis 就不需要）
 
-<sub>运行时依赖：`async-mutex` 和 `@msgpack/msgpack`</sub>
+<sub>运行时只依赖 `async-mutex` 和 `@msgpack/msgpack`</sub>
 
 ---
 
 ## 贡献
 
-欢迎贡献 - Bug 修复、文档、性能优化、新适配器或 Issue 均可。
+修 bug、补文档、做性能优化、写新适配器，都欢迎。
 
 ```bash
 git clone https://github.com/flyingsquirrel0419/layercache
@@ -368,16 +368,16 @@ npm install
 npm run lint && npm test && npm run build:all
 ```
 
-请参阅[贡献指南](../../CONTRIBUTING.md)和[行为准则](../../CODE_OF_CONDUCT.md)。
+看下[贡献指南](../../CONTRIBUTING.md)和[行为准则](../../CODE_OF_CONDUCT.md)再动手。
 
 ---
 
 ## 许可证
 
-[Apache 2.0](../../LICENSE) - 可在个人和商业项目中自由使用。
+[Apache 2.0](../../LICENSE) — 个人商业随便用。
 
 ---
 
 <p align="center">
-  如果 layercache 为你节省了时间，请在 <a href="https://github.com/flyingsquirrel0419/layercache">GitHub 上点个星</a>。这有助于更多人发现这个项目。
+  觉得 layercache 省了你的时间？去 <a href="https://github.com/flyingsquirrel0419/layercache">GitHub 给个 ⭐</a> 吧，让更多人看到。
 </p>
