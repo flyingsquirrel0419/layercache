@@ -289,8 +289,8 @@ const cache = new CacheStack(
 └─────────────────────────┴──────────────┘
 
 ┌───────────────────────────┬────────┐
-│ Concurrent requests        │  100   │
-│ Fetcher executions         │    1   │  <-- stampede prevention
+│ Concurrent requests       │  100   │
+│ Fetcher executions        │    1   │  <-- stampede prevention
 └───────────────────────────┴────────┘
 ```
 
