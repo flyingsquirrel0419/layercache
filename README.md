@@ -1,4 +1,8 @@
 <p align="center">
+  <strong>English</strong> | <a href="./docs/i18n/README.ko.md">한국어</a> | <a href="./docs/i18n/README.zh-CN.md">简体中文</a> | <a href="./docs/i18n/README.ja.md">日本語</a> | <a href="./docs/i18n/README.es.md">Español</a>
+</p>
+
+<p align="center">
   <img src="./logo.png" width="520" alt="layercache logo">
 </p>
 
