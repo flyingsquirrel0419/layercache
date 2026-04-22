@@ -103,25 +103,25 @@ const cache = new CacheStack([
 ## Rendimiento
 
 ```
-Entorno: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
+Environment: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
 CPU: AMD EPYC 4584PX 16-Core  |  RAM: 1.9 GB
-Capas: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
 ```
 
 ```
 ┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
-│ Escenario                    │  avg ms  │  p95 ms  │  min ms  │  max ms  │
+│ Scenario                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
 ├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
-│ Hit L1 memoria (warm)        │   0.011  │   0.016  │   0.004  │   0.405  │
-│ Hit caché multicapa (L1)     │   0.006  │   0.007  │   0.004  │   0.077  │
-│ Sin caché / origin fetch     │   6.844  │  11.196  │   4.683  │  11.196  │
+│ L1 memory hit (warm)         │   0.011  │   0.016  │   0.004  │   0.405  │
+│ L1 hit in layered setup      │   0.006  │   0.007  │   0.004  │   0.077  │
+│ No cache / origin fetch      │   6.844  │  11.196  │   4.683  │  11.196  │
 └──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
 
 ┌──────────────────────────────┬────────────────────┐
-│                              │  75 peticiones     │
+│                              │  75 concurrent req │
 ├──────────────────────────────┼────────────────────┤
-│ Sin layercache               │  75 llamadas origin│
-│ Con layercache               │   1 llamada origin │  ← prevención estampida
+│ Without layercache           │  75 origin calls   │
+│ With layercache              │   1 origin call    │  ← stampede prevention
 └──────────────────────────────┴────────────────────┘
 ```
 

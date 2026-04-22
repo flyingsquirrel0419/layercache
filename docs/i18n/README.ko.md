@@ -103,25 +103,25 @@ const cache = new CacheStack([
 ## 성능
 
 ```
-환경: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
+Environment: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
 CPU: AMD EPYC 4584PX 16-Core  |  RAM: 1.9 GB
-레이어 구성: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
 ```
 
 ```
 ┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
-│ 시나리오                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
+│ Scenario                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
 ├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
-│ L1 메모리 히트 (warm)        │   0.011  │   0.016  │   0.004  │   0.405  │
-│ 레이어드 캐시 히트 (L1)      │   0.006  │   0.007  │   0.004  │   0.077  │
-│ 캐시 없음 / origin fetch     │   6.844  │  11.196  │   4.683  │  11.196  │
+│ L1 memory hit (warm)         │   0.011  │   0.016  │   0.004  │   0.405  │
+│ L1 hit in layered setup      │   0.006  │   0.007  │   0.004  │   0.077  │
+│ No cache / origin fetch      │   6.844  │  11.196  │   4.683  │  11.196  │
 └──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
 
 ┌──────────────────────────────┬────────────────────┐
-│                              │  75 동시 요청      │
+│                              │  75 concurrent req │
 ├──────────────────────────────┼────────────────────┤
-│ layercache 없이              │  75번 origin 호출  │
-│ layercache 적용              │   1번 origin 호출  │  ← 스탬피드 방지
+│ Without layercache           │  75 origin calls   │
+│ With layercache              │   1 origin call    │  ← stampede prevention
 └──────────────────────────────┴────────────────────┘
 ```
 
