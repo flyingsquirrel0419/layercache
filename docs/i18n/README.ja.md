@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>Node.js にこそ届けたい、マルチレイヤーキャッシュツールキット。</strong><br>
-  <em>メモリ + Redis + ディスクをまとめて。スタンピードの心配なし。</em>
+  <strong>100 の同時リクエスト。DB 呼び出し 1 回。常に。</strong><br>
+  <em>スタンピード防止を内蔵したマルチレイヤーキャッシュ（メモリ → Redis → ディスク）。</em>
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 <p align="center">
   <a href="https://layercache.flyingsquirrel.me">ウェブサイト</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-クイックスタート">クイックスタート</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-機能">機能</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-パフォーマンス">パフォーマンス</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../api.md">API リファレンス</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-統合">統合</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-比較">比較</a>&nbsp;&nbsp;|&nbsp;&nbsp;
@@ -36,38 +36,20 @@
 
 ---
 
-## みんなぶつかる壁
+## なぜ layercache なのか？
 
-Node.js サービスが大きくなると、誰もが同じキャッシュの壁にぶつかる：
-
+```ts
+// 100 件の同時リクエストが空のキャッシュに到達します。
+// スタンピード防止がなければ、DB は 100 回呼び出されます。
+const results = await Promise.all(
+  Array.from({ length: 100 }, () =>
+    cache.get('user:1', () => db.findUser(1))
+  )
+)
+// fetcherExecutions: 1  ← DB は 1 回しか呼ばれません
 ```
-メモリだけ              --> 速いけど、インスタンスごとにデータが違う
-Redis だけ              --> 共享できるけど、毎回ネットワーク往復がかかる
-手作りのハイブリッド    --> とりあえず動く…スタンピード防止、無効化、
-                          期限切れデータの配信、可観測性、分散整合性が
-                          必要になったらもうお手上げ
-```
 
-## layercache のやり方
-
-**layercache** は、プロダクションですぐ使えるマルチレイヤーキャッシュです：
-
-```
-              ┌───────────────────────────────────────┐
-your app ---->│             layercache                │
-              │                                       │
-              │  L1 Memory   ~0.01ms  (in-process)    │
-              │      |                                │
-              │  L2 Redis    ~0.5ms   (shared)        │
-              │      |                                │
-              │  L3 Disk     ~2ms     (persistent)    │
-              │      |                                │
-              │  Fetcher     ~20ms    (runs once)     │
-              └───────────────────────────────────────┘
-
-ヒット   --> 一番速いレイヤーから返して、残りにも自動でバックフィル
-ミス   --> fetcher は 1 回しか走らない（100 倍の同時リクエストでも）
-```
+layercache は、スタンピード防止・タグ無効化・分散一貫性を内蔵した Node.js 向けマルチレイヤーキャッシュです。設定不要ですぐに使えます。
 
 ---
 
@@ -118,7 +100,143 @@ const cache = new CacheStack([
 
 ---
 
+## パフォーマンス
+
+```
+環境：Node.js v20.20.1、Redis 7-alpine、Linux x86_64
+CPU：AMD EPYC 4584PX 16-Core  |  RAM：1.9 GB
+構成：MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+```
+
+```
+┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
+│ シナリオ                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
+├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
+│ L1 メモリヒット（warm）      │   0.011  │   0.016  │   0.004  │   0.405  │
+│ 多層キャッシュヒット（L1）   │   0.006  │   0.007  │   0.004  │   0.077  │
+│ キャッシュなし / origin fetch│   6.844  │  11.196  │   4.683  │  11.196  │
+└──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
+
+┌──────────────────────────────┬────────────────────┐
+│                              │  75 同時リクエスト  │
+├──────────────────────────────┼────────────────────┤
+│ layercache なし              │  75 回 origin 呼出 │
+│ layercache あり              │   1 回 origin 呼出 │  ← スタンピード防止
+└──────────────────────────────┴────────────────────┘
+```
+
+ベンチマークコマンドとシナリオ説明は[ベンチマークドキュメント](../benchmarking.md)にあります。
+
+---
+
+## node-cache-manager からの移行
+
+<table>
+<tr>
+<th>Before</th>
+<th>After</th>
+</tr>
+<tr>
+<td>
+
+```ts
+import { caching, multiCaching }
+  from 'cache-manager'
+import { redisStore }
+  from 'cache-manager-redis-yet'
+
+const mem = await caching('memory', {
+  max: 100,
+  ttl: 60 * 1000        // ms
+})
+const red = await caching(redisStore, {
+  url: 'redis://localhost:6379',
+  ttl: 300 * 1000       // ms
+})
+const cache = multiCaching([mem, red])
+
+// スタンピード防止:  ❌
+// 自動バックフィル:  ❌
+// タグ無効化:        ❌
+```
+
+</td>
+<td>
+
+```ts
+import {
+  CacheStack,
+  MemoryLayer,
+  RedisLayer
+} from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),    // s
+  new RedisLayer({
+    client: new Redis(),
+    ttl: 300                       // s
+  })
+])
+
+// スタンピード防止:  ✅
+// 自動バックフィル:  ✅
+// タグ無効化:        ✅
+```
+
+</td>
+</tr>
+</table>
+
+> keyv・cacheable からの完全な移行ガイドは[移行ガイド](../migration-guide.md)をどうぞ。
+
+---
+
+## 比較
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
+| スタンピード防止 | -- | -- | -- | **Yes** |
+| タグ無効化 | -- | Yes | Yes | **Yes** |
+| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
+| イベントフック | Yes | Yes | Yes | **Yes** |
+
+<details>
+<summary>全機能比較（19 項目、クリックで展開）</summary>
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
+| スタンピード防止 | -- | -- | -- | **Yes** |
+| 分散シングルフライト | -- | -- | -- | **Yes** |
+| タグ無効化 | -- | Yes | Yes | **Yes** |
+| 分散タグ | -- | -- | -- | **Yes** |
+| クロスサーバー L1 フラッシュ | -- | -- | -- | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | **Yes** |
+| サーキットブレーカー | -- | -- | -- | **Yes** |
+| グレースフルデグラデーション | -- | -- | -- | **Yes** |
+| スライディング / アダプティブ TTL | -- | -- | -- | **Yes** |
+| キャッシュウォーミング | -- | -- | -- | **Yes** |
+| スナップショット永続性 | -- | -- | -- | **Yes** |
+| 圧縮 | -- | -- | Yes | **Yes** |
+| 管理 CLI | -- | -- | -- | **Yes** |
+| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
+| Wrap / デコレーター API | Yes | -- | -- | **Yes** |
+| ネームスペース | -- | Yes | Yes | **Yes** |
+| イベントフック | Yes | Yes | Yes | **Yes** |
+| カスタムレイヤー | 部分 | -- | -- | **Yes** |
+
+</details>
+
+> 詳しい比較は[比較ガイド](../comparison.md)をどうぞ。
+
+---
+
 ## 機能
+
+<details>
+<summary><b>コアキャッシュ・無効化・レジリエンス・可観測性（クリックで展開）</b></summary>
 
 ### コアキャッシング
 
@@ -173,6 +291,8 @@ const cache = new CacheStack([
 | **Prometheus エクスポーター** | レイテンシゲージ付きでメトリクスをエクスポート |
 | **HTTP 統計ハンドラー** | ダッシュボードにそのまま使える JSON エンドポイント |
 | **管理 CLI** | `npx layercache stats\|keys\|invalidate` |
+
+</details>
 
 ---
 
@@ -274,55 +394,6 @@ const cache = new CacheStack(
 ```
 
 </details>
-
----
-
-## パフォーマンス
-
-```
-┌─────────────────────────┬──────────────┐
-│ Scenario                │ Avg Latency  │
-├─────────────────────────┼──────────────┤
-│ L1 memory hit           │   ~0.006 ms  │
-│ L2 Redis hit            │   ~0.020 ms  │
-│ No cache (simulated DB) │   ~1.08  ms  │
-└─────────────────────────┴──────────────┘
-
-┌───────────────────────────┬────────┐
-│ Concurrent requests       │  100   │
-│ Fetcher executions        │    1   │  <-- stampede prevention
-└───────────────────────────┴────────┘
-```
-
-ベンチマークコマンドとシナリオ説明は[ベンチマークドキュメント](../benchmarking.md)にあります。
-
----
-
-## 比較
-
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
-| スタンピード防止 | -- | -- | -- | **Yes** |
-| 分散シングルフライト | -- | -- | -- | **Yes** |
-| タグ無効化 | -- | -- | Yes | **Yes** |
-| 分散タグ | -- | -- | -- | **Yes** |
-| クロスサーバー L1 フラッシュ | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| サーキットブレーカー | -- | -- | -- | **Yes** |
-| グレースフルデグラデーション | -- | -- | -- | **Yes** |
-| スライディング / アダプティブ TTL | -- | -- | -- | **Yes** |
-| キャッシュウォーミング | -- | -- | -- | **Yes** |
-| スナップショット永続性 | -- | -- | -- | **Yes** |
-| 圧縮 | -- | -- | Yes | **Yes** |
-| 管理 CLI | -- | -- | -- | **Yes** |
-| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
-| Wrap / デコレーター API | Yes | -- | -- | **Yes** |
-| ネームスペース | -- | Yes | Yes | **Yes** |
-| イベントフック | Yes | Yes | Yes | **Yes** |
-| カスタムレイヤー | 部分 | -- | -- | **Yes** |
-
-> 詳しい比較は[比較ガイド](../comparison.md)をどうぞ。
 
 ---
 

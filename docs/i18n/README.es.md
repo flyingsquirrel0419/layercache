@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>El toolkit de caché multicapa que Node.js merece.</strong><br>
-  <em>Memoria + Redis + disco en un solo stack. Una API. Cero avalanchas.</em>
+  <strong>100 peticiones concurrentes. 1 llamada a la BD. Siempre.</strong><br>
+  <em>Caché multicapa (Memoria → Redis → Disco) con prevención de estampida integrada.</em>
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 <p align="center">
   <a href="https://layercache.flyingsquirrel.me">Sitio web</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-inicio-rápido">Inicio rápido</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-funcionalidades">Funcionalidades</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-rendimiento">Rendimiento</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../api.md">Referencia API</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-integraciones">Integraciones</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-comparación">Comparación</a>&nbsp;&nbsp;|&nbsp;&nbsp;
@@ -36,39 +36,20 @@
 
 ---
 
-## El problema que todos conocen
+## ¿Por qué layercache?
 
-Todo servicio Node.js que crece se choca con el mismo muro:
-
+```ts
+// 100 peticiones concurrentes llegan a un caché vacío a la vez.
+// Sin prevención de estampida, tu BD recibe 100 llamadas.
+const results = await Promise.all(
+  Array.from({ length: 100 }, () =>
+    cache.get('user:1', () => db.findUser(1))
+  )
+)
+// fetcherExecutions: 1  ← tu BD fue llamada exactamente una vez
 ```
-Solo memoria          --> Rápido, pero cada instancia ve datos distintos
-Solo Redis            --> Compartido, sí, pero cada request paga un round-trip
-Solución casera       --> Funciona... hasta que necesitas prevenir avalanchas,
-                          invalidar por tags, servir datos expirados cuando
-                          el origen falla, tener observabilidad y consistencia
-                          distribuida. Ahí se complica.
-```
 
-## La propuesta de layercache
-
-**layercache** te da una caché multicapa unificada, lista para producción:
-
-```
-              ┌───────────────────────────────────────┐
-your app ---->│             layercache                │
-              │                                       │
-              │  L1 Memory   ~0.01ms  (in-process)    │
-              │      |                                │
-              │  L2 Redis    ~0.5ms   (shared)        │
-              │      |                                │
-              │  L3 Disk     ~2ms     (persistent)    │
-              │      |                                │
-              │  Fetcher     ~20ms    (runs once)     │
-              └───────────────────────────────────────┘
-
-Hit    --> devuelve de la capa más rápida y rellena las demás
-Miss   --> el fetcher se ejecuta UNA vez (incluso con 100x concurrencia)
-```
+layercache es un caché multicapa (Memoria → Redis → Disco) para Node.js con prevención de estampida, invalidación por etiquetas y consistencia distribuida integradas, sin configuración adicional.
 
 ---
 
@@ -119,7 +100,143 @@ const cache = new CacheStack([
 
 ---
 
+## Rendimiento
+
+```
+Entorno: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
+CPU: AMD EPYC 4584PX 16-Core  |  RAM: 1.9 GB
+Capas: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+```
+
+```
+┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
+│ Escenario                    │  avg ms  │  p95 ms  │  min ms  │  max ms  │
+├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
+│ Hit L1 memoria (warm)        │   0.011  │   0.016  │   0.004  │   0.405  │
+│ Hit caché multicapa (L1)     │   0.006  │   0.007  │   0.004  │   0.077  │
+│ Sin caché / origin fetch     │   6.844  │  11.196  │   4.683  │  11.196  │
+└──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
+
+┌──────────────────────────────┬────────────────────┐
+│                              │  75 peticiones      │
+├──────────────────────────────┼────────────────────┤
+│ Sin layercache               │  75 llamadas origin│
+│ Con layercache               │   1 llamada origin │  ← prevención estampida
+└──────────────────────────────┴────────────────────┘
+```
+
+Los comandos de benchmark, fixtures y escenarios están en la [doc de benchmarks](../benchmarking.md).
+
+---
+
+## ¿Migrando desde node-cache-manager?
+
+<table>
+<tr>
+<th>Before</th>
+<th>After</th>
+</tr>
+<tr>
+<td>
+
+```ts
+import { caching, multiCaching }
+  from 'cache-manager'
+import { redisStore }
+  from 'cache-manager-redis-yet'
+
+const mem = await caching('memory', {
+  max: 100,
+  ttl: 60 * 1000        // ms
+})
+const red = await caching(redisStore, {
+  url: 'redis://localhost:6379',
+  ttl: 300 * 1000       // ms
+})
+const cache = multiCaching([mem, red])
+
+// prevención de estampida:     ❌
+// relleno automático:          ❌
+// invalidación por etiqueta:   ❌
+```
+
+</td>
+<td>
+
+```ts
+import {
+  CacheStack,
+  MemoryLayer,
+  RedisLayer
+} from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),    // s
+  new RedisLayer({
+    client: new Redis(),
+    ttl: 300                       // s
+  })
+])
+
+// prevención de estampida:     ✅
+// relleno automático:          ✅
+// invalidación por etiqueta:   ✅
+```
+
+</td>
+</tr>
+</table>
+
+> Guías de migración completas para keyv y cacheable en [docs/migration-guide.md](../migration-guide.md).
+
+---
+
+## Comparación
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| Multicapa con autorrelleno | Parcial | Plugin | -- | **Yes** |
+| Prevención de estampidas | -- | -- | -- | **Yes** |
+| Invalidación por tags | -- | Yes | Yes | **Yes** |
+| TypeScript-first | Parcial | Yes | Yes | **Yes** |
+| Hooks de eventos | Yes | Yes | Yes | **Yes** |
+
+<details>
+<summary>Comparación completa (19 características, clic para expandir)</summary>
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| Multicapa con autorrelleno | Parcial | Plugin | -- | **Yes** |
+| Prevención de avalanchas | -- | -- | -- | **Yes** |
+| Single-flight distribuido | -- | -- | -- | **Yes** |
+| Invalidación por tags | -- | Yes | Yes | **Yes** |
+| Tags distribuidos | -- | -- | -- | **Yes** |
+| Flush L1 entre servidores | -- | -- | -- | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | **Yes** |
+| Circuit breaker | -- | -- | -- | **Yes** |
+| Degradación elegante | -- | -- | -- | **Yes** |
+| TTL deslizante / adaptativo | -- | -- | -- | **Yes** |
+| Calentamiento de caché | -- | -- | -- | **Yes** |
+| Persistencia / snapshots | -- | -- | -- | **Yes** |
+| Compresión | -- | -- | Yes | **Yes** |
+| CLI de administración | -- | -- | -- | **Yes** |
+| TypeScript-first | Parcial | Yes | Yes | **Yes** |
+| API Wrap / decorador | Yes | -- | -- | **Yes** |
+| Namespaces | -- | Yes | Yes | **Yes** |
+| Hooks de eventos | Yes | Yes | Yes | **Yes** |
+| Capas personalizadas | Parcial | -- | -- | **Yes** |
+
+</details>
+
+> Para un desglose detallado, consulta la [guía de comparación](../comparison.md).
+
+---
+
 ## Funcionalidades
+
+<details>
+<summary><b>Caché principal, invalidación, resiliencia y observabilidad (clic para expandir)</b></summary>
 
 ### Caché principal
 
@@ -174,6 +291,8 @@ const cache = new CacheStack([
 | **Exportador Prometheus** | Métricas listas para scrape, incluyendo gauges de latencia |
 | **Handler HTTP de stats** | Endpoint JSON para dashboards |
 | **CLI de administración** | `npx layercache stats\|keys\|invalidate` |
+
+</details>
 
 ---
 
@@ -275,55 +394,6 @@ const cache = new CacheStack(
 ```
 
 </details>
-
----
-
-## Rendimiento
-
-```
-┌─────────────────────────┬──────────────┐
-│ Scenario                │ Avg Latency  │
-├─────────────────────────┼──────────────┤
-│ L1 memory hit           │   ~0.006 ms  │
-│ L2 Redis hit            │   ~0.020 ms  │
-│ No cache (simulated DB) │   ~1.08  ms  │
-└─────────────────────────┴──────────────┘
-
-┌───────────────────────────┬────────┐
-│ Concurrent requests       │  100   │
-│ Fetcher executions        │    1   │  <-- stampede prevention
-└───────────────────────────┴────────┘
-```
-
-Los comandos de benchmark, fixtures y escenarios están en la [doc de benchmarks](../benchmarking.md).
-
----
-
-## Comparación
-
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| Multicapa con autorrelleno | Parcial | Plugin | -- | **Yes** |
-| Prevención de avalanchas | -- | -- | -- | **Yes** |
-| Single-flight distribuido | -- | -- | -- | **Yes** |
-| Invalidación por tags | -- | -- | Yes | **Yes** |
-| Tags distribuidos | -- | -- | -- | **Yes** |
-| Flush L1 entre servidores | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| Circuit breaker | -- | -- | -- | **Yes** |
-| Degradación elegante | -- | -- | -- | **Yes** |
-| TTL deslizante / adaptativo | -- | -- | -- | **Yes** |
-| Calentamiento de caché | -- | -- | -- | **Yes** |
-| Persistencia / snapshots | -- | -- | -- | **Yes** |
-| Compresión | -- | -- | Yes | **Yes** |
-| CLI de administración | -- | -- | -- | **Yes** |
-| TypeScript-first | Parcial | Yes | Yes | **Yes** |
-| API Wrap / decorador | Yes | -- | -- | **Yes** |
-| Namespaces | -- | Yes | Yes | **Yes** |
-| Hooks de eventos | Yes | Yes | Yes | **Yes** |
-| Capas personalizadas | Parcial | -- | -- | **Yes** |
-
-> Para un desglose detallado, consulta la [guía de comparación](../comparison.md).
 
 ---
 
