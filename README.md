@@ -118,7 +118,7 @@ Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
 └──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
 
 ┌──────────────────────────────┬────────────────────┐
-│                              │  75 concurrent req  │
+│                              │  75 concurrent req │
 ├──────────────────────────────┼────────────────────┤
 │ Without layercache           │  75 origin calls   │
 │ With layercache              │   1 origin call    │  ← stampede prevention

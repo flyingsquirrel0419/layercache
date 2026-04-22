@@ -118,7 +118,7 @@ Capas: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
 └──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
 
 ┌──────────────────────────────┬────────────────────┐
-│                              │  75 peticiones      │
+│                              │  75 peticiones     │
 ├──────────────────────────────┼────────────────────┤
 │ Sin layercache               │  75 llamadas origin│
 │ Con layercache               │   1 llamada origin │  ← prevención estampida
