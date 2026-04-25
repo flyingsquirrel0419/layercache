@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] — 2026-04-26
+
 ### Security
 
 - **VULN-1 (HIGH)**: Fixed unbounded memory growth in `CacheStackMaintenance` where the `keyEpochs` Map grew without limit. Added `MAX_KEY_EPOCHS` (50,000) with automatic pruning of the oldest 10% of entries.
