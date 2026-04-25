@@ -5,6 +5,8 @@ type FlushWriteBehindBatch = (batch: WriteBehindOperation[]) => Promise<void>
 type GenerationCleanupTask = (generation: number) => Promise<void>
 type GenerationCleanupErrorHandler = (generation: number, error: unknown) => void
 
+const MAX_KEY_EPOCHS = 50_000
+
 export class CacheStackMaintenance {
   private readonly keyEpochs = new Map<string, number>()
   private readonly writeBehindQueue: WriteBehindOperation[] = []
@@ -61,6 +63,7 @@ export class CacheStackMaintenance {
     for (const key of keys) {
       this.keyEpochs.set(key, this.currentKeyEpoch(key) + 1)
     }
+    this.pruneKeyEpochsIfNeeded()
   }
 
   isWriteOutdated(key: string, expectedClearEpoch?: number, expectedKeyEpoch?: number): boolean {
@@ -138,5 +141,17 @@ export class CacheStackMaintenance {
 
   async waitForGenerationCleanup(): Promise<void> {
     await this.generationCleanupPromise
+  }
+
+  private pruneKeyEpochsIfNeeded(): void {
+    if (this.keyEpochs.size <= MAX_KEY_EPOCHS) {
+      return
+    }
+
+    const sorted = [...this.keyEpochs.entries()].sort((a, b) => a[1] - b[1])
+    const toDelete = Math.ceil(sorted.length * 0.1)
+    for (let i = 0; i < toDelete; i++) {
+      this.keyEpochs.delete(sorted[i][0])
+    }
   }
 }
