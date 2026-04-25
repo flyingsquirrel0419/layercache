@@ -803,4 +803,20 @@ describe('CacheStack internals', () => {
     // When at least one layer succeeds, best-effort mode should not throw
     await expect(mixedCache.mset([{ key: 'mixed', value: 1 }])).resolves.toBeUndefined()
   })
+
+  it('cleans up expired degradation entries from layerDegradedUntil', async () => {
+    const layer = makeLayer('cleanup-layer')
+    const cache = new CacheStack([layer], {
+      gracefulDegradation: { retryAfterMs: 1 }
+    })
+    const map = (cache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil
+
+    map.set('cleanup-layer', Date.now() - 1000)
+    expect(map.has('cleanup-layer')).toBe(true)
+
+    const skip = (cache as { shouldSkipLayer: (layer: CacheLayer) => boolean }).shouldSkipLayer(layer)
+
+    expect(skip).toBe(false)
+    expect(map.has('cleanup-layer')).toBe(false)
+  })
 })

@@ -3,7 +3,12 @@ import { mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { readUtf8HandleWithLimit, validateSnapshotFilePath } from '../../src/internal/CacheSnapshotFile'
+import {
+  atomicWriteTempPath,
+  commitAtomicWrite,
+  readUtf8HandleWithLimit,
+  validateSnapshotFilePath
+} from '../../src/internal/CacheSnapshotFile'
 
 describe('CacheSnapshotFile', () => {
   it('validates read and write paths inside the configured snapshot base dir', async () => {
@@ -133,5 +138,24 @@ describe('CacheSnapshotFile', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('cleans up temp file and re-throws when rename fails in commitAtomicWrite', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-'))
+    const tempPath = join(dir, 'temp-file.tmp')
+    const targetPath = join(dir, 'nonexistent', 'nested', 'target.txt')
+
+    try {
+      await writeFile(tempPath, 'test', 'utf8')
+      await expect(commitAtomicWrite(tempPath, targetPath)).rejects.toThrow()
+      await expect(fs.promises.stat(tempPath)).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('generates a temp path with a hex suffix for atomic writes', () => {
+    const result = atomicWriteTempPath('/data/snapshot.json')
+    expect(result).toMatch(/^\/data\/snapshot\.json\.tmp-[0-9a-f]{16}$/)
   })
 })
