@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>Node.js 值得拥有的多层缓存工具包。</strong><br>
-  <em>内存 + Redis + 磁盘一键搞定，告别缓存击穿。</em>
+  <strong>100 个并发请求。1 次数据库调用。始终如此。</strong><br>
+  <em>内置防缓存击穿的多层缓存（内存 → Redis → 磁盘）。</em>
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 <p align="center">
   <a href="https://layercache.flyingsquirrel.me">网站</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-快速开始">快速开始</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-功能一览">功能一览</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-性能">性能</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../api.md">API 参考</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-框架集成">框架集成</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-横向对比">横向对比</a>&nbsp;&nbsp;|&nbsp;&nbsp;
@@ -36,37 +36,20 @@
 
 ---
 
-## 你一定遇到过这个问题
+## 为什么选择 layercache？
 
-每个 Node.js 服务做到一定规模，都会碰到同样的缓存瓶颈：
-
+```ts
+// 100 个并发请求同时打到空缓存。
+// 没有防击穿机制，数据库会被调用 100 次。
+const results = await Promise.all(
+  Array.from({ length: 100 }, () =>
+    cache.get('user:1', () => db.findUser(1))
+  )
+)
+// fetcherExecutions: 1  ← 数据库只被调用了一次
 ```
-纯内存缓存       --> 快是快，但各实例数据不一致
-纯 Redis 缓存    --> 虽然共享了，可每次请求都得跑一趟网络
-自己拼的混合方案  --> 能跑…但等你需要缓存击穿保护、标签失效、
-                    过期兜底、可观测性和分布式一致性的时候，就扛不住了
-```
 
-## layercache 怎么解决
-
-**layercache** 是一个开箱即用的多层缓存方案，生产级功能全都给你准备好了：
-
-```
-              ┌───────────────────────────────────────┐
-your app ---->│             layercache                │
-              │                                       │
-              │  L1 Memory   ~0.01ms  (in-process)    │
-              │      |                                │
-              │  L2 Redis    ~0.5ms   (shared)        │
-              │      |                                │
-              │  L3 Disk     ~2ms     (persistent)    │
-              │      |                                │
-              │  Fetcher     ~20ms    (runs once)     │
-              └───────────────────────────────────────┘
-
-命中   --> 从最快的层拿数据，顺便把其他层也补上
-未命中 --> fetcher 只跑一次（100 倍并发也一样）
-```
+layercache 是一款内置防缓存击穿、标签失效与分布式一致性的 Node.js 多层缓存，无需额外配置。
 
 ---
 
@@ -117,7 +100,143 @@ const cache = new CacheStack([
 
 ---
 
+## 性能
+
+```
+Environment: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
+CPU: AMD EPYC 4584PX 16-Core  |  RAM: 1.9 GB
+Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+```
+
+```
+┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
+│ Scenario                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
+├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
+│ L1 memory hit (warm)         │   0.011  │   0.016  │   0.004  │   0.405  │
+│ L1 hit in layered setup      │   0.006  │   0.007  │   0.004  │   0.077  │
+│ No cache / origin fetch      │   6.844  │  11.196  │   4.683  │  11.196  │
+└──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
+
+┌──────────────────────────────┬────────────────────┐
+│                              │  75 concurrent req │
+├──────────────────────────────┼────────────────────┤
+│ Without layercache           │  75 origin calls   │
+│ With layercache              │   1 origin call    │  ← stampede prevention
+└──────────────────────────────┴────────────────────┘
+```
+
+基准测试命令和场景说明在[基准测试文档](../benchmarking.md)里。
+
+---
+
+## 从 node-cache-manager 迁移？
+
+<table>
+<tr>
+<th>Before</th>
+<th>After</th>
+</tr>
+<tr>
+<td>
+
+```ts
+import { caching, multiCaching }
+  from 'cache-manager'
+import { redisStore }
+  from 'cache-manager-redis-yet'
+
+const mem = await caching('memory', {
+  max: 100,
+  ttl: 60 * 1000        // ms
+})
+const red = await caching(redisStore, {
+  url: 'redis://localhost:6379',
+  ttl: 300 * 1000       // ms
+})
+const cache = multiCaching([mem, red])
+
+// 防击穿:  ❌
+// 自动回填:  ❌
+// 标签失效:  ❌
+```
+
+</td>
+<td>
+
+```ts
+import {
+  CacheStack,
+  MemoryLayer,
+  RedisLayer
+} from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),    // s
+  new RedisLayer({
+    client: new Redis(),
+    ttl: 300                       // s
+  })
+])
+
+// 防击穿:  ✅
+// 自动回填:  ✅
+// 标签失效:  ✅
+```
+
+</td>
+</tr>
+</table>
+
+> keyv 和 cacheable 的完整迁移指南请参阅[迁移指南](../migration-guide.md)。
+
+---
+
+## 横向对比
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
+| 缓存击穿保护 | -- | -- | -- | **Yes** |
+| 标签失效 | -- | Yes | Yes | **Yes** |
+| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
+| 事件钩子 | Yes | Yes | Yes | **Yes** |
+
+<details>
+<summary>完整对比（19 项功能，点击展开）</summary>
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
+| 缓存击穿保护 | -- | -- | -- | **Yes** |
+| 分布式单飞 | -- | -- | -- | **Yes** |
+| 标签失效 | -- | Yes | Yes | **Yes** |
+| 分布式标签 | -- | -- | -- | **Yes** |
+| 跨实例 L1 刷新 | -- | -- | -- | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | **Yes** |
+| 熔断器 | -- | -- | -- | **Yes** |
+| 优雅降级 | -- | -- | -- | **Yes** |
+| 滑动 / 自适应 TTL | -- | -- | -- | **Yes** |
+| 缓存预热 | -- | -- | -- | **Yes** |
+| 快照持久化 | -- | -- | -- | **Yes** |
+| 压缩 | -- | -- | Yes | **Yes** |
+| 管理 CLI | -- | -- | -- | **Yes** |
+| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
+| Wrap / 装饰器 API | Yes | -- | -- | **Yes** |
+| 命名空间 | -- | Yes | Yes | **Yes** |
+| 事件钩子 | Yes | Yes | Yes | **Yes** |
+| 自定义层 | 部分 | -- | -- | **Yes** |
+
+</details>
+
+> 详细对比看[对比指南](../comparison.md)。
+
+---
+
 ## 功能一览
+
+<details>
+<summary><b>核心缓存、失效、弹性与可观测性（点击展开）</b></summary>
 
 ### 核心缓存
 
@@ -172,6 +291,8 @@ const cache = new CacheStack([
 | **Prometheus 导出器** | 延迟指标也给你导出去 |
 | **HTTP 统计接口** | 给仪表盘用的 JSON 端点 |
 | **管理 CLI** | `npx layercache stats\|keys\|invalidate` |
+
+</details>
 
 ---
 
@@ -273,55 +394,6 @@ const cache = new CacheStack(
 ```
 
 </details>
-
----
-
-## 性能
-
-```
-┌─────────────────────────┬──────────────┐
-│ Scenario                │ Avg Latency  │
-├─────────────────────────┼──────────────┤
-│ L1 memory hit           │   ~0.006 ms  │
-│ L2 Redis hit            │   ~0.020 ms  │
-│ No cache (simulated DB) │   ~1.08  ms  │
-└─────────────────────────┴──────────────┘
-
-┌───────────────────────────┬────────┐
-│ Concurrent requests       │  100   │
-│ Fetcher executions        │    1   │  <-- stampede prevention
-└───────────────────────────┴────────┘
-```
-
-基准测试命令和场景说明在[基准测试文档](../benchmarking.md)里。
-
----
-
-## 横向对比
-
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
-| 缓存击穿保护 | -- | -- | -- | **Yes** |
-| 分布式单飞 | -- | -- | -- | **Yes** |
-| 标签失效 | -- | -- | Yes | **Yes** |
-| 分布式标签 | -- | -- | -- | **Yes** |
-| 跨实例 L1 刷新 | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| 熔断器 | -- | -- | -- | **Yes** |
-| 优雅降级 | -- | -- | -- | **Yes** |
-| 滑动 / 自适应 TTL | -- | -- | -- | **Yes** |
-| 缓存预热 | -- | -- | -- | **Yes** |
-| 快照持久化 | -- | -- | -- | **Yes** |
-| 压缩 | -- | -- | Yes | **Yes** |
-| 管理 CLI | -- | -- | -- | **Yes** |
-| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
-| Wrap / 装饰器 API | Yes | -- | -- | **Yes** |
-| 命名空间 | -- | Yes | Yes | **Yes** |
-| 事件钩子 | Yes | Yes | Yes | **Yes** |
-| 自定义层 | 部分 | -- | -- | **Yes** |
-
-> 详细对比看[对比指南](../comparison.md)。
 
 ---
 

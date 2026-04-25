@@ -9,8 +9,8 @@
 <h1 align="center">layercache</h1>
 
 <p align="center">
-  <strong>Node.js에 딱 맞는 멀티레이어 캐시 툴킷.</strong><br>
-  <em>메모리 + Redis + 디스크를 하나로. 캐시 스탬피드 걱정 없이.</em>
+  <strong>동시 요청 100개. DB 호출 1번. 항상.</strong><br>
+  <em>스탬피드 방지가 내장된 멀티 레이어 캐시 (메모리 → Redis → 디스크).</em>
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 <p align="center">
   <a href="https://layercache.flyingsquirrel.me">웹사이트</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-빠른-시작">빠른 시작</a>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="#-기능">기능</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#-성능">성능</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../api.md">API 레퍼런스</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-통합">통합</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-비교">비교</a>&nbsp;&nbsp;|&nbsp;&nbsp;
@@ -36,38 +36,20 @@
 
 ---
 
-## 왜 필요한가요?
+## 왜 layercache인가?
 
-규모가 커지는 Node.js 서비스라면 누구나 같은 문제를 겪습니다:
-
+```ts
+// 100개의 동시 요청이 빈 캐시에 동시에 도달합니다.
+// 스탬피드 방지 없이는 DB가 100번 호출됩니다.
+const results = await Promise.all(
+  Array.from({ length: 100 }, () =>
+    cache.get('user:1', () => db.findUser(1))
+  )
+)
+// fetcherExecutions: 1  ← DB는 정확히 한 번만 호출됩니다
 ```
-메모리 캐시만 쓰면       --> 빠르지만, 인스턴스마다 데이터가 달라요
-Redis만 쓰면             --> 공유는 되지만, 매번 네트워크 비용이 듭니다
-대충 섞어서 쓰면         --> 동작은 하는데... 스탬피드 방지, 무효화,
-                           만료 데이터 처리, 모니터링, 분산 일관성까지
-                           필요해지면 감당이 안 됩니다
-```
 
-## layercache의 접근
-
-**layercache**는 프로덕션에서 바로 써먹을 수 있는 멀티레이어 캐시입니다:
-
-```
-              ┌───────────────────────────────────────┐
-your app ---->│             layercache                │
-              │                                       │
-              │  L1 Memory   ~0.01ms  (in-process)    │
-              │      |                                │
-              │  L2 Redis    ~0.5ms   (shared)        │
-              │      |                                │
-              │  L3 Disk     ~2ms     (persistent)    │
-              │      |                                │
-              │  Fetcher     ~20ms    (runs once)     │
-              └───────────────────────────────────────┘
-
-히트   --> 가장 빠른 레이어에서 바로 돌려주고, 나머지 레이어도 채워둡니다
-미스   --> fetcher가 딱 한 번만 실행됩니다 (100배 동시 요청이 몰려도)
-```
+layercache는 스탬피드 방지, 태그 무효화, 분산 일관성이 내장된 Node.js용 멀티 레이어 캐시입니다. 별도 설정 없이 바로 사용할 수 있습니다.
 
 ---
 
@@ -118,7 +100,143 @@ const cache = new CacheStack([
 
 ---
 
+## 성능
+
+```
+Environment: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
+CPU: AMD EPYC 4584PX 16-Core  |  RAM: 1.9 GB
+Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+```
+
+```
+┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
+│ Scenario                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
+├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
+│ L1 memory hit (warm)         │   0.011  │   0.016  │   0.004  │   0.405  │
+│ L1 hit in layered setup      │   0.006  │   0.007  │   0.004  │   0.077  │
+│ No cache / origin fetch      │   6.844  │  11.196  │   4.683  │  11.196  │
+└──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
+
+┌──────────────────────────────┬────────────────────┐
+│                              │  75 concurrent req │
+├──────────────────────────────┼────────────────────┤
+│ Without layercache           │  75 origin calls   │
+│ With layercache              │   1 origin call    │  ← stampede prevention
+└──────────────────────────────┴────────────────────┘
+```
+
+벤치마크 명령어와 시나리오 설명은 [벤치마킹 문서](../benchmarking.md)에 있습니다.
+
+---
+
+## node-cache-manager에서 마이그레이션하려면?
+
+<table>
+<tr>
+<th>Before</th>
+<th>After</th>
+</tr>
+<tr>
+<td>
+
+```ts
+import { caching, multiCaching }
+  from 'cache-manager'
+import { redisStore }
+  from 'cache-manager-redis-yet'
+
+const mem = await caching('memory', {
+  max: 100,
+  ttl: 60 * 1000        // ms
+})
+const red = await caching(redisStore, {
+  url: 'redis://localhost:6379',
+  ttl: 300 * 1000       // ms
+})
+const cache = multiCaching([mem, red])
+
+// 스탬피드 방지:  ❌
+// 자동 백필:      ❌
+// 태그 무효화:    ❌
+```
+
+</td>
+<td>
+
+```ts
+import {
+  CacheStack,
+  MemoryLayer,
+  RedisLayer
+} from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),    // s
+  new RedisLayer({
+    client: new Redis(),
+    ttl: 300                       // s
+  })
+])
+
+// 스탬피드 방지:  ✅
+// 자동 백필:      ✅
+// 태그 무효화:    ✅
+```
+
+</td>
+</tr>
+</table>
+
+> keyv와 cacheable에 대한 전체 마이그레이션 가이드는 [마이그레이션 가이드](../migration-guide.md)를 참고하세요.
+
+---
+
+## 비교
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
+| 스탬피드 방지 | -- | -- | -- | **Yes** |
+| 태그 무효화 | -- | Yes | Yes | **Yes** |
+| TypeScript 퍼스트 | 부분 | Yes | Yes | **Yes** |
+| 이벤트 훅 | Yes | Yes | Yes | **Yes** |
+
+<details>
+<summary>전체 비교 (19개 기능, 클릭하여 펼치기)</summary>
+
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
+| 스탬피드 방지 | -- | -- | -- | **Yes** |
+| 분산 싱글플라이트 | -- | -- | -- | **Yes** |
+| 태그 무효화 | -- | Yes | Yes | **Yes** |
+| 분산 태그 | -- | -- | -- | **Yes** |
+| 크로스 서버 L1 무효화 | -- | -- | -- | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | **Yes** |
+| 서킷 브레이커 | -- | -- | -- | **Yes** |
+| 장애 복구 | -- | -- | -- | **Yes** |
+| 슬라이딩 / 적응형 TTL | -- | -- | -- | **Yes** |
+| 캐시 워밍 | -- | -- | -- | **Yes** |
+| 스냅샷 영속성 | -- | -- | -- | **Yes** |
+| 압축 | -- | -- | Yes | **Yes** |
+| 관리 CLI | -- | -- | -- | **Yes** |
+| TypeScript 퍼스트 | 부분 | Yes | Yes | **Yes** |
+| Wrap / 데코레이터 API | Yes | -- | -- | **Yes** |
+| 네임스페이스 | -- | Yes | Yes | **Yes** |
+| 이벤트 훅 | Yes | Yes | Yes | **Yes** |
+| 커스텀 레이어 | 부분 | -- | -- | **Yes** |
+
+</details>
+
+> 자세히 비교하고 싶다면 [비교 가이드](../comparison.md)를 참고하세요.
+
+---
+
 ## 기능
+
+<details>
+<summary><b>핵심 캐싱, 무효화, 복원력 및 모니터링 (클릭하여 펼치기)</b></summary>
 
 ### 핵심 캐싱
 
@@ -173,6 +291,8 @@ const cache = new CacheStack([
 | **Prometheus 익스포터** | 지연 시간 게이지를 포함해 메트릭을 내보냅니다 |
 | **HTTP 통계 핸들러** | 대시보드에 바로 쓸 수 있는 JSON 엔드포인트입니다 |
 | **관리 CLI** | `npx layercache stats\|keys\|invalidate`로 Redis 캐시를 관리합니다 |
+
+</details>
 
 ---
 
@@ -274,55 +394,6 @@ const cache = new CacheStack(
 ```
 
 </details>
-
----
-
-## 성능
-
-```
-┌─────────────────────────┬──────────────┐
-│ Scenario                │ Avg Latency  │
-├─────────────────────────┼──────────────┤
-│ L1 memory hit           │   ~0.006 ms  │
-│ L2 Redis hit            │   ~0.020 ms  │
-│ No cache (simulated DB) │   ~1.08  ms  │
-└─────────────────────────┴──────────────┘
-
-┌───────────────────────────┬────────┐
-│ Concurrent requests       │  100   │
-│ Fetcher executions        │    1   │  <-- stampede prevention
-└───────────────────────────┴────────┘
-```
-
-벤치마크 명령어와 시나리오 설명은 [벤치마킹 문서](../benchmarking.md)에 있습니다.
-
----
-
-## 비교
-
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
-| 스탬피드 방지 | -- | -- | -- | **Yes** |
-| 분산 싱글플라이트 | -- | -- | -- | **Yes** |
-| 태그 무효화 | -- | -- | Yes | **Yes** |
-| 분산 태그 | -- | -- | -- | **Yes** |
-| 크로스 서버 L1 무효화 | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| 서킷 브레이커 | -- | -- | -- | **Yes** |
-| 장애 복구 | -- | -- | -- | **Yes** |
-| 슬라이딩 / 적응형 TTL | -- | -- | -- | **Yes** |
-| 캐시 워밍 | -- | -- | -- | **Yes** |
-| 스냅샷 영속성 | -- | -- | -- | **Yes** |
-| 압축 | -- | -- | Yes | **Yes** |
-| 관리 CLI | -- | -- | -- | **Yes** |
-| TypeScript 퍼스트 | 부분 | Yes | Yes | **Yes** |
-| Wrap / 데코레이터 API | Yes | -- | -- | **Yes** |
-| 네임스페이스 | -- | Yes | Yes | **Yes** |
-| 이벤트 훅 | Yes | Yes | Yes | **Yes** |
-| 커스텀 레이어 | 부분 | -- | -- | **Yes** |
-
-> 자세히 비교하고 싶다면 [비교 가이드](../comparison.md)를 참고하세요.
 
 ---
 
