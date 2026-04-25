@@ -24,6 +24,7 @@ interface NormalizedRateLimitOptions extends CacheRateLimitOptions {
 }
 
 const MAX_BUCKETS = 10_000
+const MAX_QUEUE_PER_BUCKET = 10_000
 
 export class FetchRateLimiter {
   private readonly buckets = new Map<string, BucketState>()
@@ -33,6 +34,7 @@ export class FetchRateLimiter {
   private nextFetcherBucketId = 0
   private drainTimer?: ReturnType<typeof setTimeout>
   private isDisposed = false
+  rateLimitBypasses = 0
 
   async schedule<T>(
     options: CacheRateLimitOptions | undefined,
@@ -55,6 +57,11 @@ export class FetchRateLimiter {
     return new Promise<T>((resolve, reject) => {
       const bucketKey = this.resolveBucketKey(normalized, context)
       const queue = this.queuesByBucket.get(bucketKey) ?? []
+      if (queue.length >= MAX_QUEUE_PER_BUCKET) {
+        this.rateLimitBypasses += 1
+        task().then(resolve, reject)
+        return
+      }
       queue.push({
         bucketKey,
         options: normalized,
