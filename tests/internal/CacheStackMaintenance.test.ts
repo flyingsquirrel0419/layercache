@@ -233,6 +233,43 @@ describe('CacheStackMaintenance', () => {
     expect(order).toEqual(['start:1', 'end:1', 'run:2', 'run:4'])
   })
 
+  describe('pruneKeyEpochsIfNeeded', () => {
+    it('keeps keyEpochs bounded when exceeding MAX_KEY_EPOCHS', () => {
+      const maintenance = new CacheStackMaintenance()
+      const keyEpochs = (maintenance as unknown as { keyEpochs: Map<string, number> }).keyEpochs
+
+      const keys = Array.from({ length: 50_001 }, (_, i) => `key:${i}`)
+      maintenance.bumpKeyEpochs(keys)
+
+      expect(keyEpochs.size).toBeLessThanOrEqual(50_000)
+      expect(keyEpochs.size).toBeGreaterThan(40_000)
+    })
+
+    it('removes lowest-epoch keys when pruning', () => {
+      const maintenance = new CacheStackMaintenance()
+      const keyEpochs = (maintenance as unknown as { keyEpochs: Map<string, number> }).keyEpochs
+
+      for (let i = 0; i < 25_000; i++) {
+        keyEpochs.set(`old:${i}`, 1)
+      }
+      for (let i = 0; i < 25_001; i++) {
+        keyEpochs.set(`new:${i}`, 100)
+      }
+
+      maintenance.bumpKeyEpochs(['trigger'])
+
+      let oldRemaining = 0
+      for (let i = 0; i < 25_000; i++) {
+        if (keyEpochs.has(`old:${i}`)) oldRemaining++
+      }
+      expect(oldRemaining).toBeLessThan(25_000)
+
+      for (let i = 0; i < 25_001; i++) {
+        expect(keyEpochs.has(`new:${i}`)).toBe(true)
+      }
+    })
+  })
+
   it('starts and stops the write-behind timer only for write-behind mode with a positive interval', async () => {
     vi.useFakeTimers()
 

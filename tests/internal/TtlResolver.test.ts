@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import * as TtlResolverModule from '../../src/internal/TtlResolver'
 import { TtlResolver } from '../../src/internal/TtlResolver'
 
 describe('TtlResolver', () => {
@@ -101,7 +102,7 @@ describe('TtlResolver', () => {
 
   it('applies ttl jitter and allows profile deletion and clearing', () => {
     const resolver = new TtlResolver({ maxProfileEntries: 100 })
-    const random = vi.spyOn(Math, 'random').mockReturnValue(1)
+    const random = vi.spyOn(TtlResolverModule.secureRandom, 'value').mockReturnValue(1)
 
     resolver.recordAccess('hot')
     resolver.recordAccess('hot')
@@ -230,5 +231,11 @@ describe('TtlResolver', () => {
       resolver.resolveFreshTtl('hot', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
     ).toBe(15)
     expect(resolver.applyAdaptiveTtl('hot', 'memory', 10, true)).toBe(15)
+  })
+
+  it('secureRandom.value returns a number between 0 and 1', () => {
+    const value = TtlResolverModule.secureRandom.value()
+    expect(value).toBeGreaterThanOrEqual(0)
+    expect(value).toBeLessThan(1)
   })
 })

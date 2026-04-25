@@ -1,6 +1,7 @@
 import Redis from 'ioredis-mock'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
+import * as TtlResolverModule from '../../src/internal/TtlResolver'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import { RedisSingleFlightCoordinator } from '../../src/singleflight/RedisSingleFlightCoordinator'
@@ -409,7 +410,7 @@ describe('operational features', () => {
   it('applies ttl jitter before writing to layers', async () => {
     const layer = new BulkLayer()
     const cache = new CacheStack([layer])
-    vi.spyOn(Math, 'random').mockReturnValue(1)
+    vi.spyOn(TtlResolverModule.secureRandom, 'value').mockReturnValue(1)
 
     await cache.set('jittered', { ok: true }, { ttl: 10, ttlJitter: 2 })
 

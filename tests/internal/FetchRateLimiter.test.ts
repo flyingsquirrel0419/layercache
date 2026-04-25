@@ -286,6 +286,27 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('bypasses rate limiting when a bucket queue exceeds MAX_QUEUE_PER_BUCKET', async () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+
+    queuesByBucket.set(
+      'key:user:1',
+      Array.from({ length: 10_000 }, () => ({}))
+    )
+
+    expect(limiter.rateLimitBypasses).toBe(0)
+
+    const result = await limiter.schedule(
+      { maxConcurrent: 1, scope: 'key' },
+      { key: 'user:1', fetcher: async () => 'x' },
+      async () => 'bypassed'
+    )
+
+    expect(result).toBe('bypassed')
+    expect(limiter.rateLimitBypasses).toBe(1)
+  })
+
   it('disposes timers and rejects future scheduling', async () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()

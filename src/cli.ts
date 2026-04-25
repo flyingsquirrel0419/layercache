@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import Redis from 'ioredis'
+import { validateCacheKey, validatePattern, validateTag } from './internal/CacheStackValidation'
 import { isStoredValueEnvelope, resolveStoredValue } from './internal/StoredValue'
 import { RedisTagIndex } from './invalidation/RedisTagIndex'
 
@@ -13,6 +14,7 @@ interface ParsedArgs {
   key?: string
   tagIndexPrefix?: string
   requireTls?: boolean
+  force?: boolean
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -58,13 +60,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     })
 
     if (args.command === 'stats') {
-      const keys = await scanKeys(redis, args.pattern ?? '*')
-      process.stdout.write(`${JSON.stringify({ totalKeys: keys.length, pattern: args.pattern ?? '*' }, null, 2)}\n`)
+      const pattern = args.pattern ?? '*'
+      if (args.pattern && !validateCliInput(args.pattern, validatePattern)) return
+      const keys = await scanKeys(redis, pattern)
+      process.stdout.write(`${JSON.stringify({ totalKeys: keys.length, pattern }, null, 2)}\n`)
       return
     }
 
     if (args.command === 'keys') {
-      const keys = await scanKeys(redis, args.pattern ?? '*')
+      const pattern = args.pattern ?? '*'
+      if (args.pattern && !validateCliInput(args.pattern, validatePattern)) return
+      const keys = await scanKeys(redis, pattern)
       if (keys.length > 0) {
         process.stdout.write(`${keys.join('\n')}\n`)
       }
@@ -73,6 +79,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
     if (args.command === 'invalidate') {
       if (args.tag) {
+        if (!validateCliInput(args.tag, validateTag)) return
+
         const tagIndex = new RedisTagIndex({ client: redis, prefix: args.tagIndexPrefix ?? 'layercache:tag-index' })
         const keys = await tagIndex.keysForTag(args.tag)
         if (keys.length > 0) {
@@ -82,11 +90,21 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         return
       }
 
-      const keys = await scanKeys(redis, args.pattern ?? '*')
+      const effectivePattern = args.pattern ?? '*'
+      if (args.pattern && !validateCliInput(args.pattern, validatePattern)) return
+
+      const keys = await scanKeys(redis, effectivePattern)
+
+      // Require --force for untargeted bulk invalidation (default * pattern with no --tag)
+      if (!args.pattern && !args.force && keys.length > 0) {
+        process.stderr.write(`Warning: this operation will invalidate ${keys.length} keys. Use --force to confirm.\n`)
+        return
+      }
+
       if (keys.length > 0) {
         await batchDelete(redis, keys)
       }
-      process.stdout.write(`${JSON.stringify({ deletedKeys: keys.length, pattern: args.pattern ?? '*' }, null, 2)}\n`)
+      process.stdout.write(`${JSON.stringify({ deletedKeys: keys.length, pattern: effectivePattern }, null, 2)}\n`)
       return
     }
 
@@ -94,6 +112,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (!args.key) {
         throw new Error('inspect requires --key <key>.')
       }
+
+      if (!validateCliInput(args.key, validateCacheKey)) return
 
       const payload = await redis.getBuffer(args.key)
       const ttl = await redis.ttl(args.key)
@@ -176,6 +196,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       index += 1
     } else if (token === '--require-tls') {
       parsed.requireTls = true
+    } else if (token === '--force') {
+      parsed.force = true
     }
   }
 
@@ -276,6 +298,18 @@ function maskRedisUrl(url: string): string {
   } catch {
     // Bare host:port — no credentials to mask
     return url.replace(/:([^@/]+)@/, ':***@')
+  }
+}
+
+function validateCliInput(value: string, validator: (v: string) => void): boolean {
+  try {
+    validator(value)
+    return true
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`Error: ${message}\n`)
+    process.exitCode = 1
+    return false
   }
 }
 

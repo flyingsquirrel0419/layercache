@@ -1,8 +1,11 @@
-import { randomBytes } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
-import path from 'node:path'
 import type { CacheLayer, CacheSerializer, CacheSnapshotEntry, CacheTagIndex } from '../types'
-import { readUtf8HandleWithLimit, validateSnapshotFilePath } from './CacheSnapshotFile'
+import {
+  atomicWriteTempPath,
+  commitAtomicWrite,
+  readUtf8HandleWithLimit,
+  validateSnapshotFilePath
+} from './CacheSnapshotFile'
 import { remainingStoredTtlSeconds } from './StoredValue'
 import { sanitizeStructuredData } from './StructuredDataSanitizer'
 
@@ -65,10 +68,7 @@ export class CacheStackSnapshotManager {
     maxEntries: number | false
   ): Promise<void> {
     const targetPath = await validateSnapshotFilePath(filePath, 'write', snapshotBaseDir)
-    const tempPath = path.join(
-      path.dirname(targetPath),
-      `.layercache-${process.pid}-${Date.now()}-${randomBytes(8).toString('hex')}.tmp`
-    )
+    const tempPath = atomicWriteTempPath(targetPath)
     let handle: import('node:fs/promises').FileHandle | undefined
 
     try {
@@ -86,7 +86,7 @@ export class CacheStackSnapshotManager {
       await openedHandle.writeFile(wroteAny ? '\n]' : ']', 'utf8')
       await openedHandle.close()
       handle = undefined
-      await fs.rename(tempPath, targetPath)
+      await commitAtomicWrite(tempPath, targetPath)
     } catch (error) {
       await handle?.close().catch(() => undefined)
       await fs.unlink(tempPath).catch(() => undefined)
