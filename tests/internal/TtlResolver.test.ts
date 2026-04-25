@@ -232,4 +232,10 @@ describe('TtlResolver', () => {
     ).toBe(15)
     expect(resolver.applyAdaptiveTtl('hot', 'memory', 10, true)).toBe(15)
   })
+
+  it('secureRandom.value returns a number between 0 and 1', () => {
+    const value = TtlResolverModule.secureRandom.value()
+    expect(value).toBeGreaterThanOrEqual(0)
+    expect(value).toBeLessThan(1)
+  })
 })
