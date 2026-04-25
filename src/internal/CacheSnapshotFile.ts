@@ -1,4 +1,5 @@
-import type { FileHandle } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { type FileHandle, rename, unlink } from 'node:fs/promises'
 
 function isWithinSnapshotBase(
   realBaseDir: string,
@@ -126,4 +127,17 @@ export async function readUtf8HandleWithLimit(handle: FileHandle, byteLimit: num
   }
 
   return Buffer.concat(chunks).toString('utf8')
+}
+
+export function atomicWriteTempPath(targetPath: string): string {
+  return `${targetPath}.tmp-${randomBytes(8).toString('hex')}`
+}
+
+export async function commitAtomicWrite(tempPath: string, targetPath: string): Promise<void> {
+  try {
+    await rename(tempPath, targetPath)
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined)
+    throw error
+  }
 }

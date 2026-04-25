@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { CacheAdaptiveTtlOptions, CacheTtlPolicy, CacheWriteOptions, LayerTtlMap } from '../types'
 
 interface AccessProfile {
@@ -12,6 +13,12 @@ interface TtlResolverOptions {
 type CacheWriteKind = 'value' | 'empty'
 
 const DEFAULT_NEGATIVE_TTL_SECONDS = 60
+
+export const secureRandom = {
+  value(): number {
+    return randomBytes(4).readUInt32BE(0) / 0x100000000
+  }
+}
 
 export class TtlResolver {
   private readonly accessProfiles = new Map<string, AccessProfile>()
@@ -113,7 +120,7 @@ export class TtlResolver {
       return ttl
     }
 
-    const delta = (Math.random() * 2 - 1) * jitter
+    const delta = (secureRandom.value() * 2 - 1) * jitter
     return Math.max(1, Math.round(ttl + delta))
   }
 

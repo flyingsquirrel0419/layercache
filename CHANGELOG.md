@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **VULN-1 (HIGH)**: Fixed unbounded memory growth in `CacheStackMaintenance` where the `keyEpochs` Map grew without limit. Added `MAX_KEY_EPOCHS` (50,000) with automatic pruning of the oldest 10% of entries.
+- **VULN-2 (MED-HIGH)**: Fixed unbounded per-bucket queue growth in `FetchRateLimiter` where pending callback queues could grow without limit under sustained contention. Added `MAX_QUEUE_PER_BUCKET` (10,000); when exceeded, new requests bypass the rate limiter for availability.
+- **VULN-3 (MEDIUM)**: Fixed missing input validation in the CLI. Cache keys, patterns, and tags are now validated using the same rules as the runtime `validateCacheKey()`, `validatePattern()`, and `validateTag()` functions before any Redis operation.
+- **VULN-4 (MEDIUM)**: Fixed unsafe mass deletion in the CLI `invalidate` command. Running `invalidate` without `--pattern` or `--tag` (defaults to `*`) now requires a `--force` flag to proceed, preventing accidental cache wipes.
+- **VULN-5 (MEDIUM)**: Fixed ineffective pruning in `TagIndex` where `knownKeys` (`Set<string>`) provided no access ordering. Changed to `Map<string, number>` (LRU timestamps) so pruning correctly evicts the least-recently-used entries.
+- **VULN-6 (MEDIUM)**: Fixed TOCTOU race condition in snapshot file writes. Centralized atomic write logic (temp file + `fs.rename`) into `CacheSnapshotFile` as reusable utilities (`atomicWriteTempPath`, `commitAtomicWrite`).
+- **VULN-7 (LOW)**: Fixed memory leak in `CacheStack` where expired degradation entries in `layerDegradedUntil` were never cleaned up. Entries are now deleted on read when their degradation period has expired.
+- **VULN-8 (LOW)**: Replaced `Math.random()` with `crypto.randomBytes`-based CSPRNG in `TtlResolver` for TTL jitter calculations. The deterministic test mock was updated accordingly.
+- **VULN-9 (LOW)**: Upgraded background refresh error logging from `debug` to `warn` level so that refresh failures and timeouts are visible in production logs.
+
 ## [1.3.2] — 2026-04-17
 
 ### Changed

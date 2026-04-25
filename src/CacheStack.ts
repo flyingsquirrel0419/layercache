@@ -1284,7 +1284,7 @@ export class CacheStack extends EventEmitter {
       } catch (error) {
         if (this.backgroundRefreshAbort.get(key)) return
         this.metricsCollector.increment('refreshErrors')
-        this.logger.debug?.('refresh-error', { key, error: this.formatError(error) })
+        this.logger.warn?.('background-refresh-error', { key, error: this.formatError(error) })
       } finally {
         this.backgroundRefreshes.delete(key)
         this.backgroundRefreshAbort.delete(key)
@@ -1648,7 +1648,12 @@ export class CacheStack extends EventEmitter {
   }
 
   private shouldSkipLayer(layer: CacheLayer): boolean {
-    return shouldSkipDegradedLayer(this.layerDegradedUntil.get(layer.name))
+    const degradedUntil = this.layerDegradedUntil.get(layer.name)
+    const skip = shouldSkipDegradedLayer(degradedUntil)
+    if (!skip && degradedUntil !== undefined) {
+      this.layerDegradedUntil.delete(layer.name)
+    }
+    return skip
   }
 
   private async handleLayerFailure(layer: CacheLayer, operation: string, error: unknown): Promise<null> {
