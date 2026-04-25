@@ -20,7 +20,7 @@ const MAX_PATTERN_RECURSION_DEPTH = 500
 export class TagIndex implements CacheTagIndex {
   private readonly tagToKeys = new Map<string, Set<string>>()
   private readonly keyToTags = new Map<string, Set<string>>()
-  private readonly knownKeys = new Set<string>()
+  private readonly knownKeys = new Map<string, number>()
   private readonly maxKnownKeys: number | undefined
   private nextNodeId = 1
   private readonly root = this.createTrieNode()
@@ -128,11 +128,12 @@ export class TagIndex implements CacheTagIndex {
   }
 
   private insertKnownKey(key: string): void {
-    if (this.knownKeys.has(key)) {
+    const isNew = !this.knownKeys.has(key)
+    this.knownKeys.set(key, Date.now())
+
+    if (!isNew) {
       return
     }
-
-    this.knownKeys.add(key)
 
     let node = this.root
     for (const character of key) {
@@ -253,14 +254,13 @@ export class TagIndex implements CacheTagIndex {
       return
     }
 
+    const sorted = [...this.knownKeys.entries()].sort((a, b) => a[1] - b[1])
     const toRemove = Math.ceil(this.maxKnownKeys * 0.1)
-    let removed = 0
-    for (const key of this.knownKeys) {
-      if (removed >= toRemove) {
-        break
+    for (let i = 0; i < toRemove && i < sorted.length; i += 1) {
+      const entry = sorted[i]
+      if (entry) {
+        this.removeKey(entry[0])
       }
-      this.removeKey(key)
-      removed += 1
     }
   }
 
