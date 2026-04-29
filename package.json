@@ -93,7 +93,7 @@
     "@types/autocannon": "^7.12.7",
     "@types/node": "^22.15.2",
     "@vitest/coverage-v8": "^4.1.2",
-    "autocannon": "^8.0.0",
+    "autocannon": "^2.0.1",
     "ioredis": "^5.6.1",
     "ioredis-mock": "^8.13.0",
     "tsup": "^8.5.0",

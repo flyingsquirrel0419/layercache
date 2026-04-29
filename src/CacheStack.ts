@@ -18,11 +18,10 @@ import {
 import { CacheStackInvalidationSupport } from './internal/CacheStackInvalidationSupport'
 import { CacheStackLayerWriter, type CacheWriteKind } from './internal/CacheStackLayerWriter'
 import { CacheStackMaintenance } from './internal/CacheStackMaintenance'
+import { CacheStackReader } from './internal/CacheStackReader'
 import {
-  planFreshReadPolicies,
   resolveRecoverableLayerFailure,
-  shouldSkipLayer as shouldSkipDegradedLayer,
-  shouldStartBackgroundRefresh
+  shouldSkipLayer as shouldSkipDegradedLayer
 } from './internal/CacheStackRuntimePolicy'
 import { CacheStackSnapshotManager } from './internal/CacheStackSnapshotManager'
 import {
@@ -41,7 +40,7 @@ import {
 import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
 import { FetchRateLimiter } from './internal/FetchRateLimiter'
 import { MetricsCollector } from './internal/MetricsCollector'
-import { isStoredValueEnvelope, remainingStoredTtlSeconds, resolveStoredValue } from './internal/StoredValue'
+import { resolveStoredValue } from './internal/StoredValue'
 import { TtlResolver } from './internal/TtlResolver'
 import { TagIndex } from './invalidation/TagIndex'
 import { JsonSerializer } from './serialization/JsonSerializer'
@@ -60,7 +59,6 @@ import {
   type CacheMSetEntry,
   type CacheMetricsSnapshot,
   CacheMissError,
-  type CacheSingleFlightExecutionOptions,
   type CacheSnapshotEntry,
   type CacheStackEvents,
   type CacheStackOptions,
@@ -77,27 +75,10 @@ import {
   type LayerTtlMap
 } from './types'
 
-const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
-const DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS = 5_000
-const DEFAULT_SINGLE_FLIGHT_POLL_MS = 50
-const DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
 const DEFAULT_SNAPSHOT_MAX_BYTES = 16 * 1_024 * 1_024
 const DEFAULT_SNAPSHOT_MAX_ENTRIES = 10_000
 const DEFAULT_INVALIDATION_MAX_KEYS = 10_000
 const DEFAULT_MAX_PROFILE_ENTRIES = 100_000
-
-type ReadMode = 'allow-stale' | 'fresh-only'
-
-type ReadHit<T> =
-  | {
-      found: true
-      value: T | null
-      stored: unknown
-      state: 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
-      layerIndex: number
-      layerName: string
-    }
-  | { found: false; value: null; stored: null; state: 'miss' }
 
 class DebugLogger implements CacheLogger {
   private readonly enabled: boolean
@@ -157,8 +138,6 @@ export class CacheStack extends EventEmitter {
   private readonly invalidation: CacheStackInvalidationSupport
   private readonly layerWriter: CacheStackLayerWriter
   private readonly snapshots: CacheStackSnapshotManager
-  private readonly backgroundRefreshes = new Map<string, Promise<void>>()
-  private readonly backgroundRefreshAbort = new Map<string, boolean>()
   private readonly layerDegradedUntil = new Map<string, number>()
   private readonly maintenance = new CacheStackMaintenance()
   private readonly ttlResolver: TtlResolver
@@ -166,6 +145,7 @@ export class CacheStack extends EventEmitter {
   private nextOperationId = 0
   private currentGeneration?: number
   private isDisconnecting = false
+  private readonly reader: CacheStackReader
   private disconnectPromise?: Promise<void>
 
   constructor(
@@ -259,13 +239,50 @@ export class CacheStack extends EventEmitter {
       layers: this.layers,
       tagIndex: this.tagIndex,
       snapshotSerializer: this.snapshotSerializer,
-      readLayerEntry: this.readLayerEntry.bind(this),
+      readLayerEntry: (layer, key) => this.reader.readLayerEntry(layer, key),
       shouldSkipLayer: (layer) => this.shouldSkipLayer(layer),
       handleLayerFailure: async (layer, operation, error) => this.handleLayerFailure(layer, operation, error),
       qualifyKey: this.qualifyKey.bind(this),
       stripQualifiedKey: this.stripQualifiedKey.bind(this),
       validateCacheKey,
       formatError: this.formatError.bind(this)
+    })
+    this.reader = new CacheStackReader({
+      layers: this.layers,
+      metricsCollector: this.metricsCollector,
+      maintenance: this.maintenance,
+      tagIndex: this.tagIndex,
+      circuitBreakerManager: this.circuitBreakerManager,
+      fetchRateLimiter: this.fetchRateLimiter,
+      stampedeGuard: this.stampedeGuard,
+      ttlResolver: this.ttlResolver,
+      logger: this.logger,
+      shouldSkipLayer: (layer) => this.shouldSkipLayer(layer),
+      handleLayerFailure: async (layer, operation, error) => this.handleLayerFailure(layer, operation, error),
+      emit: (event, data) => this.emit(event, data as never),
+      emitError: (operation, context) => this.emitError(operation, context),
+      formatError: (error) => this.formatError(error),
+      storeEntry: (key, kind, value, options) => this.storeEntry(key, kind, value, options),
+      recordCircuitFailure: (key, options, error) => this.recordCircuitFailure(key, options, error),
+      resolveLayerSeconds: (layerName, override, globalDefault, fallback) =>
+        this.resolveLayerSeconds(layerName, override, globalDefault, fallback),
+      sleep: (ms) => this.sleep(ms),
+      withTimeout: (promise, ms, createError) => this.withTimeout(promise, ms, createError),
+      isDisconnecting: () => this.isDisconnecting,
+      isGracefulDegradationEnabled: () => this.isGracefulDegradationEnabled(),
+      scheduleBackgroundRefreshDispatch: <T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions) =>
+        this.scheduleBackgroundRefresh(key, fetcher, options),
+      stampedePrevention: options.stampedePrevention,
+      singleFlightCoordinator: options.singleFlightCoordinator,
+      singleFlightLeaseMs: options.singleFlightLeaseMs,
+      singleFlightTimeoutMs: options.singleFlightTimeoutMs,
+      singleFlightPollMs: options.singleFlightPollMs,
+      singleFlightRenewIntervalMs: options.singleFlightRenewIntervalMs,
+      backgroundRefreshTimeoutMs: options.backgroundRefreshTimeoutMs,
+      negativeCaching: options.negativeCaching,
+      refreshAhead: options.refreshAhead,
+      circuitBreaker: options.circuitBreaker,
+      fetcherRateLimit: options.fetcherRateLimit
     })
     this.initializeWriteBehind(options.writeBehind)
     this.startup = this.initialize()
@@ -282,61 +299,8 @@ export class CacheStack extends EventEmitter {
       const normalizedKey = this.qualifyKey(validateCacheKey(key))
       this.validateWriteOptions(options)
       await this.awaitStartup('get')
-      return this.getPrepared(normalizedKey, fetcher, options)
+      return this.reader.getPrepared(normalizedKey, fetcher, options)
     })
-  }
-
-  private async getPrepared<T>(
-    normalizedKey: string,
-    fetcher?: () => Promise<T>,
-    options?: CacheGetOptions
-  ): Promise<T | null> {
-    const hit = await this.readFromLayers<T>(normalizedKey, options, 'allow-stale')
-    if (hit.found) {
-      this.ttlResolver.recordAccess(normalizedKey)
-      if (this.isNegativeStoredValue(hit.stored)) {
-        this.metricsCollector.increment('negativeCacheHits')
-      }
-
-      if (hit.state === 'fresh') {
-        this.metricsCollector.increment('hits')
-        await this.applyFreshReadPolicies(normalizedKey, hit, options, fetcher)
-        return hit.value
-      }
-
-      if (hit.state === 'stale-while-revalidate') {
-        this.metricsCollector.increment('hits')
-        this.metricsCollector.increment('staleHits')
-        this.emit('stale-serve', { key: normalizedKey, state: hit.state, layer: hit.layerName })
-        if (fetcher) {
-          this.scheduleBackgroundRefresh(normalizedKey, fetcher, options)
-        }
-        return hit.value
-      }
-
-      if (!fetcher) {
-        this.metricsCollector.increment('hits')
-        this.metricsCollector.increment('staleHits')
-        this.emit('stale-serve', { key: normalizedKey, state: hit.state, layer: hit.layerName })
-        return hit.value
-      }
-
-      try {
-        return await this.fetchWithGuards(normalizedKey, fetcher, options)
-      } catch (error) {
-        this.metricsCollector.increment('staleHits')
-        this.metricsCollector.increment('refreshErrors')
-        this.logger.debug?.('stale-if-error', { key: normalizedKey, error: this.formatError(error) })
-        return hit.value
-      }
-    }
-
-    this.metricsCollector.increment('misses')
-    if (!fetcher) {
-      return null
-    }
-
-    return this.fetchWithGuards(normalizedKey, fetcher, options, undefined, undefined, true)
   }
 
   /**
@@ -511,7 +475,7 @@ export class CacheStack extends EventEmitter {
             const optionsSignature = serializeOptions(entry.options)
             const existing = pendingReads.get(entry.key)
             if (!existing) {
-              const promise = this.getPrepared(entry.key, entry.fetch, entry.options)
+              const promise = this.reader.getPrepared(entry.key, entry.fetch, entry.options)
               pendingReads.set(entry.key, {
                 promise,
                 fetch: entry.fetch,
@@ -555,7 +519,7 @@ export class CacheStack extends EventEmitter {
 
         const values = layer.getMany
           ? await layer.getMany(keys)
-          : await Promise.all(keys.map((key) => this.readLayerEntry(layer, key)))
+          : await Promise.all(keys.map((key) => this.reader.readLayerEntry(layer, key)))
 
         for (let offset = 0; offset < values.length; offset += 1) {
           const key = keys[offset]
@@ -575,7 +539,7 @@ export class CacheStack extends EventEmitter {
           }
 
           await this.tagIndex.touch(key)
-          await this.backfill(key, stored, layerIndex - 1)
+          await this.reader.backfill(key, stored, layerIndex - 1)
           resultsByKey.set(key, resolved.value)
           pending.delete(key)
           this.metricsCollector.increment('hits', indexesByKey.get(key)?.length ?? 1)
@@ -731,7 +695,7 @@ export class CacheStack extends EventEmitter {
         isLocal: Boolean(layer.isLocal),
         degradedUntil: this.layerDegradedUntil.get(layer.name) ?? null
       })),
-      backgroundRefreshes: this.backgroundRefreshes.size
+      backgroundRefreshes: this.reader.activeRefreshCount
     }
   }
 
@@ -882,12 +846,9 @@ export class CacheStack extends EventEmitter {
         await this.unsubscribeInvalidation?.()
         await this.flushWriteBehindQueue()
         await this.maintenance.waitForGenerationCleanup()
-        // Signal all background refreshes to abort, then wait with a timeout
-        for (const key of this.backgroundRefreshAbort.keys()) {
-          this.backgroundRefreshAbort.set(key, true)
-        }
+        this.reader.abortAllRefreshes()
         await Promise.allSettled(
-          [...this.backgroundRefreshes.values()].map((promise) => {
+          this.reader.getAllRefreshPromises().map((promise) => {
             let timer: ReturnType<typeof setTimeout> | undefined
             return Promise.race([
               promise,
@@ -900,8 +861,6 @@ export class CacheStack extends EventEmitter {
             })
           })
         )
-        this.backgroundRefreshes.clear()
-        this.backgroundRefreshAbort.clear()
         this.maintenance.disposeWriteBehindTimer()
         this.fetchRateLimiter.dispose()
         await Promise.allSettled(this.layers.map((layer) => layer.dispose?.() ?? Promise.resolve()))
@@ -919,155 +878,6 @@ export class CacheStack extends EventEmitter {
     this.unsubscribeInvalidation = await this.options.invalidationBus.subscribe(async (message) => {
       await this.handleInvalidationMessage(message)
     })
-  }
-
-  private async fetchWithGuards<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    options?: CacheGetOptions,
-    expectedClearEpoch?: number,
-    expectedKeyEpoch?: number,
-    initialMissConfirmed = false
-  ): Promise<T | null> {
-    const fetchTask = async (): Promise<T | null> => {
-      const shouldRecheckFreshLayers = !(initialMissConfirmed && this.options.singleFlightCoordinator)
-      if (shouldRecheckFreshLayers) {
-        const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
-        if (secondHit.found) {
-          this.metricsCollector.increment('hits')
-          return secondHit.value
-        }
-      }
-
-      return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
-    }
-
-    const singleFlightTask = async (): Promise<T | null> => {
-      if (!this.options.singleFlightCoordinator) {
-        return fetchTask()
-      }
-
-      try {
-        return await this.options.singleFlightCoordinator.execute(
-          key,
-          this.resolveSingleFlightOptions(),
-          fetchTask,
-          () => this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
-        )
-      } catch (error) {
-        if (!this.isGracefulDegradationEnabled()) {
-          throw error
-        }
-
-        this.metricsCollector.increment('degradedOperations')
-        this.logger.warn?.('single-flight-coordinator-degraded', { key, error: this.formatError(error) })
-        this.emitError('single-flight', { key, degraded: true, error: this.formatError(error) })
-        return fetchTask()
-      }
-    }
-
-    if (this.options.stampedePrevention === false) {
-      return singleFlightTask()
-    }
-
-    return this.stampedeGuard.execute(key, singleFlightTask)
-  }
-
-  private async waitForFreshValue<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    options?: CacheGetOptions,
-    expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
-  ): Promise<T | null> {
-    const timeoutMs = this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS
-    const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
-    const deadline = Date.now() + timeoutMs
-
-    this.metricsCollector.increment('singleFlightWaits')
-    this.emit('stampede-dedupe', { key })
-
-    while (Date.now() < deadline) {
-      const hit = await this.readFromLayers<T>(key, options, 'fresh-only')
-      if (hit.found) {
-        this.metricsCollector.increment('hits')
-        return hit.value
-      }
-      await this.sleep(pollIntervalMs)
-    }
-
-    return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
-  }
-
-  private async fetchAndPopulate<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    options?: CacheGetOptions,
-    expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
-  ): Promise<T | null> {
-    this.circuitBreakerManager.assertClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
-    this.metricsCollector.increment('fetches')
-    const fetchStart = Date.now()
-    let fetched: T
-
-    try {
-      fetched = await this.fetchRateLimiter.schedule(
-        options?.fetcherRateLimit ?? this.options.fetcherRateLimit,
-        { key, fetcher },
-        fetcher
-      )
-      this.circuitBreakerManager.recordSuccess(key)
-      this.logger.debug?.('fetch', { key, durationMs: Date.now() - fetchStart })
-    } catch (error) {
-      this.recordCircuitFailure(key, options?.circuitBreaker ?? this.options.circuitBreaker, error)
-      throw error
-    }
-
-    if (fetched === null || fetched === undefined) {
-      if (!this.shouldNegativeCache(options)) {
-        return null
-      }
-
-      if (this.maintenance.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
-        this.logger.debug?.('skip-negative-store-after-invalidation', {
-          key,
-          expectedClearEpoch,
-          clearEpoch: this.maintenance.currentClearEpoch(),
-          expectedKeyEpoch,
-          keyEpoch: this.maintenance.currentKeyEpoch(key)
-        })
-        return null
-      }
-
-      await this.storeEntry(key, 'empty', null, options)
-      return null
-    }
-
-    // Conditional caching: skip storage if shouldCache returns false
-    if (options?.shouldCache) {
-      try {
-        if (!options.shouldCache(fetched)) {
-          return fetched
-        }
-      } catch (error) {
-        this.logger.warn?.('shouldCache-error', { key, error: this.formatError(error) })
-      }
-    }
-
-    if (this.maintenance.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
-      this.logger.debug?.('skip-store-after-invalidation', {
-        key,
-        expectedClearEpoch,
-        clearEpoch: this.maintenance.currentClearEpoch(),
-        expectedKeyEpoch,
-        keyEpoch: this.maintenance.currentKeyEpoch(key)
-      })
-      return fetched
-    }
-
-    await this.storeEntry(key, 'value', fetched, options)
-    return fetched
   }
 
   private async storeEntry(
@@ -1129,107 +939,6 @@ export class CacheStack extends EventEmitter {
     }
   }
 
-  private async readFromLayers<T>(
-    key: string,
-    options: CacheGetOptions | undefined,
-    mode: ReadMode
-  ): Promise<ReadHit<T>> {
-    let sawRetainableValue = false
-
-    for (let index = 0; index < this.layers.length; index += 1) {
-      const layer = this.layers[index]
-      if (!layer) continue
-      const readStart = performance.now()
-      const stored = await this.readLayerEntry(layer, key)
-      const readDuration = performance.now() - readStart
-      this.metricsCollector.recordLatency(layer.name, readDuration)
-      if (stored === null) {
-        this.metricsCollector.incrementLayer('missesByLayer', layer.name)
-        continue
-      }
-
-      const resolved = resolveStoredValue<T>(stored)
-      if (resolved.state === 'expired') {
-        await layer.delete(key)
-        continue
-      }
-
-      sawRetainableValue = true
-
-      if (mode === 'fresh-only' && resolved.state !== 'fresh') {
-        continue
-      }
-
-      await this.tagIndex.touch(key)
-      await this.backfill(key, stored, index - 1, options)
-      this.metricsCollector.incrementLayer('hitsByLayer', layer.name)
-      this.logger.debug?.('hit', { key, layer: layer.name, state: resolved.state })
-      this.emit('hit', { key, layer: layer.name, state: resolved.state as CacheStackEvents['hit']['state'] })
-      return {
-        found: true,
-        value: resolved.value,
-        stored,
-        state: resolved.state,
-        layerIndex: index,
-        layerName: layer.name
-      }
-    }
-
-    if (!sawRetainableValue) {
-      await this.tagIndex.remove(key)
-    }
-
-    this.logger.debug?.('miss', { key, mode })
-    this.emit('miss', { key, mode })
-    return { found: false, value: null, stored: null, state: 'miss' }
-  }
-
-  private async readLayerEntry(layer: CacheLayer, key: string): Promise<unknown | null> {
-    if (this.shouldSkipLayer(layer)) {
-      return null
-    }
-
-    if (layer.getEntry) {
-      try {
-        return await layer.getEntry(key)
-      } catch (error) {
-        return this.handleLayerFailure(layer, 'read', error)
-      }
-    }
-
-    try {
-      return await layer.get(key)
-    } catch (error) {
-      return this.handleLayerFailure(layer, 'read', error)
-    }
-  }
-
-  private async backfill(key: string, stored: unknown, upToIndex: number, options?: CacheGetOptions): Promise<void> {
-    if (upToIndex < 0) {
-      return
-    }
-
-    for (let index = 0; index <= upToIndex; index += 1) {
-      const layer = this.layers[index]
-      if (!layer || this.shouldSkipLayer(layer)) {
-        continue
-      }
-
-      const ttl =
-        remainingStoredTtlSeconds(stored) ??
-        this.resolveLayerSeconds(layer.name, options?.ttl, undefined, layer.defaultTtl)
-      try {
-        await layer.set(key, stored, ttl)
-      } catch (error) {
-        await this.handleLayerFailure(layer, 'backfill', error)
-        continue
-      }
-      this.metricsCollector.increment('backfills')
-      this.logger.debug?.('backfill', { key, layer: layer.name })
-      this.emit('backfill', { key, layer: layer.name })
-    }
-  }
-
   private resolveFreshTtl(
     key: string,
     layerName: string,
@@ -1257,70 +966,6 @@ export class CacheStack extends EventEmitter {
     fallback?: number
   ): number | undefined {
     return this.ttlResolver.resolveLayerSeconds(layerName, override, globalDefault, fallback)
-  }
-
-  private shouldNegativeCache(options?: CacheGetOptions): boolean {
-    return options?.negativeCache ?? this.options.negativeCaching ?? false
-  }
-
-  private scheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
-    if (
-      !shouldStartBackgroundRefresh({
-        isDisconnecting: this.isDisconnecting,
-        hasRefreshInFlight: this.backgroundRefreshes.has(key)
-      })
-    ) {
-      return
-    }
-
-    const clearEpoch = this.maintenance.currentClearEpoch()
-    const keyEpoch = this.maintenance.currentKeyEpoch(key)
-    this.backgroundRefreshAbort.set(key, false)
-    const refresh = (async () => {
-      this.metricsCollector.increment('refreshes')
-      try {
-        if (this.backgroundRefreshAbort.get(key)) return
-        await this.runBackgroundRefresh(key, fetcher, options, clearEpoch, keyEpoch)
-      } catch (error) {
-        if (this.backgroundRefreshAbort.get(key)) return
-        this.metricsCollector.increment('refreshErrors')
-        this.logger.warn?.('background-refresh-error', { key, error: this.formatError(error) })
-      } finally {
-        this.backgroundRefreshes.delete(key)
-        this.backgroundRefreshAbort.delete(key)
-      }
-    })()
-
-    this.backgroundRefreshes.set(key, refresh)
-  }
-
-  private async runBackgroundRefresh<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    options?: CacheGetOptions,
-    expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
-  ): Promise<void> {
-    const timeoutMs = this.options.backgroundRefreshTimeoutMs ?? DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS
-    await this.fetchWithGuards(
-      key,
-      () =>
-        this.withTimeout(fetcher(), timeoutMs, () => {
-          return new Error(`Background refresh timed out after ${timeoutMs}ms for key "${key}".`)
-        }),
-      options,
-      expectedClearEpoch,
-      expectedKeyEpoch
-    )
-  }
-
-  private resolveSingleFlightOptions(): CacheSingleFlightExecutionOptions {
-    return {
-      leaseMs: this.options.singleFlightLeaseMs ?? DEFAULT_SINGLE_FLIGHT_LEASE_MS,
-      waitTimeoutMs: this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS,
-      pollIntervalMs: this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS,
-      renewIntervalMs: this.options.singleFlightRenewIntervalMs
-    }
   }
 
   private async deleteKeys(keys: string[]): Promise<void> {
@@ -1613,38 +1258,28 @@ export class CacheStack extends EventEmitter {
     this.assertActive(operation)
   }
 
+  private async readLayerEntry(layer: CacheLayer, key: string): Promise<unknown | null> {
+    return this.reader.readLayerEntry(layer, key)
+  }
+
+  private scheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
+    this.reader.runScheduleBackgroundRefresh(key, fetcher, options)
+  }
+
   private async applyFreshReadPolicies<T>(
     key: string,
-    hit: Extract<ReadHit<T>, { found: true }>,
+    hit: {
+      found: true
+      value: T | null
+      stored: unknown
+      state: 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
+      layerIndex: number
+      layerName: string
+    },
     options: CacheGetOptions | undefined,
     fetcher?: () => Promise<T>
   ): Promise<void> {
-    const plan = planFreshReadPolicies({
-      stored: hit.stored,
-      hasFetcher: Boolean(fetcher),
-      slidingTtl: options?.slidingTtl ?? false,
-      refreshAheadSeconds:
-        this.resolveLayerSeconds(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
-    })
-
-    if (plan.refreshedStored) {
-      for (let index = 0; index <= hit.layerIndex; index += 1) {
-        const layer = this.layers[index]
-        if (!layer || this.shouldSkipLayer(layer)) {
-          continue
-        }
-
-        try {
-          await layer.set(key, plan.refreshedStored, plan.refreshedStoredTtl)
-        } catch (error) {
-          await this.handleLayerFailure(layer, 'sliding-ttl', error)
-        }
-      }
-    }
-
-    if (fetcher && plan.shouldScheduleBackgroundRefresh) {
-      this.scheduleBackgroundRefresh(key, fetcher, options)
-    }
+    return this.reader.runApplyFreshReadPolicies(key, hit, options, fetcher)
   }
 
   private shouldSkipLayer(layer: CacheLayer): boolean {
@@ -1693,10 +1328,6 @@ export class CacheStack extends EventEmitter {
       this.metricsCollector.increment('circuitBreakerTrips')
     }
     this.emitError('fetch', { key, error: this.formatError(error) })
-  }
-
-  private isNegativeStoredValue(stored: unknown): boolean {
-    return isStoredValueEnvelope(stored) && stored.kind === 'empty'
   }
 
   private emitError(operation: string, context: Record<string, unknown>): void {
