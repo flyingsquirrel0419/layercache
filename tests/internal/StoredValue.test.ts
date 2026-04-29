@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createStoredValueEnvelope,
+  expireStoredEnvelope,
   isStoredValueEnvelope,
   refreshStoredEnvelope,
   remainingFreshTtlSeconds,
@@ -234,5 +235,30 @@ describe('StoredValue', () => {
     expect(isStoredValueEnvelope(refreshed)).toBe(true)
     expect((refreshed as { freshUntil: number }).freshUntil).toBe(now + 15_000)
     expect(refreshStoredEnvelope('plain')).toBe('plain')
+  })
+
+  it('expires envelope freshness while preserving stale windows and plain values', () => {
+    const now = Date.now()
+    const envelope = createStoredValueEnvelope({
+      kind: 'value',
+      value: { id: 1 },
+      freshTtlSeconds: 60,
+      staleWhileRevalidateSeconds: 30,
+      staleIfErrorSeconds: 120,
+      now
+    })
+
+    const expired = expireStoredEnvelope(envelope, now + 10_000)
+
+    expect(resolveStoredValue(expired, now + 10_000)).toEqual({
+      state: 'stale-while-revalidate',
+      value: { id: 1 },
+      stored: expired,
+      envelope: expired
+    })
+    expect((expired as { freshUntil: number }).freshUntil).toBe(now + 10_000)
+    expect((expired as { staleUntil: number }).staleUntil).toBe(now + 40_000)
+    expect((expired as { errorUntil: number }).errorUntil).toBe(now + 130_000)
+    expect(expireStoredEnvelope('plain')).toBe('plain')
   })
 })

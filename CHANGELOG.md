@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `expireByTag()`, `expireByTags()`, `expireByPattern()`, and `expireByPrefix()` to mark entries stale without deleting their cached values, preserving stale-while-revalidate behavior.
+- Added BentoCache to `docs/comparison.md` with notes on multi-layer caching, tag invalidation, stale serving, driver breadth, and distributed single-flight tradeoffs.
+
 ## [1.3.4] — 2026-04-29
 
 ### Changed

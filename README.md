@@ -286,7 +286,7 @@ const cache = new CacheStack([
 | **Metrics** | Hits, misses, fetches, stale hits, circuit breaker trips, and more |
 | **Per-layer latency** | Avg, max, and sample count using Welford's algorithm |
 | **Health checks** | Async health endpoint per layer with latency measurement |
-| **Event hooks** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
+| **Event hooks** | `hit`, `miss`, `set`, `delete`, `expire`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
 | **OpenTelemetry** | Hook-based distributed tracing support without method monkey-patching |
 | **Prometheus exporter** | Metrics export including latency gauges |
 | **HTTP stats handler** | JSON endpoint for dashboards |

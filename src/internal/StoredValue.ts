@@ -196,6 +196,19 @@ export function refreshStoredEnvelope(stored: unknown, now = Date.now()): unknow
   })
 }
 
+export function expireStoredEnvelope(stored: unknown, now = Date.now()): unknown {
+  if (!isStoredValueEnvelope(stored)) {
+    return stored
+  }
+
+  return {
+    ...stored,
+    freshUntil: now,
+    staleUntil: stored.staleWhileRevalidateSeconds ? now + stored.staleWhileRevalidateSeconds * 1_000 : null,
+    errorUntil: stored.staleIfErrorSeconds ? now + stored.staleIfErrorSeconds * 1_000 : null
+  }
+}
+
 function maxExpiry(stored: StoredValueEnvelope): number | null {
   const values = [stored.freshUntil, stored.staleUntil, stored.errorUntil].filter(
     (value): value is number => value !== null

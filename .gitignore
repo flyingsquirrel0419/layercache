@@ -7,3 +7,20 @@ coverage/
 .env.*
 *.tgz
 benchmark-results/
+
+# Local AI assistant/runtime artifacts
+.aider/
+.claude/
+.codex/
+.continue/
+.cursor/
+.gemini/
+.kiro/
+.omc/
+.omx/
+.opencode/
+.qwen/
+.roo/
+.windsurf/
+*.ai
+.mcp.json
