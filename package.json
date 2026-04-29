@@ -64,6 +64,8 @@
     "build:all": "npm run build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "docker compose up -d redis 2>/dev/null; sleep 2 && vitest run --config vitest.integration.config.ts; docker compose down 2>/dev/null",
+    "test:all": "npm test && npm run test:integration",
     "test:watch": "vitest",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

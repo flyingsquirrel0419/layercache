@@ -17,6 +17,17 @@ jobs:
       matrix:
         node-version: [20, 22]
 
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,6 +49,12 @@ jobs:
       - name: Run tests with coverage
         id: tests
         run: npm run test:coverage
+
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          REDIS_URL: redis://localhost:6379
+        if: matrix.node-version == '20'
 
       - name: Upload coverage to Coveralls
         if: matrix.node-version == 20
