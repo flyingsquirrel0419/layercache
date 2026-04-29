@@ -819,4 +819,54 @@ describe('CacheStack internals', () => {
     expect(skip).toBe(false)
     expect(map.has('cleanup-layer')).toBe(false)
   })
+
+  it('broadcasts L1 invalidation after mset when broadcastL1Invalidation is true', async () => {
+    const bus = {
+      subscribe: vi.fn(async () => vi.fn()),
+      publish: vi.fn(async () => {})
+    }
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+      invalidationBus: bus,
+      broadcastL1Invalidation: true
+    })
+    await cache.mset([
+      { key: 'a', value: 1 },
+      { key: 'b', value: 2 }
+    ])
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'keys',
+        operation: 'write'
+      })
+    )
+  })
+
+  it('withTimeout returns raw value when result is not wrapped in {kind, value}', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const withTimeout = (
+      cache as unknown as {
+        withTimeout: <T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error) => Promise<T>
+      }
+    ).withTimeout.bind(cache)
+
+    const result = await withTimeout(Promise.resolve(42), 1000, () => new Error('timeout'))
+    expect(result).toBe(42)
+  })
+
+  it('scheduleBackgroundRefresh delegates to reader', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const scheduleSpy = vi.fn()
+    ;(
+      cache as unknown as {
+        reader: { runScheduleBackgroundRefresh: (...args: unknown[]) => void }
+      }
+    ).reader.runScheduleBackgroundRefresh = scheduleSpy
+    ;(
+      cache as unknown as {
+        scheduleBackgroundRefresh: (key: string, fetcher: () => Promise<string>, options?: unknown) => void
+      }
+    ).scheduleBackgroundRefresh('key1', async () => 'val', { ttl: 30 })
+
+    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30 })
+  })
 })
