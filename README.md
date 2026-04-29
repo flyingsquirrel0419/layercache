@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## Comparison
 
-|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Multi-layer + auto backfill | Partial | Plugin | -- | Partial | **Yes** |
-| Stampede prevention | -- | -- | -- | Partial | **Yes** |
-| Tag invalidation | -- | Yes | Yes | Yes | **Yes** |
-| TypeScript-first | Partial | Yes | Yes | Yes | **Yes** |
-| Event hooks | Yes | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| Multi-layer + auto backfill | Partial | Plugin | -- | **Yes** |
+| Stampede prevention | -- | -- | -- | **Yes** |
+| Tag invalidation | -- | Yes | Yes | **Yes** |
+| TypeScript-first | Partial | Yes | Yes | **Yes** |
+| Event hooks | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>Full comparison (19 features)</summary>
 
-|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Multi-layer with auto backfill | Partial | Plugin | -- | Partial | **Yes** |
-| Stampede prevention | -- | -- | -- | Partial | **Yes** |
-| Distributed single-flight | -- | -- | -- | -- | **Yes** |
-| Tag invalidation | -- | Yes | Yes | Yes | **Yes** |
-| Distributed tags | -- | -- | -- | -- | **Yes** |
-| Cross-server L1 flush | -- | -- | -- | Yes | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
-| Circuit breaker | -- | -- | -- | Yes | **Yes** |
-| Graceful degradation | -- | -- | -- | Yes | **Yes** |
-| Sliding / adaptive TTL | -- | -- | -- | -- | **Yes** |
-| Cache warming | -- | -- | -- | -- | **Yes** |
-| Persistence / snapshots | -- | -- | -- | -- | **Yes** |
-| Compression | -- | -- | Yes | -- | **Yes** |
-| Admin CLI | -- | -- | -- | -- | **Yes** |
-| TypeScript-first | Partial | Yes | Yes | Yes | **Yes** |
-| Wrap / decorator API | Yes | -- | -- | Partial | **Yes** |
-| Namespaces | -- | Yes | Yes | Yes | **Yes** |
-| Event hooks | Yes | Yes | Yes | Yes | **Yes** |
-| Custom layers | Partial | -- | -- | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | **layercache** |
+|---|:---:|:---:|:---:|:---:|
+| Multi-layer with auto backfill | Partial | Plugin | -- | **Yes** |
+| Stampede prevention | -- | -- | -- | **Yes** |
+| Distributed single-flight | -- | -- | -- | **Yes** |
+| Tag invalidation | -- | Yes | Yes | **Yes** |
+| Distributed tags | -- | -- | -- | **Yes** |
+| Cross-server L1 flush | -- | -- | -- | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | **Yes** |
+| Circuit breaker | -- | -- | -- | **Yes** |
+| Graceful degradation | -- | -- | -- | **Yes** |
+| Sliding / adaptive TTL | -- | -- | -- | **Yes** |
+| Cache warming | -- | -- | -- | **Yes** |
+| Persistence / snapshots | -- | -- | -- | **Yes** |
+| Compression | -- | -- | Yes | **Yes** |
+| Admin CLI | -- | -- | -- | **Yes** |
+| TypeScript-first | Partial | Yes | Yes | **Yes** |
+| Wrap / decorator API | Yes | -- | -- | **Yes** |
+| Namespaces | -- | Yes | Yes | **Yes** |
+| Event hooks | Yes | Yes | Yes | **Yes** |
+| Custom layers | Partial | -- | -- | **Yes** |
 
 </details>
 
