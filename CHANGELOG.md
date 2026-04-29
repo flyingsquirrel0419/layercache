@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.3] — 2026-04-26
+## [1.3.4] — 2026-04-29
+
+### Changed
+
+- **`CacheStack` read pipeline extracted** into `CacheStackReader` — a dedicated internal module handling all read-path logic (layer reads, fetch orchestration, background refresh, stale policies, fresh-read policies). Public API is unchanged; `CacheStack` now delegates read operations to the reader, reducing core class size from 1,726 to 1,357 lines (-21%).
+- **Test suite expanded to 529 tests** (up from 474), including 44 new tests for `CacheStackReader` and 11 new tests for `CacheStackLayerWriter` and `CacheStack` internals.
+
+### Fixed
+
+- **npm audit vulnerabilities resolved** — upgraded `postcss`, `vite`, and `autocannon`/`uuid` dependencies to address 5 security advisories (1 high, 4 moderate). All vulnerabilities now show 0 in `npm audit`.
+
+### Added
+
+- `SECURITY.md` — security policy with supported versions, reporting guidelines, and built-in security features documentation.
 
 ### Security
 
