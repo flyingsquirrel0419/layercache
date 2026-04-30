@@ -5,7 +5,7 @@ import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 describe('createCachedMethodDecorator', () => {
   it('creates one wrapped function per instance', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     let calls = 0
 
     class Service {
@@ -60,7 +60,7 @@ describe('createCachedMethodDecorator', () => {
   })
 
   it('throws when applied to a non-method descriptor', () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const descriptor = { value: 123 } as unknown as PropertyDescriptor
 
     expect(() =>

@@ -132,7 +132,7 @@ export class RedisLayer implements CacheLayer {
       const payload = await this.encodePayload(serialized)
       const normalizedKey = this.withPrefix(entry.key)
       if (entry.ttl && entry.ttl > 0) {
-        pipeline.set(normalizedKey, payload as never, 'EX', entry.ttl)
+        pipeline.set(normalizedKey, payload as never, 'EX', Math.ceil(entry.ttl / 1_000))
       } else {
         pipeline.set(normalizedKey, payload as never)
       }
@@ -149,7 +149,7 @@ export class RedisLayer implements CacheLayer {
 
     if (ttl && ttl > 0) {
       await this.runCommand(`set(${this.displayKey(key)})`, () =>
-        this.client.set(normalizedKey, payload as never, 'EX', ttl)
+        this.client.set(normalizedKey, payload as never, 'EX', Math.ceil(ttl / 1_000))
       )
       return
     }

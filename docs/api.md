@@ -71,13 +71,13 @@ const user = await cache.get<User>('user:123', () => db.findUser(123))
 
 // With full options
 const user = await cache.get<User>('user:123', () => db.findUser(123), {
-  ttl: { memory: 30, redis: 600 },
+  ttl: { memory: 30_000, redis: 600_000 },
   tags: ['user', 'user:123'],
   negativeCache: true,
   negativeTtl: 15,
   staleWhileRevalidate: 30,
   staleIfError: 300,
-  ttlJitter: 5
+  ttlJitter: 5_000
 })
 ```
 
@@ -114,7 +114,7 @@ Check if a key exists in any layer.
 
 #### `cache.ttl(key): Promise<number | null>`
 
-Get the remaining TTL in seconds.
+Get the remaining TTL in milliseconds.
 
 #### `cache.inspect(key): Promise<CacheInspectResult | null>`
 
@@ -143,15 +143,15 @@ Writes to all layers simultaneously.
 
 ```ts
 await cache.set('user:123', user, {
-  ttl: { memory: 60, redis: 600 },
+  ttl: { memory: 60_000, redis: 600_000 },
   tags: ['user', 'user:123'],
   staleWhileRevalidate: { redis: 30 },
   staleIfError: { redis: 120 },
-  ttlJitter: { redis: 5 }
+  ttlJitter: { redis: 5_000 }
 })
 
 // Uniform TTL across all layers
-await cache.set('user:123', user, { ttl: 120, tags: ['user'] })
+await cache.set('user:123', user, { ttl: 120_000, tags: ['user'] })
 ```
 
 #### `cache.mset<T>(entries): Promise<void>`
@@ -226,7 +226,7 @@ const user = await getUser(123) // key -> "user:123"
 const getUser = cache.wrap(
   'user',
   (id: number) => db.findUser(id),
-  { keyResolver: (id) => String(id), ttl: 300 }
+  { keyResolver: (id) => String(id), ttl: 300_000 }
 )
 ```
 
@@ -390,7 +390,7 @@ In-process LRU/LFU/FIFO eviction with configurable max size.
 
 ```ts
 new MemoryLayer({
-  ttl: 60,
+  ttl: 60_000,
   maxSize: 5_000,
   name: 'memory'    // default
 })
@@ -403,7 +403,7 @@ Distributed caching via ioredis with compression, serializers, and optional pref
 ```ts
 new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   prefix: 'myapp:cache:',
   compression: 'gzip',
   compressionThreshold: 1_024,
@@ -437,7 +437,7 @@ Memcached support with pluggable serializers and bulk operations.
 ```ts
 new MemcachedLayer({
   client: memcachedClient,
-  ttl: 300,
+  ttl: 300_000,
   name: 'memcached'
 })
 ```
@@ -476,8 +476,8 @@ class MyCustomLayer implements CacheLayer {
 | `generationCleanup` | `{ batchSize: number }` | - | Auto-prune stale generation keys |
 | `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
 | `negativeCaching` | `boolean` | `false` | Cache nulls globally |
-| `staleWhileRevalidate` | `number` | - | Global stale-while-revalidate window (seconds) |
-| `staleIfError` | `number` | - | Global stale-if-error window (seconds) |
+| `staleWhileRevalidate` | `number` | - | Global stale-while-revalidate window (milliseconds) |
+| `staleIfError` | `number` | - | Global stale-if-error window (milliseconds) |
 | `adaptiveTtl` | `AdaptiveTtlOptions` | - | Auto-ramp TTLs for hot keys |
 | `circuitBreaker` | `CircuitBreakerOptions` | - | Per-fetcher failure tracking |
 | `gracefulDegradation` | `{ retryAfterMs: number }` | - | Skip failed layers temporarily |
@@ -499,7 +499,7 @@ class MyCustomLayer implements CacheLayer {
 | Option | Type | Description |
 |---|---|---|
 | `tags` | `string[]` | Tags for tag-based invalidation |
-| `ttl` | `number \| LayerTtlMap` | TTL in seconds, or per-layer overrides |
+| `ttl` | `number \| LayerTtlMap` | TTL in milliseconds, or per-layer overrides |
 | `ttlPolicy` | `string \| object \| function` | `'until-midnight'`, `'next-hour'`, `{ alignTo }`, or custom |
 | `negativeCache` | `boolean` | Cache null results |
 | `negativeTtl` | `number` | Short TTL for misses |
@@ -557,7 +557,7 @@ cache.bumpGeneration() // instant bulk invalidation without scanning
 
 ```ts
 await cache.set('config', config, {
-  ttl: 60,
+  ttl: 60_000,
   staleWhileRevalidate: 30,  // serve stale for 30s while refreshing
   staleIfError: 300           // serve stale for 5min if refresh fails
 })
@@ -581,7 +581,7 @@ await cache.get('popular-post', fetchPost, {
 
 ```ts
 await cache.get('leaderboard', fetchLeaderboard, {
-  ttl: 120,
+  ttl: 120_000,
   refreshAhead: 30 // refresh when <= 30s remain
 })
 ```
@@ -591,7 +591,7 @@ await cache.get('leaderboard', fetchLeaderboard, {
 ```ts
 await cache.set('daily-report', report, { ttlPolicy: 'until-midnight' })
 await cache.set('hourly-rollup', rollup, { ttlPolicy: 'next-hour' })
-await cache.set('aligned', value, { ttlPolicy: { alignTo: 300 } })
+await cache.set('aligned', value, { ttlPolicy: { alignTo: 300_000 } })
 await cache.set('custom', value, {
   ttlPolicy: ({ key }) => key.startsWith('hot:') ? 30 : 300
 })
@@ -665,7 +665,7 @@ await cache.get('user:123', fetchUser, {
 ```ts
 new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   compression: 'gzip',         // or 'brotli'
   compressionThreshold: 1_024  // skip compression for small values
 })
@@ -680,7 +680,7 @@ import { MsgpackSerializer } from 'layercache'
 
 new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   serializer: new MsgpackSerializer()
 })
 ```
@@ -767,7 +767,7 @@ cache.on('error', ({ event, context }) => logger.error(event, context))
 import { createExpressCacheMiddleware } from 'layercache'
 
 app.get('/api/users', createExpressCacheMiddleware(cache, {
-  ttl: 30,
+  ttl: 30_000,
   tags: ['users'],
   keyResolver: (req) => `user:${req.url}`
 }), handler)
@@ -788,7 +788,7 @@ await fastify.register(createFastifyLayercachePlugin(cache, {
 ```ts
 import { createHonoCacheMiddleware } from 'layercache'
 
-app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60 }))
+app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60_000 }))
 ```
 
 ### tRPC
@@ -796,7 +796,7 @@ app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60 }))
 ```ts
 import { createTrpcCacheMiddleware } from 'layercache'
 
-const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60 })
+const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60_000 })
 export const cachedProcedure = t.procedure.use(cacheMiddleware)
 ```
 
@@ -809,7 +809,7 @@ const resolvers = {
   Query: {
     user: cacheGraphqlResolver(cache, 'user', (_root, { id }) => db.findUser(id), {
       keyResolver: (_root, { id }) => id,
-      ttl: 300
+      ttl: 300_000
     })
   }
 }

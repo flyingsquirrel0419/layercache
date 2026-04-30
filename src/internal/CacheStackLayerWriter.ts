@@ -1,6 +1,6 @@
 import type { CacheLayer, CacheLayerSetManyEntry, CacheWriteOptions, LayerTtlMap } from '../types'
 import type { CacheStackMaintenance } from './CacheStackMaintenance'
-import { createStoredValueEnvelope, remainingStoredTtlSeconds } from './StoredValue'
+import { createStoredValueEnvelope, remainingStoredTtlMs } from './StoredValue'
 
 export type CacheWriteKind = 'value' | 'empty'
 
@@ -19,7 +19,7 @@ interface CacheStackLayerWriterOptions {
     fallbackTtl: number | undefined,
     value: unknown
   ) => number | undefined
-  resolveLayerSeconds: (
+  resolveLayerMs: (
     layerName: string,
     override: number | LayerTtlMap | undefined,
     globalDefault?: number | LayerTtlMap,
@@ -178,12 +178,12 @@ export class CacheStackLayerWriter {
     now: number
   ): CacheLayerSetManyEntry {
     const freshTtl = this.options.resolveFreshTtl(key, layer.name, kind, writeOptions, layer.defaultTtl, value)
-    const staleWhileRevalidate = this.options.resolveLayerSeconds(
+    const staleWhileRevalidate = this.options.resolveLayerMs(
       layer.name,
       writeOptions?.staleWhileRevalidate,
       this.options.globalStaleWhileRevalidate
     )
-    const staleIfError = this.options.resolveLayerSeconds(
+    const staleIfError = this.options.resolveLayerMs(
       layer.name,
       writeOptions?.staleIfError,
       this.options.globalStaleIfError
@@ -191,12 +191,12 @@ export class CacheStackLayerWriter {
     const payload = createStoredValueEnvelope({
       kind,
       value,
-      freshTtlSeconds: freshTtl,
-      staleWhileRevalidateSeconds: staleWhileRevalidate,
-      staleIfErrorSeconds: staleIfError,
+      freshTtlMs: freshTtl,
+      staleWhileRevalidateMs: staleWhileRevalidate,
+      staleIfErrorMs: staleIfError,
       now
     })
-    const ttl = remainingStoredTtlSeconds(payload, now) ?? freshTtl
+    const ttl = remainingStoredTtlMs(payload, now) ?? freshTtl
     return {
       key,
       value: payload,

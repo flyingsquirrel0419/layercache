@@ -64,8 +64,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: 인메모리
-  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: Redis
+  new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),       // L1: 인메모리
+  new RedisLayer({ client: new Redis(), ttl: 3_600_000 }),  // L2: Redis
 ])
 
 // 알아서 가져오고 알아서 채워줍니다 (read-through)
@@ -77,7 +77,7 @@ const user = await cache.get('user:123', () => db.findUser(123))
 
 ```ts
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 ```
 
@@ -90,8 +90,8 @@ const cache = new CacheStack([
 import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 5_000 }),
-  new RedisLayer({ client: new Redis(), ttl: 3600, compression: 'gzip' }),
+  new MemoryLayer({ ttl: 60_000, maxSize: 5_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 3_600_000, compression: 'gzip' }),
   new DiskLayer({ directory: './var/cache', maxFiles: 10_000 }),
 ])
 ```
@@ -151,7 +151,7 @@ const mem = await caching('memory', {
 })
 const red = await caching(redisStore, {
   url: 'redis://localhost:6379',
-  ttl: 300 * 1000       // ms
+  ttl: 300_000 * 1000       // ms
 })
 const cache = multiCaching([mem, red])
 
@@ -172,10 +172,10 @@ import {
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),    // s
+  new MemoryLayer({ ttl: 60_000 }),    // ms
   new RedisLayer({
     client: new Redis(),
-    ttl: 300                       // s
+    ttl: 300_000                       // ms
   })
 ])
 
@@ -316,10 +316,10 @@ const cache = new CacheStack([
 ```ts
 import { CacheStack, MemoryLayer, createExpressCacheMiddleware } from 'layercache'
 
-const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
 app.get('/api/users', createExpressCacheMiddleware(cache, {
-  ttl: 30,
+  ttl: 30_000,
   tags: ['users'],
   keyResolver: (req) => `users:${req.url}`
 }), async (req, res) => {
@@ -381,8 +381,8 @@ const coordinator = new RedisSingleFlightCoordinator({ client: redis })
 
 const cache = new CacheStack(
   [
-    new MemoryLayer({ ttl: 60, maxSize: 10_000 }),
-    new RedisLayer({ client: redis, ttl: 3600, prefix: 'myapp:cache:' })
+    new MemoryLayer({ ttl: 60_000, maxSize: 10_000 }),
+    new RedisLayer({ client: redis, ttl: 3_600_000, prefix: 'myapp:cache:' })
   ],
   {
     invalidationBus: bus,

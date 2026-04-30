@@ -37,8 +37,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 100 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 ```
 
@@ -51,7 +51,7 @@ const cache = new CacheStack([
 | `cache.get(key)` | `cache.get(key)` | Same API |
 | `cache.del(key)` | `cache.delete(key)` | Renamed |
 | `cache.reset()` | `cache.clear()` | Renamed |
-| Per-store TTL | `ttl: { memory: 60, redis: 300 }` | Per-layer TTL map |
+| Per-store TTL | `ttl: { memory: 60_000, redis: 300_000 }` | Per-layer TTL map |
 | - | `cache.invalidateByTag(tag)` | New: tag invalidation |
 | - | `cache.wrap(prefix, fn)` | New: transparent function caching |
 
@@ -86,11 +86,11 @@ const user = await keyv.get('user:123')
 import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
-await cache.set('user:123', user, { ttl: 60 })
+await cache.set('user:123', user, { ttl: 60_000 })
 const user = await cache.get('user:123')
 ```
 
@@ -134,7 +134,7 @@ await cache.set('key', value)
 import { CacheStack, MemoryLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 3600 })
+  new MemoryLayer({ ttl: 3_600_000 })
 ])
 await cache.set('key', value)
 ```

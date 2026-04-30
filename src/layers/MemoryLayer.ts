@@ -101,7 +101,7 @@ export class MemoryLayer implements CacheLayer {
     this.entries.delete(key)
     this.entries.set(key, {
       value,
-      expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null,
+      expiresAt: ttl && ttl > 0 ? Date.now() + ttl : null,
       accessCount: 0,
       insertedAt: Date.now()
     })
@@ -135,7 +135,7 @@ export class MemoryLayer implements CacheLayer {
     if (entry.expiresAt === null) {
       return null
     }
-    return Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1_000))
+    return Math.max(0, Math.ceil(entry.expiresAt - Date.now()))
   }
 
   async size(): Promise<number> {

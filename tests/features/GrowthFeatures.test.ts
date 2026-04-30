@@ -41,14 +41,14 @@ class ExplodingLayer implements CacheLayer {
 
 describe('growth features', () => {
   it('supports wrap, warm, and namespaced access', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    const getUser = cache.wrap('user', async (id: number) => ({ id }), { ttl: 30 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const getUser = cache.wrap('user', async (id: number) => ({ id }), { ttl: 30_000 })
 
     await cache.warm([
       {
         key: 'config:flags',
         fetcher: async () => ({ enabled: true }),
-        options: { ttl: 30 }
+        options: { ttl: 30_000 }
       }
     ])
 
@@ -68,7 +68,7 @@ describe('growth features', () => {
   })
 
   it('serializes wrap() key parts with type prefixes to avoid collisions', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     let calls = 0
     const wrapped = cache.wrap('typed', async (value: string | number) => {
       calls += 1
@@ -83,17 +83,17 @@ describe('growth features', () => {
   it('supports snapshots on disk and export/import in memory', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-'))
     const filePath = join(dir, 'snapshot.json')
-    const first = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
-    await first.set('user:1', { id: 1 }, { ttl: 30 })
+    const first = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
+    await first.set('user:1', { id: 1 }, { ttl: 30_000 })
 
     const snapshot = await first.exportState()
-    const second = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const second = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     await second.importState(snapshot)
     await expect(second.get('user:1')).resolves.toEqual({ id: 1 })
 
     try {
       await first.persistToFile(filePath)
-      const third = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+      const third = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
       await third.restoreFromFile(filePath)
 
       await expect(third.get('user:1')).resolves.toEqual({ id: 1 })
@@ -104,7 +104,7 @@ describe('growth features', () => {
   })
 
   it('rejects snapshot exports that exceed snapshotMaxEntries', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotMaxEntries: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotMaxEntries: 1 })
     await cache.set('user:1', { id: 1 })
     await cache.set('user:2', { id: 2 })
 
@@ -114,7 +114,7 @@ describe('growth features', () => {
   it('rejects invalid snapshot files before import', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-invalid-'))
     const filePath = join(dir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
 
     try {
       await cache.persistToFile(filePath)
@@ -128,7 +128,7 @@ describe('growth features', () => {
 
   it('rejects snapshot paths outside the allowed base directory', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-paths-'))
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
     const outsidePath = join(dir, '..', 'outside.json')
 
     try {
@@ -142,7 +142,7 @@ describe('growth features', () => {
   it('sanitizes snapshot values before importing them back into the cache', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-sanitize-'))
     const filePath = join(dir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
 
     try {
       await writeFile(filePath, '[{"key":"user:1","value":{"safe":1,"__proto__":{"polluted":true}}}]', 'utf8')
@@ -158,7 +158,7 @@ describe('growth features', () => {
   it('rejects snapshot values that exceed the JSON sanitization depth', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-depth-'))
     const filePath = join(dir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
 
     let nested: unknown = 'leaf'
     for (let index = 0; index < 220; index += 1) {
@@ -176,7 +176,7 @@ describe('growth features', () => {
   it('rejects oversized snapshot files before parsing them', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-size-'))
     const filePath = join(dir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       snapshotBaseDir: dir,
       snapshotMaxBytes: 32
     })
@@ -192,7 +192,7 @@ describe('growth features', () => {
   it('rejects snapshot entries with invalid cache keys before importing', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-invalid-key-'))
     const filePath = join(dir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       snapshotBaseDir: dir
     })
 
@@ -207,16 +207,16 @@ describe('growth features', () => {
   it('supports sliding ttl and adaptive ttl', async () => {
     vi.useFakeTimers()
     try {
-      const layer = new MemoryLayer({ ttl: 60 })
+      const layer = new MemoryLayer({ ttl: 60_000 })
       const cache = new CacheStack([layer])
 
-      await cache.set('sliding', { ok: true }, { ttl: 1 })
+      await cache.set('sliding', { ok: true }, { ttl: 1_000 })
       await vi.advanceTimersByTimeAsync(700)
       await expect(cache.get('sliding', undefined, { slidingTtl: true })).resolves.toEqual({ ok: true })
       await vi.advanceTimersByTimeAsync(700)
       await expect(cache.get('sliding')).resolves.toEqual({ ok: true })
 
-      await cache.set('adaptive', { ok: true }, { ttl: 10 })
+      await cache.set('adaptive', { ok: true }, { ttl: 10_000 })
       await cache.get('adaptive')
       await cache.get('adaptive')
       await cache.get('adaptive')
@@ -224,8 +224,8 @@ describe('growth features', () => {
         'adaptive',
         { ok: true },
         {
-          ttl: 10,
-          adaptiveTtl: { hotAfter: 2, step: 5, maxTtl: 20 }
+          ttl: 10_000,
+          adaptiveTtl: { hotAfter: 2, step: 5_000, maxTtl: 20_000 }
         }
       )
 
@@ -243,11 +243,11 @@ describe('growth features', () => {
     vi.useFakeTimers()
     try {
       const redis = new Redis()
-      const memory = new MemoryLayer({ ttl: 60 })
-      const redisLayer = new RedisLayer({ client: redis, ttl: 60, prefix: 'sliding:' })
+      const memory = new MemoryLayer({ ttl: 60_000 })
+      const redisLayer = new RedisLayer({ client: redis, ttl: 60_000, prefix: 'sliding:' })
       const cache = new CacheStack([memory, redisLayer])
 
-      await cache.set('sliding:remote', { ok: true }, { ttl: 1 })
+      await cache.set('sliding:remote', { ok: true }, { ttl: 1_000 })
       await memory.delete('sliding:remote')
       await vi.advanceTimersByTimeAsync(700)
 
@@ -261,7 +261,7 @@ describe('growth features', () => {
   })
 
   it('degrades unhealthy layers and opens circuit breakers for failing fetchers', async () => {
-    const cache = new CacheStack([new ExplodingLayer(), new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new ExplodingLayer(), new MemoryLayer({ ttl: 60_000 })], {
       gracefulDegradation: { retryAfterMs: 1_000 }
     })
 
@@ -269,7 +269,7 @@ describe('growth features', () => {
     await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
     expect(cache.getStats().layers.find((layer) => layer.name === 'exploding')?.degradedUntil).not.toBeNull()
 
-    const breakerCache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const breakerCache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const fetcher = vi.fn(async () => {
       throw new Error('upstream unavailable')
     })
@@ -284,7 +284,7 @@ describe('growth features', () => {
   })
 
   it('degrades a slow redis layer when command timeouts are enabled', async () => {
-    const memory = new MemoryLayer({ ttl: 60 })
+    const memory = new MemoryLayer({ ttl: 60_000 })
     await memory.set('user:1', { id: 1 })
 
     const client = {
@@ -317,7 +317,7 @@ describe('growth features', () => {
     expect(raw?.subarray(0, 10).toString()).toBe('LCZ1:gzip:')
     await expect(layer.get('large')).resolves.toEqual({ payload: 'x'.repeat(128) })
 
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     await cache.set('stats:key', { ok: true })
 
     const handler = createCacheStatsHandler(cache, { allowPublicAccess: true })
@@ -341,7 +341,7 @@ describe('growth features', () => {
     const linkedDir = join(dir, 'linked')
     const linkedFile = join(linkedDir, 'snapshot.json')
     const outsideFile = join(outsideDir, 'snapshot.json')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { snapshotBaseDir: dir })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
 
     try {
       await mkdir(linkedDir, { recursive: true })
@@ -358,7 +358,7 @@ describe('growth features', () => {
   })
 
   it('creates cache-backed method decorators', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     let executions = 0
     const wrapSpy = vi.spyOn(cache, 'wrap')
 
@@ -390,7 +390,7 @@ describe('growth features', () => {
   })
 
   it('supports generation-based invalidation and prefix/tag batch invalidation', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { generation: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { generation: 1 })
 
     await cache.set('user:1', { id: 1 }, { tags: ['users', 'tenant:a'] })
     await cache.set('user:2', { id: 2 }, { tags: ['users'] })
@@ -408,7 +408,7 @@ describe('growth features', () => {
   })
 
   it('supports health checks and ttl policies', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     await cache.set('aligned', { ok: true }, { ttlPolicy: { alignTo: 60 } })
 
     const ttl = await cache.ttl('aligned')
@@ -424,7 +424,7 @@ describe('growth features', () => {
   })
 
   it('provides hono middleware and an OpenTelemetry plugin', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const originalGet = cache.get
     const originalSet = cache.set
     const spans: Array<{ name: string; ended: boolean }> = []
@@ -472,7 +472,7 @@ describe('growth features', () => {
   })
 
   it('records OpenTelemetry exceptions and restores original methods on uninstall', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const recordException = vi.fn()
     const setAttribute = vi.fn()
     const tracer = {
@@ -501,7 +501,7 @@ describe('growth features', () => {
   })
 
   it('records null OpenTelemetry results and instruments invalidation methods', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const setAttribute = vi.fn()
     const tracer = {
       startSpan: vi.fn(() => ({
@@ -522,7 +522,7 @@ describe('growth features', () => {
   })
 
   it('supports spans without optional methods and attaches key attributes to set/delete', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const tracer = {
       startSpan: vi.fn(() => ({
         end: vi.fn()
@@ -543,7 +543,7 @@ describe('growth features', () => {
   })
 
   it('normalizes missing keys in OpenTelemetry key attributes', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const tracer = {
       startSpan: vi.fn(() => ({
         setAttribute: vi.fn(),
@@ -572,7 +572,7 @@ describe('growth features', () => {
   })
 
   it('instruments bulk and pattern invalidation methods through the OpenTelemetry plugin', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const tracer = {
       startSpan: vi.fn(() => ({
         setAttribute: vi.fn(),
@@ -600,7 +600,7 @@ describe('growth features', () => {
   })
 
   it('cleans access profiles on delete and clear', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.set('profile:1', { id: 1 })
     await cache.get('profile:1')
@@ -615,7 +615,7 @@ describe('growth features', () => {
   })
 
   it('does not invoke tRPC next twice when the result is null', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const middleware = createTrpcCacheMiddleware(cache, 'trpc', {
       keyResolver: (input: { id: number }) => String(input.id)
     })
@@ -634,7 +634,7 @@ describe('growth features', () => {
   })
 
   it('evicts oldest spans when MAX_SPANS is exceeded', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const evictedSpans: string[] = []
     const tracer = {
       startSpan: (name: string) => {
@@ -667,7 +667,7 @@ describe('growth features', () => {
   })
 
   it('handles missing spans gracefully on operation-end', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const endedSpans: number[] = []
     const tracer = {
       startSpan: (name: string) => ({
@@ -691,7 +691,7 @@ describe('growth features', () => {
   })
 
   it('ends all active spans on uninstall', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const endedSpans: string[] = []
     const tracer = {
       startSpan: (name: string) => ({

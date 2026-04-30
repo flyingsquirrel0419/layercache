@@ -6,7 +6,7 @@ import {
   readUtf8HandleWithLimit,
   validateSnapshotFilePath
 } from './CacheSnapshotFile'
-import { remainingStoredTtlSeconds } from './StoredValue'
+import { remainingStoredTtlMs } from './StoredValue'
 import { sanitizeStructuredData } from './StructuredDataSanitizer'
 
 const DEFAULT_SNAPSHOT_IMPORT_BATCH_SIZE = 50
@@ -164,7 +164,7 @@ export class CacheStackSnapshotManager {
         await visitor({
           key: exportedKey,
           value: stored,
-          ttl: remainingStoredTtlSeconds(stored)
+          ttl: remainingStoredTtlMs(stored)
         })
       }
 

@@ -11,16 +11,16 @@ describe('TtlResolver', () => {
       'redis',
       'value',
       {
-        ttlPolicy: ({ key, value }) => (key === 'user:1' && value === 1 ? 15 : 5),
-        ttl: { redis: 30 }
+        ttlPolicy: ({ key, value }) => (key === 'user:1' && value === 1 ? 15_000 : 5_000),
+        ttl: { redis: 30_000 }
       },
-      10,
+      10_000,
       undefined,
       undefined,
       1
     )
 
-    expect(ttl).toBe(30)
+    expect(ttl).toBe(30_000)
   })
 
   it('supports until-midnight and next-hour policies', () => {
@@ -42,14 +42,14 @@ describe('TtlResolver', () => {
 
       const nextMidnight = new Date(now)
       nextMidnight.setHours(24, 0, 0, 0)
-      const expectedMidnight = Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1_000))
+      const expectedMidnight = Math.max(1, Math.ceil(nextMidnight.getTime() - now.getTime()))
 
       const expectedNextHour = new Date(now)
       expectedNextHour.setMinutes(60, 0, 0)
-      const nextHourSeconds = Math.max(1, Math.ceil((expectedNextHour.getTime() - now.getTime()) / 1_000))
+      const nextHourMs = Math.max(1, Math.ceil(expectedNextHour.getTime() - now.getTime()))
 
       expect(midnight).toBe(expectedMidnight)
-      expect(nextHour).toBe(nextHourSeconds)
+      expect(nextHour).toBe(nextHourMs)
     } finally {
       vi.useRealTimers()
     }
@@ -65,13 +65,13 @@ describe('TtlResolver', () => {
         'key',
         'memory',
         'value',
-        { ttlPolicy: { alignTo: 300 } },
+        { ttlPolicy: { alignTo: 300_000 } },
         undefined,
         undefined
       )
 
       expect(ttl).toBeGreaterThan(0)
-      expect(ttl).toBeLessThanOrEqual(300)
+      expect(ttl).toBeLessThanOrEqual(300_000)
     } finally {
       vi.useRealTimers()
     }
@@ -89,15 +89,15 @@ describe('TtlResolver', () => {
       'memory',
       'empty',
       {
-        ttl: 10,
-        negativeTtl: { memory: 3 },
-        adaptiveTtl: { hotAfter: 2, step: 2, maxTtl: 9 }
+        ttl: 10_000,
+        negativeTtl: { memory: 3_000 },
+        adaptiveTtl: { hotAfter: 2, step: 2_000, maxTtl: 9_000 }
       },
       undefined,
       undefined
     )
 
-    expect(negative).toBe(7)
+    expect(negative).toBe(7_000)
   })
 
   it('applies ttl jitter and allows profile deletion and clearing', () => {
@@ -113,26 +113,26 @@ describe('TtlResolver', () => {
       'memory',
       'value',
       {
-        ttl: 10,
+        ttl: 10_000,
         adaptiveTtl: true,
-        ttlJitter: 2
+        ttlJitter: 2_000
       },
       undefined,
       undefined
     )
 
-    expect(ttl).toBe(17)
+    expect(ttl).toBe(17_000)
 
     resolver.deleteProfile('hot')
     const withoutProfile = resolver.resolveFreshTtl(
       'hot',
       'memory',
       'value',
-      { ttl: 10, adaptiveTtl: true },
+      { ttl: 10_000, adaptiveTtl: true },
       undefined,
       undefined
     )
-    expect(withoutProfile).toBe(10)
+    expect(withoutProfile).toBe(10_000)
 
     resolver.recordAccess('again')
     resolver.clearProfiles()
@@ -140,11 +140,11 @@ describe('TtlResolver', () => {
       'again',
       'memory',
       'value',
-      { ttl: 10, adaptiveTtl: true },
+      { ttl: 10_000, adaptiveTtl: true },
       undefined,
       undefined
     )
-    expect(afterClear).toBe(10)
+    expect(afterClear).toBe(10_000)
 
     random.mockRestore()
   })
@@ -167,7 +167,7 @@ describe('TtlResolver', () => {
         'a',
         'memory',
         'value',
-        { ttl: 10, adaptiveTtl: true },
+        { ttl: 10_000, adaptiveTtl: true },
         undefined,
         undefined
       )
@@ -175,13 +175,13 @@ describe('TtlResolver', () => {
         'd',
         'memory',
         'value',
-        { ttl: 10, adaptiveTtl: true },
+        { ttl: 10_000, adaptiveTtl: true },
         undefined,
         undefined
       )
 
-      expect(ttlA).toBe(10)
-      expect(ttlD).toBe(10)
+      expect(ttlA).toBe(10_000)
+      expect(ttlD).toBe(10_000)
     } finally {
       vi.useRealTimers()
     }
@@ -193,25 +193,25 @@ describe('TtlResolver', () => {
     try {
       const resolver = new TtlResolver({ maxProfileEntries: 2 })
 
-      expect(resolver.resolveLayerSeconds('memory', undefined, { memory: 5 }, 3)).toBe(5)
-      expect(resolver.resolveLayerSeconds('redis', undefined, { memory: 5 }, 3)).toBe(3)
+      expect(resolver.resolveLayerMs('memory', undefined, { memory: 5_000 }, 3_000)).toBe(5_000)
+      expect(resolver.resolveLayerMs('redis', undefined, { memory: 5_000 }, 3_000)).toBe(3_000)
       expect(resolver.applyAdaptiveTtl('missing', 'memory', undefined, true)).toBeUndefined()
       expect(resolver.applyAdaptiveTtl('cold', 'memory', 10, true)).toBe(10)
       expect(resolver.applyJitter(undefined, 1)).toBeUndefined()
       expect(resolver.applyJitter(0, 1)).toBe(0)
-      expect(resolver.applyJitter(10, 0)).toBe(10)
+      expect(resolver.applyJitter(10_000, 0)).toBe(10_000)
 
       const functionPolicy = resolver.resolveFreshTtl(
         'fn',
         'memory',
         'value',
-        { ttlPolicy: ({ key }) => (key === 'fn' ? 7 : 1) },
+        { ttlPolicy: ({ key }) => (key === 'fn' ? 7_000 : 1_000) },
         undefined,
         undefined,
         undefined,
         'value'
       )
-      expect(functionPolicy).toBe(7)
+      expect(functionPolicy).toBe(7_000)
     } finally {
       vi.useRealTimers()
     }
@@ -220,17 +220,17 @@ describe('TtlResolver', () => {
   it('uses default negative ttl and adaptive defaults when no overrides are present', () => {
     const resolver = new TtlResolver({ maxProfileEntries: 4 })
 
-    expect(resolver.resolveFreshTtl('missing', 'memory', 'empty', {}, undefined, undefined)).toBe(60)
-    expect(resolver.resolveLayerSeconds('redis', { memory: 5 }, undefined, 3)).toBe(3)
+    expect(resolver.resolveFreshTtl('missing', 'memory', 'empty', {}, undefined, undefined)).toBe(60_000)
+    expect(resolver.resolveLayerMs('redis', { memory: 5_000 }, undefined, 3_000)).toBe(3_000)
 
     resolver.recordAccess('hot')
     resolver.recordAccess('hot')
     resolver.recordAccess('hot')
 
     expect(
-      resolver.resolveFreshTtl('hot', 'memory', 'value', { ttl: 10, adaptiveTtl: true }, undefined, undefined)
-    ).toBe(15)
-    expect(resolver.applyAdaptiveTtl('hot', 'memory', 10, true)).toBe(15)
+      resolver.resolveFreshTtl('hot', 'memory', 'value', { ttl: 10_000, adaptiveTtl: true }, undefined, undefined)
+    ).toBe(15_000)
+    expect(resolver.applyAdaptiveTtl('hot', 'memory', 10_000, true)).toBe(15_000)
   })
 
   it('secureRandom.value returns a number between 0 and 1', () => {

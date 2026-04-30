@@ -5,7 +5,7 @@ import { CacheMissError } from '../src/types'
 describe('edge entrypoint exports', () => {
   it('re-exports edge-safe modules', async () => {
     expect(edge.createHonoCacheMiddleware).toBeTypeOf('function')
-    const layer = new edge.MemoryLayer({ ttl: 60 })
+    const layer = new edge.MemoryLayer({ ttl: 60_000 })
     await layer.set('user:1', { id: 1 })
 
     expect(await layer.get('user:1')).toEqual({ id: 1 })

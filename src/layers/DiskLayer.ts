@@ -117,7 +117,7 @@ export class DiskLayer implements CacheLayer {
       const entry: DiskEntry = {
         key,
         value,
-        expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1_000 : null
+        expiresAt: ttl && ttl > 0 ? Date.now() + ttl : null
       }
       const payload = this.serializer.serialize(entry)
       const raw = Buffer.isBuffer(payload) ? payload : Buffer.from(payload as string, 'utf8')
@@ -170,7 +170,7 @@ export class DiskLayer implements CacheLayer {
       return null
     }
 
-    const remaining = Math.ceil((entry.expiresAt - Date.now()) / 1_000)
+    const remaining = Math.ceil(entry.expiresAt - Date.now())
     if (remaining <= 0) {
       return null
     }

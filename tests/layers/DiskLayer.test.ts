@@ -30,7 +30,7 @@ describe('DiskLayer', () => {
 
   beforeEach(async () => {
     dir = join(tmpdir(), `layercache-disk-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    layer = new DiskLayer({ directory: dir, ttl: 60 })
+    layer = new DiskLayer({ directory: dir, ttl: 60_000 })
   })
 
   afterEach(async () => {
@@ -202,7 +202,7 @@ describe('DiskLayer', () => {
 
   it('supports forEachKey, setMany, and dispose', async () => {
     await layer.setMany([
-      { key: 'a', value: 1, ttl: 10 },
+      { key: 'a', value: 1, ttl: 10_000 },
       { key: 'b', value: 2 }
     ])
 
@@ -301,7 +301,7 @@ describe('DiskLayer', () => {
 
   it('treats missing directories as empty scans', async () => {
     const missingDir = join(dir, 'missing')
-    const missingLayer = new DiskLayer({ directory: missingDir, ttl: 60 })
+    const missingLayer = new DiskLayer({ directory: missingDir, ttl: 60_000 })
 
     const visited: string[] = []
     await expect(missingLayer.keys()).resolves.toEqual([])
@@ -327,7 +327,7 @@ describe('DiskLayer', () => {
 
   describe('encryption (encryptionKey)', () => {
     it('round-trips values with AES-256-GCM encryption', async () => {
-      const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'test-secret-key' })
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'test-secret-key' })
       await encrypted.set('secret', { token: 'abc123' })
       const result = await encrypted.get<{ token: string }>('secret')
       expect(result).toEqual({ token: 'abc123' })
@@ -336,7 +336,7 @@ describe('DiskLayer', () => {
     it('round-trips with encryption using MsgpackSerializer (Buffer serializer)', async () => {
       const encrypted = new DiskLayer({
         directory: dir,
-        ttl: 60,
+        ttl: 60_000,
         serializer: new MsgpackSerializer(),
         encryptionKey: 'msgpack-secret'
       })
@@ -346,7 +346,7 @@ describe('DiskLayer', () => {
     })
 
     it('writes encrypted bytes that are not plaintext JSON', async () => {
-      const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'test-key' })
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'test-key' })
       await encrypted.set('data', { secret: 'value' })
       const raw = await readLcFile(dir)
       const asText = raw.toString('utf8')
@@ -355,7 +355,7 @@ describe('DiskLayer', () => {
     })
 
     it('rejects reading tampered encrypted files', async () => {
-      const encrypted = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'original-key' })
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'original-key' })
       await encrypted.set('tamper-test', { important: true })
       await tamperLastByte(dir)
 
@@ -364,10 +364,10 @@ describe('DiskLayer', () => {
     })
 
     it('rejects encrypted data with the wrong key', async () => {
-      const writer = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'correct-key' })
+      const writer = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'correct-key' })
       await writer.set('locked', { data: 42 })
 
-      const reader = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'wrong-key' })
+      const reader = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'wrong-key' })
       const result = await reader.get('locked')
       expect(result).toBeNull()
     })
@@ -375,7 +375,7 @@ describe('DiskLayer', () => {
 
   describe('signing (signingKey)', () => {
     it('round-trips values with HMAC-SHA256 signing', async () => {
-      const signed = new DiskLayer({ directory: dir, ttl: 60, signingKey: 'hmac-secret' })
+      const signed = new DiskLayer({ directory: dir, ttl: 60_000, signingKey: 'hmac-secret' })
       await signed.set('signed-key', { payload: 'data' })
       const result = await signed.get<{ payload: string }>('signed-key')
       expect(result).toEqual({ payload: 'data' })
@@ -384,7 +384,7 @@ describe('DiskLayer', () => {
     it('round-trips with signing using MsgpackSerializer (Buffer serializer)', async () => {
       const signed = new DiskLayer({
         directory: dir,
-        ttl: 60,
+        ttl: 60_000,
         serializer: new MsgpackSerializer(),
         signingKey: 'msgpack-hmac-key'
       })
@@ -394,7 +394,7 @@ describe('DiskLayer', () => {
     })
 
     it('rejects tampered signed files', async () => {
-      const signed = new DiskLayer({ directory: dir, ttl: 60, signingKey: 'sign-key' })
+      const signed = new DiskLayer({ directory: dir, ttl: 60_000, signingKey: 'sign-key' })
       await signed.set('verify-me', { val: 1 })
       await tamperLastByte(dir)
 
@@ -403,7 +403,7 @@ describe('DiskLayer', () => {
     })
 
     it('ignores signingKey when encryptionKey is also provided', async () => {
-      const both = new DiskLayer({ directory: dir, ttl: 60, encryptionKey: 'enc-key', signingKey: 'sig-key' })
+      const both = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'enc-key', signingKey: 'sig-key' })
       await both.set('both', { x: 1 })
       const result = await both.get<{ x: number }>('both')
       expect(result).toEqual({ x: 1 })
@@ -417,7 +417,7 @@ describe('DiskLayer', () => {
     it('round-trips values using binary serializer without encryption or signing', async () => {
       const msgpackLayer = new DiskLayer({
         directory: dir,
-        ttl: 60,
+        ttl: 60_000,
         serializer: new MsgpackSerializer()
       })
       await msgpackLayer.set('binary', { arr: [1, 2, 3], nested: { a: true } })

@@ -30,7 +30,7 @@ class ErrorTransform extends Transform {
 describe('RedisLayer', () => {
   it('round-trips json values', async () => {
     const client = new Redis()
-    const layer = new RedisLayer({ client, ttl: 60 })
+    const layer = new RedisLayer({ client, ttl: 60_000 })
 
     await layer.set('user:1', { id: 1, name: 'Alice' })
 
@@ -64,7 +64,7 @@ describe('RedisLayer', () => {
     const layer = new RedisLayer({ client, prefix: 'cache:' })
 
     await layer.setMany([
-      { key: 'a', value: 1, ttl: 10 },
+      { key: 'a', value: 1, ttl: 10_000 },
       { key: 'b', value: 2 }
     ])
 
@@ -373,9 +373,9 @@ describe('RedisLayer', () => {
 
     it('accepts valid keys in batch operations', async () => {
       const client = new Redis()
-      const layer = new RedisLayer({ client, ttl: 60 })
+      const layer = new RedisLayer({ client, ttl: 60_000 })
       await layer.setMany([
-        { key: 'a', value: 1, ttl: 10 },
+        { key: 'a', value: 1, ttl: 10_000 },
         { key: 'b', value: 2 }
       ])
       await expect(layer.getMany(['a', 'b'])).resolves.toEqual([1, 2])

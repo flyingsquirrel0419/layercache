@@ -1,10 +1,5 @@
 import type { CacheDegradationOptions } from '../types'
-import {
-  isStoredValueEnvelope,
-  refreshStoredEnvelope,
-  remainingFreshTtlSeconds,
-  remainingStoredTtlSeconds
-} from './StoredValue'
+import { isStoredValueEnvelope, refreshStoredEnvelope, remainingFreshTtlMs, remainingStoredTtlMs } from './StoredValue'
 
 export interface FreshReadPolicyPlan {
   refreshedStored: unknown | undefined
@@ -45,21 +40,21 @@ export function planFreshReadPolicies({
   stored,
   hasFetcher,
   slidingTtl,
-  refreshAheadSeconds
+  refreshAheadMs
 }: {
   stored: unknown
   hasFetcher: boolean
   slidingTtl: boolean
-  refreshAheadSeconds: number
+  refreshAheadMs: number
 }): FreshReadPolicyPlan {
   const refreshedStored = slidingTtl && isStoredValueEnvelope(stored) ? refreshStoredEnvelope(stored) : undefined
-  const refreshedStoredTtl = refreshedStored ? (remainingStoredTtlSeconds(refreshedStored) ?? undefined) : undefined
-  const remainingFreshTtl = remainingFreshTtlSeconds(stored) ?? 0
+  const refreshedStoredTtl = refreshedStored ? (remainingStoredTtlMs(refreshedStored) ?? undefined) : undefined
+  const remainingFreshTtl = remainingFreshTtlMs(stored) ?? 0
 
   return {
     refreshedStored,
     refreshedStoredTtl,
     shouldScheduleBackgroundRefresh:
-      hasFetcher && refreshAheadSeconds > 0 && remainingFreshTtl > 0 && remainingFreshTtl <= refreshAheadSeconds
+      hasFetcher && refreshAheadMs > 0 && remainingFreshTtl > 0 && remainingFreshTtl <= refreshAheadMs
   }
 }

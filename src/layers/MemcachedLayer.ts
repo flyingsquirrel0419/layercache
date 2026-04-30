@@ -85,7 +85,7 @@ export class MemcachedLayer implements CacheLayer {
     this.validateKey(key)
     const payload = this.serializer.serialize(value)
     await this.client.set(this.withPrefix(key), payload as string | Buffer, {
-      expires: ttl && ttl > 0 ? ttl : undefined
+      expires: ttl && ttl > 0 ? Math.ceil(ttl / 1_000) : undefined
     })
   }
 

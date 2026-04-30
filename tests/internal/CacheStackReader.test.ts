@@ -47,7 +47,7 @@ interface MockOptions {
   formatError: ReturnType<typeof vi.fn>
   storeEntry: ReturnType<typeof vi.fn>
   recordCircuitFailure: ReturnType<typeof vi.fn>
-  resolveLayerSeconds: ReturnType<typeof vi.fn>
+  resolveLayerMs: ReturnType<typeof vi.fn>
   sleep: ReturnType<typeof vi.fn>
   withTimeout: ReturnType<typeof vi.fn>
   isDisconnecting: ReturnType<typeof vi.fn>
@@ -84,7 +84,7 @@ function createMockOptions(overrides: Partial<MockOptions> = {}): MockOptions {
     formatError: vi.fn((e: unknown) => String(e)),
     storeEntry: vi.fn(async () => {}),
     recordCircuitFailure: vi.fn(),
-    resolveLayerSeconds: vi.fn(() => undefined),
+    resolveLayerMs: vi.fn(() => undefined),
     sleep: vi.fn(async () => {}),
     withTimeout: vi.fn(async <T>(promise: Promise<T>) => promise),
     isDisconnecting: vi.fn(() => false),
@@ -133,11 +133,7 @@ describe('CacheStackReader', () => {
 
     it('returns getEntry value when available', async () => {
       const { reader } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'envelope-value',
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'envelope-value', freshTtlMs: 60_000 })
       const layer = createMockLayer('L1', {
         getEntry: vi.fn(async () => envelope)
       })
@@ -192,11 +188,11 @@ describe('CacheStackReader', () => {
       const layer1 = createMockLayer('L1')
       const layer2 = createMockLayer('L2')
       options.layers = [layer0, layer1, layer2]
-      options.resolveLayerSeconds.mockReturnValue(60)
+      options.resolveLayerMs.mockReturnValue(60_000)
 
       await reader.backfill('key:1', 'stored', 1)
-      expect(layer0.set).toHaveBeenCalledWith('key:1', 'stored', 60)
-      expect(layer1.set).toHaveBeenCalledWith('key:1', 'stored', 60)
+      expect(layer0.set).toHaveBeenCalledWith('key:1', 'stored', 60_000)
+      expect(layer1.set).toHaveBeenCalledWith('key:1', 'stored', 60_000)
       expect(layer2.set).not.toHaveBeenCalled()
     })
 
@@ -210,7 +206,7 @@ describe('CacheStackReader', () => {
       })
       const layer1 = createMockLayer('L1')
       options.layers = [layer0, layer1]
-      options.resolveLayerSeconds.mockReturnValue(60)
+      options.resolveLayerMs.mockReturnValue(60_000)
 
       await reader.backfill('key:1', 'stored', 1)
       expect(options.handleLayerFailure).toHaveBeenCalledWith(layer0, 'backfill', error)
@@ -221,7 +217,7 @@ describe('CacheStackReader', () => {
       const { reader, options } = createReader()
       const layer0 = createMockLayer('L0')
       options.layers = [layer0]
-      options.resolveLayerSeconds.mockReturnValue(30)
+      options.resolveLayerMs.mockReturnValue(30_000)
 
       await reader.backfill('key:1', 'stored', 0)
       expect(options.metricsCollector.snapshot.backfills).toBe(1)
@@ -243,11 +239,7 @@ describe('CacheStackReader', () => {
 
     it('returns fresh hit from first layer with value', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'hello',
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'hello', freshTtlMs: 60 })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => envelope) }), createMockLayer('L1')]
 
       const result = await reader.getPrepared('key:1')
@@ -257,11 +249,7 @@ describe('CacheStackReader', () => {
 
     it('falls through to second layer on miss from first', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'from-L1',
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'from-L1', freshTtlMs: 60 })
       options.layers = [
         createMockLayer('L0', { get: vi.fn(async () => null) }),
         createMockLayer('L1', { get: vi.fn(async () => envelope) })
@@ -277,9 +265,9 @@ describe('CacheStackReader', () => {
       const expired = createStoredValueEnvelope({
         kind: 'value',
         value: 'old',
-        freshTtlSeconds: 1,
-        staleWhileRevalidateSeconds: 1,
-        staleIfErrorSeconds: 1,
+        freshTtlMs: 1_000,
+        staleWhileRevalidateMs: 1_000,
+        staleIfErrorMs: 1_000,
         now: Date.now() - 5_000
       })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => expired) })]
@@ -294,9 +282,9 @@ describe('CacheStackReader', () => {
       const expired = createStoredValueEnvelope({
         kind: 'value',
         value: 'expired',
-        freshTtlSeconds: 1,
-        staleWhileRevalidateSeconds: 1,
-        staleIfErrorSeconds: 1,
+        freshTtlMs: 1_000,
+        staleWhileRevalidateMs: 1_000,
+        staleIfErrorMs: 1_000,
         now: Date.now() - 5_000
       })
       const removeSpy = vi.spyOn(options.tagIndex, 'remove')
@@ -326,11 +314,7 @@ describe('CacheStackReader', () => {
   describe('getPrepared — fresh hit path', () => {
     it('returns cached value on fresh hit, increments hits', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 42,
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 42, freshTtlMs: 60 })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => envelope) })]
 
       const result = await reader.getPrepared('key:1')
@@ -340,11 +324,7 @@ describe('CacheStackReader', () => {
 
     it('records access via ttlResolver', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'data',
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'data', freshTtlMs: 60 })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => envelope) })]
       const spy = vi.spyOn(options.ttlResolver, 'recordAccess')
 
@@ -354,11 +334,7 @@ describe('CacheStackReader', () => {
 
     it('applies fresh read policies (sliding TTL)', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'sliding',
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'sliding', freshTtlMs: 60 })
       const layer = createMockLayer('L0', { get: vi.fn(async () => envelope) })
       options.layers = [layer]
 
@@ -376,8 +352,8 @@ describe('CacheStackReader', () => {
       const stale = createStoredValueEnvelope({
         kind: 'value',
         value: 'stale-data',
-        freshTtlSeconds: 1,
-        staleWhileRevalidateSeconds: 60,
+        freshTtlMs: 1_000,
+        staleWhileRevalidateMs: 60_000,
         now: Date.now() - 2_000
       })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => stale) })]
@@ -395,8 +371,8 @@ describe('CacheStackReader', () => {
       const stale = createStoredValueEnvelope({
         kind: 'value',
         value: 'stale-no-fetcher',
-        freshTtlSeconds: 1,
-        staleWhileRevalidateSeconds: 60,
+        freshTtlMs: 1_000,
+        staleWhileRevalidateMs: 60_000,
         now: Date.now() - 2_000
       })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => stale) })]
@@ -411,8 +387,8 @@ describe('CacheStackReader', () => {
       const staleIfError = createStoredValueEnvelope({
         kind: 'value',
         value: 'stale-for-error',
-        freshTtlSeconds: 1,
-        staleIfErrorSeconds: 300,
+        freshTtlMs: 1_000,
+        staleIfErrorMs: 300_000,
         now: Date.now() - 2_000
       })
       // staleWhileRevalidateSeconds also needed so that staleUntil < now but errorUntil > now
@@ -429,8 +405,8 @@ describe('CacheStackReader', () => {
       const staleIfError = createStoredValueEnvelope({
         kind: 'value',
         value: 'stale-safe',
-        freshTtlSeconds: 1,
-        staleIfErrorSeconds: 300,
+        freshTtlMs: 1_000,
+        staleIfErrorMs: 300_000,
         now: Date.now() - 2_000
       })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => staleIfError) })]
@@ -550,11 +526,7 @@ describe('CacheStackReader', () => {
   describe('fetchWithGuards', () => {
     it('rechecks layers for fresh value before fetching', async () => {
       const { reader, options } = createReader()
-      const freshEnvelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'recheck-hit',
-        freshTtlSeconds: 60
-      })
+      const freshEnvelope = createStoredValueEnvelope({ kind: 'value', value: 'recheck-hit', freshTtlMs: 60 })
       const layer = createMockLayer('L0', {
         get: vi
           .fn(async () => null)
@@ -619,11 +591,7 @@ describe('CacheStackReader', () => {
   describe('waitForFreshValue', () => {
     it('polls and returns when fresh value appears', async () => {
       const { reader, options } = createReader()
-      const freshEnvelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'polled-fresh',
-        freshTtlSeconds: 60
-      })
+      const freshEnvelope = createStoredValueEnvelope({ kind: 'value', value: 'polled-fresh', freshTtlMs: 60 })
       const layer = createMockLayer('L0', {
         get: vi
           .fn()
@@ -697,8 +665,8 @@ describe('CacheStackReader', () => {
       const stale = createStoredValueEnvelope({
         kind: 'value',
         value: 'v',
-        freshTtlSeconds: 1,
-        staleWhileRevalidateSeconds: 60,
+        freshTtlMs: 1_000,
+        staleWhileRevalidateMs: 60_000,
         now: Date.now() - 2_000
       })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => stale) })]
@@ -785,11 +753,7 @@ describe('CacheStackReader', () => {
   describe('applyFreshReadPolicies', () => {
     it('writes refreshed envelope to layers on sliding TTL', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'slide',
-        freshTtlSeconds: 60
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'slide', freshTtlMs: 60 })
       const layer0 = createMockLayer('L0', { get: vi.fn(async () => envelope) })
       const layer1 = createMockLayer('L1')
       options.layers = [layer0, layer1]
@@ -815,15 +779,11 @@ describe('CacheStackReader', () => {
 
     it('schedules background refresh when refresh-ahead threshold is met', async () => {
       const { reader, options } = createReader()
-      const envelope = createStoredValueEnvelope({
-        kind: 'value',
-        value: 'ahead',
-        freshTtlSeconds: 10
-      })
+      const envelope = createStoredValueEnvelope({ kind: 'value', value: 'ahead', freshTtlMs: 10 })
       const layer = createMockLayer('L0', { get: vi.fn(async () => envelope) })
       options.layers = [layer]
-      options.refreshAhead = 600
-      options.resolveLayerSeconds.mockReturnValue(600)
+      options.refreshAhead = 600_000
+      options.resolveLayerMs.mockReturnValue(600_000)
       const fetcher = vi.fn(async () => 'refreshed')
 
       await reader.runApplyFreshReadPolicies(
@@ -851,7 +811,7 @@ describe('CacheStackReader', () => {
       const { reader, options } = createReader()
       const negative = createStoredValueEnvelope({
         kind: 'empty',
-        freshTtlSeconds: 60
+        freshTtlMs: 60_000
       })
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => negative) })]
 

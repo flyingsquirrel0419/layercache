@@ -93,7 +93,7 @@ The benchmark utilities automatically prefer `/root/cache-test/data/users.json` 
 ```ts
 new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   compression: 'brotli',
   compressionThreshold: 1_024 * 1_024
 })

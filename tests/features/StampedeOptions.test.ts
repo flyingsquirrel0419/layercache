@@ -4,7 +4,7 @@ import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 describe('stampede options passthrough', () => {
   it('applies stampedeMaxInFlight to CacheStack fetches', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       stampedeMaxInFlight: 1
     })
 
@@ -29,7 +29,7 @@ describe('stampede options passthrough', () => {
   })
 
   it('applies stampedeEntryTimeoutMs to CacheStack fetches and allows retry after timeout', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       stampedeEntryTimeoutMs: 20
     })
 

@@ -4,7 +4,7 @@ import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { CacheMissError } from '../src/types'
 
 function makeCache() {
-  return new CacheStack([new MemoryLayer({ ttl: 60 })])
+  return new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 }
 
 describe('CacheNamespace', () => {
@@ -52,12 +52,12 @@ describe('CacheNamespace', () => {
     expect(await ns.has('y')).toBe(false)
   })
 
-  it('ttl() returns remaining seconds', async () => {
+  it('ttl() returns remaining milliseconds', async () => {
     const ns = makeCache().namespace('items')
-    await ns.set('k', 1, { ttl: 30 })
+    await ns.set('k', 1, { ttl: 30_000 })
     const remaining = await ns.ttl('k')
     expect(remaining).toBeGreaterThan(0)
-    expect(remaining).toBeLessThanOrEqual(30)
+    expect(remaining).toBeLessThanOrEqual(30_000)
   })
 
   it('clear() only removes keys in this namespace', async () => {

@@ -204,7 +204,7 @@ export class CacheStack extends EventEmitter {
       },
       enqueueWriteBehind: this.enqueueWriteBehind.bind(this),
       resolveFreshTtl: this.resolveFreshTtl.bind(this),
-      resolveLayerSeconds: this.resolveLayerSeconds.bind(this),
+      resolveLayerMs: this.resolveLayerMs.bind(this),
       globalStaleWhileRevalidate: this.options.staleWhileRevalidate,
       globalStaleIfError: this.options.staleIfError,
       writePolicy: this.options.writePolicy,
@@ -264,8 +264,8 @@ export class CacheStack extends EventEmitter {
       formatError: (error) => this.formatError(error),
       storeEntry: (key, kind, value, options) => this.storeEntry(key, kind, value, options),
       recordCircuitFailure: (key, options, error) => this.recordCircuitFailure(key, options, error),
-      resolveLayerSeconds: (layerName, override, globalDefault, fallback) =>
-        this.resolveLayerSeconds(layerName, override, globalDefault, fallback),
+      resolveLayerMs: (layerName, override, globalDefault, fallback) =>
+        this.resolveLayerMs(layerName, override, globalDefault, fallback),
       sleep: (ms) => this.sleep(ms),
       withTimeout: (promise, ms, createError) => this.withTimeout(promise, ms, createError),
       isDisconnecting: () => this.isDisconnecting,
@@ -361,7 +361,7 @@ export class CacheStack extends EventEmitter {
   }
 
   /**
-   * Returns the remaining TTL in seconds for the key in the fastest layer
+   * Returns the remaining TTL in milliseconds for the key in the fastest layer
    * that has it, or null if the key is not found / has no TTL.
    */
   async ttl(key: string): Promise<number | null> {
@@ -769,9 +769,9 @@ export class CacheStack extends EventEmitter {
     await this.awaitStartup('inspect')
 
     const foundInLayers: string[] = []
-    let freshTtlSeconds: number | null = null
-    let staleTtlSeconds: number | null = null
-    let errorTtlSeconds: number | null = null
+    let freshTtlMs: number | null = null
+    let staleTtlMs: number | null = null
+    let errorTtlMs: number | null = null
     let isStale = false
 
     for (const layer of this.layers) {
@@ -793,18 +793,12 @@ export class CacheStack extends EventEmitter {
       // Take TTL info from the first (fastest) layer that has it
       if (foundInLayers.length === 1 && resolved.envelope) {
         const now = Date.now()
-        freshTtlSeconds =
-          resolved.envelope.freshUntil !== null
-            ? Math.max(0, Math.ceil((resolved.envelope.freshUntil - now) / 1_000))
-            : null
-        staleTtlSeconds =
-          resolved.envelope.staleUntil !== null
-            ? Math.max(0, Math.ceil((resolved.envelope.staleUntil - now) / 1_000))
-            : null
-        errorTtlSeconds =
-          resolved.envelope.errorUntil !== null
-            ? Math.max(0, Math.ceil((resolved.envelope.errorUntil - now) / 1_000))
-            : null
+        freshTtlMs =
+          resolved.envelope.freshUntil !== null ? Math.max(0, Math.ceil(resolved.envelope.freshUntil - now)) : null
+        staleTtlMs =
+          resolved.envelope.staleUntil !== null ? Math.max(0, Math.ceil(resolved.envelope.staleUntil - now)) : null
+        errorTtlMs =
+          resolved.envelope.errorUntil !== null ? Math.max(0, Math.ceil(resolved.envelope.errorUntil - now)) : null
         isStale = resolved.state === 'stale-while-revalidate' || resolved.state === 'stale-if-error'
       }
     }
@@ -815,7 +809,7 @@ export class CacheStack extends EventEmitter {
 
     const tags = await this.getTagsForKey(normalizedKey)
 
-    return { key: userKey, foundInLayers, freshTtlSeconds, staleTtlSeconds, errorTtlSeconds, isStale, tags }
+    return { key: userKey, foundInLayers, freshTtlMs, staleTtlMs, errorTtlMs, isStale, tags }
   }
 
   async exportState(): Promise<CacheSnapshotEntry[]> {
@@ -959,13 +953,13 @@ export class CacheStack extends EventEmitter {
     )
   }
 
-  private resolveLayerSeconds(
+  private resolveLayerMs(
     layerName: string,
     override: number | LayerTtlMap | undefined,
     globalDefault?: number | LayerTtlMap,
     fallback?: number
   ): number | undefined {
-    return this.ttlResolver.resolveLayerSeconds(layerName, override, globalDefault, fallback)
+    return this.ttlResolver.resolveLayerMs(layerName, override, globalDefault, fallback)
   }
 
   private async deleteKeys(keys: string[]): Promise<void> {
