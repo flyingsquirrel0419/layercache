@@ -55,7 +55,7 @@ let exitCode = 0
 try {
   if (useExistingRedis) {
     await waitForRedis()
-    exitCode = await run(npmBin, ['exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
+    exitCode = await run(npmBin, ['exec', '--', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
       env: {
         ...process.env,
         REDIS_AVAILABLE: '1'
@@ -67,7 +67,7 @@ try {
       exitCode = upCode
     } else {
       await waitForRedis()
-      exitCode = await run(npmBin, ['exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
+      exitCode = await run(npmBin, ['exec', '--', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
         env: {
           ...process.env,
           REDIS_AVAILABLE: '1'
