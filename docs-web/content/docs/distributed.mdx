@@ -1,0 +1,482 @@
+---
+title: "Distributed Deployment"
+description: "Coordinate cache operations across multiple servers with Redis-based coordination"
+---
+
+Layercache provides distributed coordination features for multi-server deployments. Prevent stampedes, coordinate invalidations, and maintain consistent tag indexes across your infrastructure.
+
+## Overview
+
+When running multiple instances of your application, you need to coordinate cache operations to avoid:
+
+1. **Stampedes** - Multiple servers fetching the same uncached key simultaneously
+2. **Stale L1 caches** - Memory layers holding outdated data after writes
+3. **Inconsistent tags** - Different servers with different tag-to-key mappings
+
+Layercache solves these with three Redis-based components:
+
+- **RedisSingleFlightCoordinator** - Distributed request deduplication
+- **RedisInvalidationBus** - Cross-server L1 invalidation via pub/sub
+- **RedisTagIndex** - Shared tag index for consistent invalidations
+
+## RedisSingleFlightCoordinator
+
+Prevent multiple servers from fetching the same key simultaneously using distributed locking.
+
+### How It Works
+
+1. First server to request a key acquires a Redis lock (SET NX PX)
+2. Lock holder runs the fetcher and writes the value
+3. Other servers wait and poll for the value
+4. Lock is released automatically via Lua script
+5. Waiters read the cached value and return
+
+### Installation
+
+```tsx
+import { CacheStack, MemoryLayer, RedisLayer, RedisSingleFlightCoordinator } from 'layercache'
+import Redis from 'ioredis'
+
+const redis = new Redis()
+const coordinator = new RedisSingleFlightCoordinator({ client: redis })
+```
+
+### Basic Setup
+
+```tsx
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
+], {
+  singleFlightCoordinator: coordinator,
+  singleFlightLeaseMs: 30000,        // Lock duration
+  singleFlightTimeoutMs: 5000,       // Max wait time
+  singleFlightPollMs: 50             // Polling interval
+})
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `singleFlightCoordinator` | `RedisSingleFlightCoordinator` | - | Coordinator instance |
+| `singleFlightLeaseMs` | `number` | `30000` | Lock duration in milliseconds |
+| `singleFlightTimeoutMs` | `number` | `5000` | Max wait time for lock |
+| `singleFlightPollMs` | `number` | `50` | Polling interval in milliseconds |
+| `singleFlightRenewIntervalMs` | `number` | `leaseMs / 2` | Lease renewal interval |
+
+### Lease Renewal
+
+The lock holder automatically renews the lease to prevent expiration during long fetches:
+
+```tsx
+const cache = new CacheStack([/* ... */], {
+  singleFlightCoordinator: coordinator,
+  singleFlightLeaseMs: 60000,
+  singleFlightRenewIntervalMs: 10000  // Renew every 10 seconds
+})
+```
+
+### Custom Prefix
+
+```tsx
+const coordinator = new RedisSingleFlightCoordinator({
+  client: redis,
+  prefix: 'myapp:singleflight'
+})
+```
+
+## RedisInvalidationBus
+
+Broadcast invalidations to all servers via Redis pub/sub.
+
+### How It Works
+
+1. Server A writes a key
+2. Invalidation message is published to Redis channel
+3. All servers receive the message
+4. Each server invalidates its local memory layer
+5. Tag index is updated (if using RedisTagIndex)
+
+### Installation
+
+```tsx
+import { CacheStack, MemoryLayer, RedisLayer, RedisInvalidationBus } from 'layercache'
+import Redis from 'ioredis'
+
+const publisher = new Redis()
+const subscriber = new Redis()
+
+const bus = new RedisInvalidationBus({
+  publisher,
+  subscriber,
+  channel: 'myapp:invalidation'
+})
+```
+
+### Basic Setup
+
+```tsx
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: publisher, ttl: 300_000 })
+], {
+  invalidationBus: bus,
+  broadcastL1Invalidation: true
+})
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `invalidationBus` | `RedisInvalidationBus` | - | Bus instance |
+| `broadcastL1Invalidation` | `boolean` | `false` | Enable L1 invalidation broadcasts |
+| `channel` | `string` | `'layercache:invalidation'` | Pub/sub channel name |
+| `logger` | `Logger` | - | Optional logger for errors |
+
+### Invalidation Message Format
+
+```tsx
+{
+  sourceId: string,      // Unique server ID
+  scope: 'key' | 'keys' | 'clear',
+  operation: 'write' | 'delete' | 'invalidate' | 'clear',
+  keys: string[],        // Affected keys
+  timestamp: number
+}
+```
+
+### Example Flow
+
+```tsx
+// Server A
+await cache.set('user:123', user)
+// → Publishes { keys: ['user:123'], operation: 'write' }
+
+// Server B (memory layer)
+// → Receives message, deletes 'user:123' from memory
+
+// Server B (next read)
+await cache.get('user:123', fetchUser)
+// → Miss in memory, hits in Redis, backfills memory
+```
+
+### Custom Channel
+
+```tsx
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(),
+  channel: 'myapp:cache:invalidation',
+  logger: console
+})
+```
+
+### Cleanup
+
+```tsx
+// When shutting down, unsubscribe from Redis
+await cache.disconnect()
+```
+
+## RedisTagIndex
+
+Maintain a consistent tag index across all servers using Redis sets.
+
+### How It Works
+
+1. When setting a key with tags, add key-to-tags mapping to Redis
+2. Add key to tag-indexed sets for efficient lookups
+3. When invalidating by tag, fetch all keys for that tag
+4. Delete keys and publish invalidations
+
+### Sharding for Scale
+
+The tag index shards known-keys sets across multiple Redis keys for horizontal scaling:
+
+- Default: 1 shard (single set)
+- Recommended: 8-16 shards for high cardinality
+- Sharding reduces single-key contention
+
+### Installation
+
+```tsx
+import { CacheStack, MemoryLayer, RedisLayer, RedisTagIndex } from 'layercache'
+import Redis from 'ioredis'
+
+const redis = new Redis()
+
+const tagIndex = new RedisTagIndex({
+  client: redis,
+  prefix: 'myapp:tag-index',
+  knownKeysShards: 8  // Distribute across 8 sets
+})
+```
+
+### Basic Setup
+
+```tsx
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
+], {
+  tagIndex
+})
+
+// Use tags as usual
+await cache.set('user:123', user, { tags: ['user', 'user:123'] })
+await cache.invalidateByTag('user:123')
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `client` | `Redis` | - | Redis client |
+| `prefix` | `string` | `'layercache:tag-index'` | Key prefix for index |
+| `scanCount` | `number` | `100` | SSCAN batch size |
+| `knownKeysShards` | `number` | `1` | Number of shards for known keys |
+
+### Redis Key Structure
+
+```
+myapp:tag-index:tag:&lt;tag&gt;           → SET of keys with this tag
+myapp:tag-index:key:&lt;key&gt;           → SET of tags for this key
+myapp:tag-index:keys:&lt;shard&gt;        → SET of all known keys (sharded)
+```
+
+### Tag Invalidation Flow
+
+```tsx
+// 1. Set key with tags
+await cache.set('user:123:posts', posts, {
+  tags: ['user:123', 'posts']
+})
+
+// 2. Invalidate by tag
+await cache.invalidateByTag('user:123')
+
+// Behind the scenes:
+// - Fetches all keys from 'myapp:tag-index:tag:user:123'
+// - Deletes keys from Redis
+// - Publishes invalidation to RedisInvalidationBus
+// - Cleans up tag index entries
+```
+
+### Sharding Example
+
+```tsx
+// For high-volume deployments, use more shards
+const tagIndex = new RedisTagIndex({
+  client: redis,
+  knownKeysShards: 16  // Distribute across 16 sets
+})
+
+// Each shard handles ~1/16 of known keys
+// Reduces contention on SSCAN/SADD operations
+```
+
+## Complete Distributed Setup
+
+Combine all three components for a production-ready distributed cache:
+
+```tsx
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import {
+  RedisSingleFlightCoordinator,
+  RedisInvalidationBus,
+  RedisTagIndex
+} from 'layercache'
+import Redis from 'ioredis'
+
+const redis = new Redis({
+  host: process.env.REDIS_HOST,
+  port: 6379,
+  retryStrategy: (times) => Math.min(times * 50, 2000)
+})
+
+// 1. Distributed single-flight
+const coordinator = new RedisSingleFlightCoordinator({
+  client: redis,
+  prefix: 'myapp:singleflight'
+})
+
+// 2. Cross-server invalidation
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(),
+  channel: 'myapp:invalidation',
+  logger: console
+})
+
+// 3. Shared tag index
+const tagIndex = new RedisTagIndex({
+  client: redis,
+  prefix: 'myapp:tag-index',
+  knownKeysShards: 8
+})
+
+// 4. Create cache stack
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
+], {
+  // Distributed single-flight
+  singleFlightCoordinator: coordinator,
+  singleFlightLeaseMs: 30000,
+  singleFlightTimeoutMs: 5000,
+  singleFlightPollMs: 50,
+
+  // L1 invalidation
+  invalidationBus: bus,
+  broadcastL1Invalidation: true,
+
+  // Tag index
+  tagIndex
+})
+
+// 5. Use the cache
+await cache.set('user:123', user, { tags: ['user:123'] })
+const user = await cache.get('user:123', fetchUser)
+await cache.invalidateByTag('user:123')
+
+// 6. Graceful shutdown
+process.on('SIGTERM', async () => {
+  await cache.disconnect()
+  await redis.quit()
+  process.exit(0)
+})
+```
+
+## Architecture Diagram
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Server A   │     │  Server B   │     │   Redis     │
+├─────────────┤     ├─────────────┤     ├─────────────┤
+│ Memory L1   │     │ Memory L1   │     │             │
+│ Redis L2    │     │ Redis L2    │     │ Data Store  │
+│             │     │             │     │             │
+│ Coordinator │◄────┤ Coordinator │◄────│ Locks       │
+│ Bus Pub     │     │ Bus Sub     │◄────│ Pub/Sub     │
+│ Tag Index   │◄────┤ Tag Index   │◄────│ Tag Sets    │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
+
+## Performance Considerations
+
+### Single Flight
+
+- **Lock acquisition**: ~1-2ms (SET NX)
+- **Polling overhead**: ~50ms intervals
+- **Lease renewal**: Background, non-blocking
+
+### Invalidation Bus
+
+- **Publish latency**: &lt;1ms
+- **Message size**: ~1KB per invalidation
+- **Subscriber lag**: Network-dependent
+
+### Tag Index
+
+- **Set operations**: O(1) per key
+- **Tag invalidation**: O(n) where n = keys with tag
+- **Sharding**: Reduces contention by factor of shards
+
+### Recommended Settings
+
+For high-traffic deployments:
+
+```tsx
+const cache = new CacheStack([/* ... */], {
+  // Single-flight: longer leases for slow fetchers
+  singleFlightLeaseMs: 60000,
+  singleFlightRenewIntervalMs: 10000,
+  singleFlightPollMs: 100,
+
+  // Tag index: more shards for scale
+  tagIndex: new RedisTagIndex({
+    client: redis,
+    knownKeysShards: 16
+  })
+})
+```
+
+## Monitoring
+
+### Track Coordinator Operations
+
+```tsx
+cache.on('error', ({ event, context }) => {
+  if (context.operation === 'singleFlight') {
+    console.error('Single-flight error:', context.error)
+  }
+})
+```
+
+### Monitor Bus Messages
+
+```tsx
+cache.on('invalidation', ({ keys, sourceId }) => {
+  console.log(`Invalidated ${keys.length} keys from ${sourceId}`)
+})
+```
+
+### Check Tag Index Size
+
+```tsx
+const redis = new Redis()
+const keys = await redis.keys('layercache:tag-index:tag:*')
+console.log(`Tracking ${keys.length} tags`)
+```
+
+## Troubleshooting
+
+### Lock Timeouts
+
+If servers timeout waiting for locks:
+
+```tsx
+// Increase lease duration
+singleFlightLeaseMs: 60000
+
+// Increase wait timeout
+singleFlightTimeoutMs: 10000
+```
+
+### Stale L1 Data
+
+If memory layers aren't invalidating:
+
+```tsx
+// Ensure broadcast is enabled
+broadcastL1Invalidation: true
+
+// Check bus connection
+bus.on('error', (err) => console.error('Bus error:', err))
+```
+
+### Slow Tag Invalidations
+
+If tag invalidations are slow:
+
+```tsx
+// Increase shards for parallelization
+tagIndex: new RedisTagIndex({
+  client: redis,
+  knownKeysShards: 16  // More shards
+})
+```
+
+### High Redis Memory
+
+If tag index uses too much memory:
+
+```tsx
+// Reduce scan batch size
+tagIndex: new RedisTagIndex({
+  client: redis,
+  scanCount: 50  // Fewer keys per SSCAN
+})
+```

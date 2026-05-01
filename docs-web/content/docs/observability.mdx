@@ -1,0 +1,606 @@
+---
+title: "Observability and Monitoring"
+description: "Monitor cache performance, health, and metrics with built-in tools and integrations"
+---
+
+Layercache provides comprehensive observability features out of the box. Track cache performance, monitor layer health, and integrate with Prometheus and OpenTelemetry.
+
+## Metrics Overview
+
+Layercache automatically tracks detailed metrics for all cache operations:
+
+### Available Metrics
+
+- **hits** - Cache hits across all layers
+- **misses** - Cache misses (no layer had the key)
+- **fetches** - Fetcher function invocations (full misses)
+- **sets** - Write operations
+- **deletes** - Delete operations
+- **backfills** - L1/L2... automatic backfills from deeper layers
+- **invalidations** - Explicit invalidations (by tag, pattern, prefix)
+- **staleHits** - Stale-while-revalidate hits served
+- **refreshes** - Background refresh attempts
+- **refreshErrors** - Background refresh failures
+- **writeFailures** - Write operation failures
+- **singleFlightWaits** - Requests waiting for distributed lock
+- **negativeCacheHits** - Negative cache (null) results served
+- **circuitBreakerTrips** - Circuit breaker activations
+- **degradedOperations** - Operations run in degraded mode
+
+## Getting Metrics
+
+### getMetrics()
+
+Retrieve a snapshot of all metrics counters:
+
+```tsx
+import { CacheStack, MemoryLayer } from 'layercache'
+
+const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+// ... use cache ...
+
+const metrics = cache.getMetrics()
+console.log(metrics)
+// {
+//   hits: 1234,
+//   misses: 56,
+//   fetches: 56,
+//   sets: 890,
+//   deletes: 12,
+//   backfills: 234,
+//   invalidations: 45,
+//   staleHits: 5,
+//   refreshes: 3,
+//   refreshErrors: 0,
+//   writeFailures: 0,
+//   singleFlightWaits: 7,
+//   negativeCacheHits: 12,
+//   circuitBreakerTrips: 0,
+//   degradedOperations: 0,
+//   hitsByLayer: { memory: 1000, redis: 234 },
+//   missesByLayer: { memory: 45, redis: 11 },
+//   latencyByLayer: {
+//     memory: { avgMs: 0.05, maxMs: 1.2, count: 1200 },
+//     redis: { avgMs: 2.3, maxMs: 15.6, count: 250 }
+//   },
+//   resetAt: 1712847654321
+// }
+```
+
+### getHitRate()
+
+Calculate cache hit rate overall and per-layer:
+
+```tsx
+const hitRate = cache.getHitRate()
+console.log(hitRate)
+// {
+//   overall: 0.956,  // 95.6% hit rate
+//   byLayer: {
+//     memory: 0.957,   // L1 hit rate
+//     redis: 0.955     // L2 hit rate
+//   }
+// }
+```
+
+### getStats()
+
+Get comprehensive stats including layer health:
+
+```tsx
+const stats = cache.getStats()
+console.log(stats)
+// {
+//   metrics: { ... },      // Same as getMetrics()
+//   layers: [
+//     {
+//       name: 'memory',
+//       isLocal: true,
+//       degradedUntil: null
+//     },
+//     {
+//       name: 'redis',
+//       isLocal: false,
+//       degradedUntil: 1712848000000  // Timestamp if degraded
+//     }
+//   ],
+//   backgroundRefreshes: 3
+// }
+```
+
+### resetMetrics()
+
+Reset all metric counters to zero:
+
+```tsx
+cache.resetMetrics()
+```
+
+## Health Checks
+
+Monitor the health of each cache layer with ping checks:
+
+### healthCheck()
+
+Check connectivity and latency for all layers:
+
+```tsx
+const health = await cache.healthCheck()
+console.log(health)
+// [
+//   {
+//     layer: 'memory',
+//     healthy: true,
+//     latencyMs: 0.03
+//   },
+//   {
+//     layer: 'redis',
+//     healthy: true,
+//     latencyMs: 2.45
+//   }
+// ]
+```
+
+### Usage in Health Endpoints
+
+```tsx
+import express from 'express'
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
+])
+
+const app = express()
+
+app.get('/health', async (req, res) => {
+  const health = await cache.healthCheck()
+  const allHealthy = health.every(h => h.healthy)
+
+  res.status(allHealthy ? 200 : 503).json({
+    status: allHealthy ? 'healthy' : 'degraded',
+    checks: health
+  })
+})
+```
+
+## Prometheus Integration
+
+Export metrics in Prometheus text format for scraping.
+
+### createPrometheusMetricsExporter()
+
+Create a Prometheus metrics exporter:
+
+```tsx
+import { createPrometheusMetricsExporter } from 'layercache'
+import http from 'node:http'
+
+const cache = new CacheStack([/* ... */])
+
+const collectMetrics = createPrometheusMetricsExporter(cache)
+
+const server = http.createServer(async (_req, res) => {
+  res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8')
+  res.end(collectMetrics())
+})
+
+server.listen(9091, () => {
+  console.log('Prometheus metrics exposed on :9091/metrics')
+})
+```
+
+### Multiple Cache Stacks
+
+```tsx
+const userCache = new CacheStack([/* ... */])
+const productCache = new CacheStack([/* ... */])
+
+const collectMetrics = createPrometheusMetricsExporter([
+  { stack: userCache, name: 'users' },
+  { stack: productCache, name: 'products' }
+])
+```
+
+### Example Output
+
+```
+# HELP layercache_hits_total Total number of cache hits
+# TYPE layercache_hits_total counter
+layercache_hits_total{cache="default"} 1234
+
+# HELP layercache_misses_total Total number of cache misses
+# TYPE layercache_misses_total counter
+layercache_misses_total{cache="default"} 56
+
+# HELP layercache_hit_rate Overall cache hit rate (0-1)
+# TYPE layercache_hit_rate gauge
+layercache_hit_rate{cache="default"} 0.956000
+
+# HELP layercache_hits_by_layer_total Hits broken down by layer
+# TYPE layercache_hits_by_layer_total counter
+layercache_hits_by_layer_total{cache="default",layer="memory"} 1000
+layercache_hits_by_layer_total{cache="default",layer="redis"} 234
+
+# HELP layercache_layer_latency_avg_ms Average read latency per layer in milliseconds
+# TYPE layercache_layer_latency_avg_ms gauge
+layercache_layer_latency_avg_ms{cache="default",layer="memory"} 0.0500
+layercache_layer_latency_avg_ms{cache="default",layer="redis"} 2.3000
+```
+
+## OpenTelemetry Integration
+
+Add distributed tracing to cache operations.
+
+### Setup
+
+```tsx
+import { trace } from '@opentelemetry/api'
+import { createOpenTelemetryPlugin } from 'layercache'
+
+const tracer = trace.getTracer('my-app', '1.0.0')
+const plugin = createOpenTelemetryPlugin(cache, tracer)
+```
+
+### Span Events
+
+The plugin emits two types of span events:
+
+#### operation-start
+
+```typescript
+{
+  id: number,
+  name: string,        // Operation name (e.g., "get", "set")
+  attributes: object   // Operation-specific attributes
+}
+```
+
+#### operation-end
+
+```typescript
+{
+  id: number,
+  success: boolean,
+  result?: string,     // Result type
+  error?: Error
+}
+```
+
+### Example Traced Operations
+
+```tsx
+// Each of these creates a span
+await cache.get('user:123', fetchUser)
+await cache.set('user:123', user, { ttl: 300_000 })
+await cache.invalidateByTag('user:123')
+```
+
+### Cleanup
+
+```tsx
+// Uninstall when shutting down
+plugin.uninstall()
+```
+
+## Event Hooks
+
+CacheStack extends EventEmitter and emits events for all operations.
+
+### Available Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `hit` | `{ key, layer }` | Cache hit in specific layer |
+| `miss` | `{ key }` | Full cache miss |
+| `set` | `{ key }` | Value written |
+| `delete` | `{ key }` | Key deleted |
+| `backfill` | `{ key, fromLayer, toLayer }` | Upper layer filled from lower |
+| `stale-serve` | `{ key, state, layer }` | Stale value served |
+| `stampede-dedupe` | `{ key }` | Request deduplicated |
+| `warm` | `{ key }` | Cache warmed |
+| `error` | `{ event, context }` | Operation error |
+
+### Subscribing to Events
+
+```tsx
+cache.on('hit', ({ key, layer }) => {
+  console.log(`Cache hit for ${key} in ${layer}`)
+  metrics.inc('cache.hit', { layer })
+})
+
+cache.on('miss', ({ key }) => {
+  console.log(`Cache miss for ${key}`)
+  metrics.inc('cache.miss')
+})
+
+cache.on('error', ({ event, context }) => {
+  console.error(`Cache error on ${event}:`, context)
+})
+```
+
+### Backfill Tracking
+
+```tsx
+cache.on('backfill', ({ key, fromLayer, toLayer }) => {
+  console.log(`Backfilled ${key} from ${fromLayer} to ${toLayer}`)
+})
+```
+
+### Error Handling
+
+```tsx
+cache.on('error', ({ event, context }) => {
+  if (event === 'set') {
+    logger.error('Failed to set cache value', context)
+  }
+})
+```
+
+## HTTP Stats Handler
+
+Expose cache statistics via a simple HTTP handler.
+
+### Basic Usage
+
+```tsx
+import { createCacheStatsHandler } from 'layercache'
+import http from 'node:http'
+
+const handler = createCacheStatsHandler(cache)
+
+const server = http.createServer(handler)
+server.listen(9090)
+```
+
+### With Express
+
+```tsx
+import express from 'express'
+import { createCacheStatsHandler } from 'layercache'
+
+const app = express()
+
+app.get('/cache/stats', createCacheStatsHandler(cache))
+```
+
+### With Authorization
+
+```tsx
+const handler = createCacheStatsHandler(cache, {
+  authorize: async (req) => {
+    const apiKey = req.headers['x-api-key']
+    return apiKey === process.env.STATS_API_KEY
+  },
+  unauthorizedStatusCode: 401
+})
+```
+
+### Response Format
+
+```json
+{
+  "metrics": {
+    "hits": 1234,
+    "misses": 56,
+    "fetches": 56,
+    "sets": 890,
+    "deletes": 12,
+    "backfills": 234,
+    "invalidations": 45,
+    "staleHits": 5,
+    "refreshes": 3,
+    "refreshErrors": 0,
+    "writeFailures": 0,
+    "singleFlightWaits": 7,
+    "negativeCacheHits": 12,
+    "circuitBreakerTrips": 0,
+    "degradedOperations": 0,
+    "hitsByLayer": {
+      "memory": 1000,
+      "redis": 234
+    },
+    "missesByLayer": {
+      "memory": 45,
+      "redis": 11
+    },
+    "latencyByLayer": {
+      "memory": {
+        "avgMs": 0.05,
+        "maxMs": 1.2,
+        "count": 1200
+      },
+      "redis": {
+        "avgMs": 2.3,
+        "maxMs": 15.6,
+        "count": 250
+      }
+    },
+    "resetAt": 1712847654321
+  },
+  "layers": [
+    {
+      "name": "memory",
+      "isLocal": true,
+      "degradedUntil": null
+    },
+    {
+      "name": "redis",
+      "isLocal": false,
+      "degradedUntil": null
+    }
+  ],
+  "backgroundRefreshes": 3
+}
+```
+
+## Admin CLI
+
+Inspect and manage caches from the command line.
+
+### Installation
+
+```bash
+npm install -g layercache
+```
+
+Or use via npx:
+
+```bash
+npx layercache stats --redis redis://localhost:6379
+```
+
+### Commands
+
+#### stats
+
+Show cache statistics:
+
+```bash
+layercache stats --redis redis://localhost:6379 --pattern "user:*"
+```
+
+Response:
+
+```json
+{
+  "totalKeys": 1234,
+  "pattern": "user:*"
+}
+```
+
+#### keys
+
+List cached keys:
+
+```bash
+layercache keys --redis redis://localhost:6379 --pattern "user:*"
+```
+
+Output:
+
+```
+user:1
+user:2
+user:3
+...
+```
+
+#### inspect
+
+Inspect a specific key:
+
+```bash
+layercache inspect --redis redis://localhost:6379 --key "user:123"
+```
+
+Response:
+
+```json
+{
+  "key": "user:123",
+  "exists": true,
+  "ttlMs": 245,
+  "sizeBytes": 1024,
+  "isEnvelope": true,
+  "state": "fresh",
+  "preview": {
+    "kind": "fresh",
+    "freshUntil": 1712848000000,
+    "staleUntil": 1712848300000,
+    "errorUntil": 1712848900000
+  }
+}
+```
+
+#### invalidate
+
+Invalidate cached data:
+
+```bash
+# By pattern
+layercache invalidate --redis redis://localhost:6379 --pattern "user:*"
+
+# By tag
+layercache invalidate --redis redis://localhost:6379 --tag "user:123"
+```
+
+### Options
+
+- `--redis <url>` - Redis connection URL (required)
+- `--pattern <glob>` - Glob pattern for filtering keys
+- `--key <key>` - Exact key for inspect command
+- `--tag <tag>` - Tag for invalidate command
+- `--tag-index-prefix <prefix>` - Redis key prefix for tag index
+
+## Monitoring Best Practices
+
+### 1. Track Hit Rate
+
+Monitor hit rate to ensure cache effectiveness:
+
+```tsx
+setInterval(() => {
+  const { overall, byLayer } = cache.getHitRate()
+  console.log(`Overall hit rate: ${(overall * 100).toFixed(2)}%`)
+  console.log(`Memory hit rate: ${(byLayer.memory * 100).toFixed(2)}%`)
+  console.log(`Redis hit rate: ${(byLayer.redis * 100).toFixed(2)}%`)
+}, 60000)
+```
+
+### 2. Alert on Degraded Layers
+
+```tsx
+cache.on('error', ({ event, context }) => {
+  if (context.layer === 'redis') {
+    alerting.send(`Redis layer degraded: ${context.error}`)
+  }
+})
+```
+
+### 3. Monitor Latency
+
+```tsx
+const metrics = cache.getMetrics()
+for (const [layer, latency] of Object.entries(metrics.latencyByLayer)) {
+  if (latency.maxMs > 100) {
+    console.warn(`High latency in ${layer}: ${latency.maxMs}ms`)
+  }
+}
+```
+
+### 4. Track Circuit Breaker
+
+```tsx
+cache.on('error', ({ event, context }) => {
+  if (context.operation === 'circuitBreakerTrip') {
+    alerting.send(`Circuit breaker tripped for ${context.key}`)
+  }
+})
+```
+
+### 5. Export to Prometheus
+
+```tsx
+// Expose metrics for Prometheus scraping
+const collectMetrics = createPrometheusMetricsExporter(cache)
+http.createServer(async (_req, res) => {
+  res.setHeader('content-type', 'text/plain; version=0.0.4')
+  res.end(collectMetrics())
+}).listen(9091)
+```
+
+### 6. Distributed Tracing
+
+```tsx
+// Add OpenTelemetry tracing
+const plugin = createOpenTelemetryPlugin(cache, tracer)
+
+// Clean up on shutdown
+process.on('SIGTERM', async () => {
+  plugin.uninstall()
+  await cache.disconnect()
+})
+```

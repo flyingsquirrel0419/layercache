@@ -1,0 +1,663 @@
+---
+title: "Serialization & Compression"
+description: "Configure data serialization and compression for cache layers"
+---
+
+# Serialization & Compression
+
+Control how data is serialized and compressed in cache layers for optimal performance and storage efficiency.
+
+## Table of Contents
+
+- [JSON Serializer](#json-serializer)
+- [MessagePack Serializer](#messagepack-serializer)
+- [Custom Serializers](#custom-serializers)
+- [Prototype Pollution Protection](#prototype-pollution-protection)
+- [Compression](#compression)
+- [Serializer Chain](#serializer-chain)
+
+---
+
+## JSON Serializer
+
+Default serializer for all cache layers. Uses `JSON.stringify` and `JSON.parse` with prototype pollution protection.
+
+### Usage
+
+```ts
+import { JsonSerializer } from 'layercache'
+
+const serializer = new JsonSerializer()
+
+// Serialize
+const payload = serializer.serialize({ foo: 'bar' })
+// '{"foo":"bar"}'
+
+// Deserialize
+const data = serializer.deserialize('{"foo":"bar"}')
+// { foo: 'bar' }
+```
+
+### Built-In Usage
+
+JSON serialization is used by default:
+
+```ts
+import { MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
+
+// All use JsonSerializer by default
+const memory = new MemoryLayer({ ttl: 60_000 })
+const redis = new RedisLayer({ client: redis, ttl: 300_000 })
+const disk = new DiskLayer({ directory: './cache' })
+
+// Explicitly specify JSON serializer
+const redisJson = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  serializer: new JsonSerializer()
+})
+```
+
+### Handling Special Values
+
+```ts
+const serializer = new JsonSerializer()
+
+// Dates become ISO strings
+serializer.serialize({ date: new Date('2024-04-11') })
+// '{"date":"2024-04-11T00:00:00.000Z"}'
+
+// undefined becomes null (or omitted)
+serializer.serialize({ foo: undefined })
+// '{"foo":null}' or '{}'
+
+// Functions are removed
+serializer.serialize({ foo: () => {} })
+// '{}'
+```
+
+### Prototype Pollution Protection
+
+All deserialized data is sanitized to prevent prototype pollution attacks:
+
+```ts
+const serializer = new JsonSerializer()
+
+// Attempted prototype pollution is blocked
+const data = serializer.deserialize('{"__proto__":{"polluted":true}}')
+// -> Sanitized to: {}
+// -> Object.prototype.polluted remains undefined
+```
+
+---
+
+## MessagePack Serializer
+
+Binary serialization format that's more compact and faster than JSON.
+
+### Installation
+
+```bash
+npm install @msgpack/msgpack
+```
+
+### Usage
+
+```ts
+import { MsgpackSerializer } from 'layercache'
+
+const serializer = new MsgpackSerializer()
+
+// Serialize
+const payload = serializer.serialize({ foo: 'bar', num: 42 })
+// Buffer <81 a3 66 6f 6f a3 62 61 72 a3 6e 75 6d 2a>
+
+// Deserialize
+const data = serializer.deserialize(payload)
+// { foo: 'bar', num: 42 }
+```
+
+### Use with Cache Layers
+
+```ts
+import { RedisLayer, DiskLayer } from 'layercache'
+
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  serializer: new MsgpackSerializer()
+})
+
+const disk = new DiskLayer({
+  directory: './cache',
+  serializer: new MsgpackSerializer()
+})
+```
+
+### Benefits
+
+- **Smaller size**: ~30-50% smaller than JSON for typical data
+- **Faster**: Binary parsing is faster than JSON
+- **Type preservation**: Preserves binary data, dates, etc.
+
+### Comparison
+
+```ts
+import { JsonSerializer, MsgpackSerializer } from 'layercache'
+
+const data = {
+  id: 123,
+  name: 'Alice',
+  email: 'alice@example.com',
+  tags: ['user', 'active'],
+  created: new Date()
+}
+
+const jsonSerializer = new JsonSerializer()
+const msgpackSerializer = new MsgpackSerializer()
+
+const jsonPayload = jsonSerializer.serialize(data)
+// '{"id":123,"name":"Alice","email":"alice@example.com","tags":["user","active"],"created":"2024-04-11T00:00:00.000Z"}'
+// Length: ~140 bytes
+
+const msgpackPayload = msgpackSerializer.serialize(data)
+// Binary buffer
+// Length: ~95 bytes (32% smaller)
+
+console.log(`JSON size: ${jsonPayload.length} bytes`)
+console.log(`MessagePack size: ${msgpackPayload.length} bytes`)
+```
+
+---
+
+## Custom Serializers
+
+Implement the `CacheSerializer` interface to create custom serialization logic.
+
+### Interface
+
+```ts
+interface CacheSerializer {
+  serialize(value: unknown): string | Buffer
+  deserialize<T>(payload: string | Buffer): T
+}
+```
+
+### Example: CBOR Serializer
+
+```ts
+import { encode, decode } from 'cbor'
+
+class CborSerializer implements CacheSerializer {
+  serialize(value: unknown): Buffer {
+    return Buffer.from(encode(value))
+  }
+
+  deserialize<T>(payload: string | Buffer): T {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'binary')
+    return decode(buffer) as T
+  }
+}
+
+// Usage
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  serializer: new CborSerializer()
+})
+```
+
+### Example: Base64 JSON Serializer
+
+```ts
+class Base64JsonSerializer implements CacheSerializer {
+  serialize(value: unknown): string {
+    const json = JSON.stringify(value)
+    return Buffer.from(json).toString('base64')
+  }
+
+  deserialize<T>(payload: string | Buffer): T {
+    const normalized = typeof payload === 'string' ? payload : payload.toString('binary')
+    const json = Buffer.from(normalized, 'base64').toString('utf8')
+    return JSON.parse(json) as T
+  }
+}
+
+// Usage
+const memcached = new MemcachedLayer({
+  client: memcached,
+  ttl: 300_000,
+  serializer: new Base64JsonSerializer()
+})
+```
+
+### Example: Compressing Serializer
+
+```ts
+import { gzip, ungzip } from 'node:zlib'
+import { promisify } from 'node:util'
+
+const gzipAsync = promisify(gzip)
+const ungzipAsync = promisify(ungzip)
+
+class GzipJsonSerializer implements CacheSerializer {
+  async serialize(value: unknown): Promise<Buffer> {
+    const json = JSON.stringify(value)
+    return await gzipAsync(Buffer.from(json))
+  }
+
+  async deserialize<T>(payload: string | Buffer): Promise<T> {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+    const decompressed = await ungzipAsync(buffer)
+    return JSON.parse(decompressed.toString('utf8')) as T
+  }
+
+  // Note: This returns Promise<Buffer> but interface expects sync
+  // For async serialization, use a wrapper layer
+}
+```
+
+---
+
+## Prototype Pollution Protection
+
+All built-in serializers protect against prototype pollution attacks by sanitizing deserialized data.
+
+### What is Prototype Pollution?
+
+Prototype pollution is a vulnerability where attackers modify `Object.prototype` to affect all objects in the application:
+
+```json
+{
+  "__proto__": {
+    "admin": true
+  }
+}
+```
+
+Without protection, this could make every object have `admin: true`.
+
+### How layercache Protects
+
+layercache uses `StructuredDataSanitizer` to:
+
+1. **Block dangerous keys**: Removes `__proto__`, `constructor`, `prototype`
+2. **Limit depth**: Prevents deeply nested objects (default: 200 levels)
+3. **Limit nodes**: Prevents excessive object size (default: 10,000 nodes)
+
+### Configuration
+
+```ts
+import { JsonSerializer } from 'layercache'
+
+const serializer = new JsonSerializer()
+
+// Default limits
+const data = serializer.deserialize(payload)
+// -> maxDepth: 200
+// -> maxNodes: 10,000
+
+// Custom limits (not exposed in API, defaults are safe)
+// JsonSerializer uses built-in safe defaults
+```
+
+### Example: Blocked Attack
+
+```ts
+const serializer = new JsonSerializer()
+
+const maliciousPayload = JSON.stringify({
+  user: 'alice',
+  __proto__:: { admin: true }
+})
+
+const data = serializer.deserialize(maliciousPayload)
+// -> { user: 'alice' }
+// -> __proto__ is removed
+// -> Object.prototype.admin remains undefined
+
+console.log(({} as any).admin)  // undefined (safe!)
+```
+
+### MessagePack Protection
+
+MessagePack serializer also sanitizes data:
+
+```ts
+import { MsgpackSerializer } from 'layercache'
+
+const serializer = new MsgpackSerializer()
+
+// MessagePack payloads are sanitized on deserialize
+const data = serializer.deserialize(maliciousMsgpackBuffer)
+// -> Dangerous keys removed
+// -> Depth and size limits enforced
+```
+
+---
+
+## Compression
+
+Reduce memory usage and network bandwidth by compressing cached values. Supported in `RedisLayer`.
+
+### Gzip Compression
+
+```ts
+import { RedisLayer } from 'layercache'
+
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  compression: 'gzip',
+  compressionThreshold: 1_024  // Only compress values >1KB
+})
+
+// Large values are compressed automatically
+await cache.set('large-data', largeObject)
+// -> Serialized to JSON (or MessagePack)
+// -> Compressed with gzip if >1KB
+// -> Stored in Redis
+
+// Decompression is automatic on read
+const data = await cache.get('large-data')
+// -> Fetched from Redis
+// -> Decompressed
+// -> Deserialized
+```
+
+### Brotli Compression
+
+```ts
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  compression: 'brotli',
+  compressionThreshold: 512  // Compress values >512 bytes
+})
+```
+
+### Compression Threshold
+
+Skip compression for small values (overhead isn't worth it):
+
+```ts
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  compression: 'gzip',
+  compressionThreshold: 1_024  // 1KB threshold
+})
+
+// Small values: not compressed
+await cache.set('small', { id: 1 })
+// Serialized: ~15 bytes
+// Stored: ~15 bytes (not compressed)
+
+// Large values: compressed
+await cache.set('large', largeArray)
+// Serialized: ~10KB
+// Stored: ~3KB (compressed)
+```
+
+### Decompression Max Bytes
+
+Prevent decompression bomb attacks:
+
+```ts
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  compression: 'gzip',
+  compressionThreshold: 1_024,
+  decompressionMaxBytes: 64 * 1_024 * 1_024  // 64MiB limit
+})
+
+// If decompressed data exceeds 64MiB, read fails and key is deleted
+const data = await cache.get('malicious-key')
+// -> Throws error
+// -> Key is deleted from Redis
+```
+
+### Compression Format
+
+Compressed values use a custom header format:
+
+```
+LCZ1:<algorithm>:<compressed-data>
+
+Examples:
+LCZ1:gzip:<gzip-data>
+LCZ1:brotli:<brotli-data>
+```
+
+This header allows:
+- Format detection on read
+- Future algorithm support
+- Backward compatibility
+
+### Performance Considerations
+
+**Compression tradeoffs:**
+
+| Factor | Gzip | Brotli | No Compression |
+|---|---|---|---|
+| Compression speed | Fast | Slow | N/A |
+| Decompression speed | Fast | Medium | N/A |
+| Compression ratio | Medium | High | N/A |
+| CPU usage | Low | Medium | None |
+| Best for | General use | Storage-constrained | Small values |
+
+**Recommendations:**
+
+```ts
+// Use gzip for most cases (balanced)
+const redis = new RedisLayer({
+  client: redis,
+  compression: 'gzip',
+  compressionThreshold: 1_024
+})
+
+// Use brotli for storage-constrained environments
+const redis = new RedisLayer({
+  client: redis,
+  compression: 'brotli',
+  compressionThreshold: 512
+})
+
+// Disable compression for low-latency requirements
+const redis = new RedisLayer({
+  client: redis,
+  compression: undefined  // No compression
+})
+```
+
+---
+
+## Serializer Chain
+
+Try multiple deserializers in sequence for smooth data format migrations.
+
+### Configuration
+
+```ts
+import { RedisLayer, JsonSerializer, MsgpackSerializer } from 'layercache'
+
+const redis = new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  serializer: [
+    new MsgpackSerializer(),  // Try MessagePack first
+    new JsonSerializer()      // Fall back to JSON
+  ]
+})
+```
+
+### How It Works
+
+**On write:** Always use the first serializer
+
+```ts
+await cache.set('user:123', userData)
+// Serialized with MsgpackSerializer (first in array)
+```
+
+**On read:** Try each serializer until one succeeds
+
+```ts
+const data = await cache.get('user:123')
+// Try MsgpackSerializer.deserialize()
+// -> If success: return data
+// -> If error: try JsonSerializer.deserialize()
+// -> If success: return data, migrate to MessagePack
+// -> If error: delete key and return null
+```
+
+### Auto-Migration
+
+When a value is successfully deserialized with a non-primary serializer, it's automatically rewritten with the primary serializer:
+
+```ts
+// Old data in Redis: JSON format
+const oldData = '{"id":123,"name":"Alice"}'
+
+// Read with serializer chain
+const data = await cache.get('user:123')
+// -> Try MessagePack: fails
+// -> Try JSON: succeeds, returns { id: 123, name: 'Alice' }
+// -> Rewrites with MessagePack
+// -> Next read is faster (MessagePack is first)
+```
+
+### Migration Example
+
+```ts
+// Phase 1: Deploy with JSON only
+const redis = new RedisLayer({
+  client: redis,
+  serializer: new JsonSerializer()
+})
+
+// Phase 2: Deploy with MessagePack, keep JSON fallback
+const redis = new RedisLayer({
+  client: redis,
+  serializer: [
+    new MsgpackSerializer(),  // New format
+    new JsonSerializer()      // Old format
+  ]
+})
+
+// Phase 3: Data auto-migrates on access
+// -> Existing JSON keys work fine
+// -> On first read, rewritten as MessagePack
+// -> New keys written as MessagePack
+
+// Phase 4: Remove JSON fallback (after all data migrated)
+const redis = new RedisLayer({
+  client: redis,
+  serializer: new MsgpackSerializer()
+})
+```
+
+### Complex Chain
+
+```ts
+import {
+  MsgpackSerializer,
+  JsonSerializer,
+  CborSerializer
+} from 'layercache'
+
+const redis = new RedisLayer({
+  client: redis,
+  serializer: [
+    new MsgpackSerializer(),  // Current format
+    new CborSerializer(),     // Previous format
+    new JsonSerializer()      // Legacy format
+  ]
+})
+
+// Tries formats in order:
+// 1. MessagePack (current)
+// 2. CBOR (previous)
+// 3. JSON (legacy)
+// 4. Delete if all fail
+```
+
+---
+
+## Best Practices
+
+### 1. Use MessagePack for Large Data
+
+```ts
+// GOOD: MessagePack for large datasets
+const cache = new RedisLayer({
+  client: redis,
+  serializer: new MsgpackSerializer(),
+  compression: 'gzip',
+  compressionThreshold: 1_024
+})
+```
+
+### 2. Enable Compression for Redis
+
+```ts
+// GOOD: Reduce Redis memory usage
+const redis = new RedisLayer({
+  client: redis,
+  compression: 'gzip',
+  compressionThreshold: 1_024
+})
+```
+
+### 3. Use Serializer Chain for Migrations
+
+```ts
+// GOOD: Support multiple formats during migration
+const redis = new RedisLayer({
+  client: redis,
+  serializer: [
+    new MsgpackSerializer(),  // New
+    new JsonSerializer()      // Old
+  ]
+})
+```
+
+### 4. Set Compression Threshold Appropriately
+
+```ts
+// GOOD: Avoid compressing small values
+const redis = new RedisLayer({
+  client: redis,
+  compression: 'gzip',
+  compressionThreshold: 1_024  // Only compress >1KB
+})
+```
+
+### 5. Protect Against Decompression Bombs
+
+```ts
+// GOOD: Set decompression limit
+const redis = new RedisLayer({
+  client: redis,
+  compression: 'gzip',
+  decompressionMaxBytes: 64 * 1_024 * 1_024  // 64MiB
+})
+```
+
+### 6. Don't Compress Already-Compressed Data
+
+```ts
+// BAD: Compressing already compressed data
+const cache = new RedisLayer({
+  client: redis,
+  serializer: new MsgpackSerializer(),  // Binary
+  compression: 'gzip'                   // Compressing binary
+})
+
+// GOOD: Skip compression for binary data
+const cache = new RedisLayer({
+  client: redis,
+  serializer: new MsgpackSerializer()  // No compression needed
+})
+```

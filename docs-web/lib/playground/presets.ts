@@ -1,0 +1,231 @@
+export type Preset = {
+  id: string;
+  title: string;
+  description: string;
+  code: string;
+};
+
+export const presets: Preset[] = [
+  {
+    id: "basic",
+    title: "Basic Get/Set",
+    description: "Simple cache read-through pattern",
+    code: `// Basic get/set operations
+const { cache } = createPlaygroundCache();
+
+// Set a value
+await cache.set("user:1", { name: "Alice", role: "admin" });
+console.log("Set user:1");
+
+// Get it back
+const user = await cache.get("user:1");
+console.log("Got user:", JSON.stringify(user));
+
+// Check stats
+console.log("Stats:", JSON.stringify(cache.getStats()));`,
+  },
+  {
+    id: "multi-layer",
+    title: "Multi-Layer Stack",
+    description: "See how data flows across memory, Redis, and disk",
+    code: `// Multi-layer cache with backfill
+const { cache, layers } = createPlaygroundCache();
+
+// First request - cache miss, fetcher runs
+const data = await cache.get("api:products", async () => {
+  console.log("Fetcher called - fetching from database...");
+  return [{ id: 1, name: "Widget" }, { id: 2, name: "Gadget" }];
+}, 120);
+
+console.log("Result:", JSON.stringify(data));
+
+// Second request - cache hit
+const cached = await cache.get("api:products");
+console.log("Cached result:", JSON.stringify(cached));
+
+// Check each layer
+console.log("Layer info:", JSON.stringify(cache.getLayerInfo(), null, 2));`,
+  },
+  {
+    id: "swr",
+    title: "Stale-While-Revalidate",
+    description: "Serve stale data while refreshing in background",
+    code: `// Simulating stale-while-revalidate pattern
+const { cache } = createPlaygroundCache();
+let fetchCount = 0;
+
+// Initial fetch
+const data1 = await cache.get("dashboard:metrics", async () => {
+  fetchCount++;
+  console.log(\`Fetch #\${fetchCount}: Loading metrics...\`);
+  return { views: 1250, users: 89, revenue: 45000 };
+}, 10);
+console.log("First load:", JSON.stringify(data1));
+
+// Second request - should hit cache
+const data2 = await cache.get("dashboard:metrics", async () => {
+  fetchCount++;
+  console.log(\`Fetch #\${fetchCount}: Refreshing metrics...\`);
+  return { views: 1300, users: 92, revenue: 47000 };
+}, 10);
+console.log("Cache hit:", JSON.stringify(data2));
+
+console.log("Total fetcher calls:", fetchCount);
+console.log("Stats:", JSON.stringify(cache.getStats()));`,
+  },
+  {
+    id: "tag-invalidation",
+    title: "Tag Invalidation",
+    description: "Invalidate cache entries by tag",
+    code: `// Tag-based cache invalidation
+const { cache } = createPlaygroundCache();
+
+// Set values with tags
+await cache.set("product:1", { name: "Widget", price: 9.99 });
+await cache.tag("product:1", "products", "catalog");
+
+await cache.set("product:2", { name: "Gadget", price: 19.99 });
+await cache.tag("product:2", "products", "catalog");
+
+await cache.set("page:home", { title: "Home", layout: "full" });
+await cache.tag("page:home", "pages", "catalog");
+
+console.log("Before invalidation:");
+console.log("Stats:", JSON.stringify(cache.getStats()));
+
+// Invalidate all products
+const removed = await cache.invalidateByTag("products");
+console.log(\`\\nInvalidated \${removed} entries with tag "products"\`);
+
+console.log("\\nAfter invalidation:");
+console.log("Stats:", JSON.stringify(cache.getStats()));
+console.log("Layer info:", JSON.stringify(cache.getLayerInfo()));`,
+  },
+  {
+    id: "namespaces",
+    title: "Namespaces",
+    description: "Organize cache with key prefixes",
+    code: `// Namespace-like key organization
+const { cache } = createPlaygroundCache();
+
+// User namespace
+await cache.set("users:1", { name: "Alice" });
+await cache.set("users:2", { name: "Bob" });
+
+// Session namespace
+await cache.set("sessions:abc123", { userId: 1, expires: "2025-12-31" });
+await cache.set("sessions:def456", { userId: 2, expires: "2025-12-31" });
+
+// API namespace
+await cache.set("api:/products", { items: [1, 2, 3] });
+
+console.log("All cached:");
+cache.getLayerInfo()[0].keys.forEach(k => console.log(\`  \${k}\`));
+
+console.log("\\nStats:", JSON.stringify(cache.getStats()));`,
+  },
+  {
+    id: "stampede",
+    title: "Stampede Prevention",
+    description: "Concurrent request deduplication",
+    code: `// Simulating stampede prevention
+const { cache } = createPlaygroundCache();
+let fetchCount = 0;
+
+async function fetchData(key) {
+  return cache.get(key, async () => {
+    fetchCount++;
+    console.log(\`Fetcher #\${fetchCount} called for "\${key}"\`);
+    // Simulate slow fetch
+    await new Promise(r => setTimeout(r, 100));
+    return { data: \`Result for \${key}\`, fetchedAt: Date.now() };
+  }, 60);
+}
+
+// Fire 5 concurrent requests for the same key
+console.log("Firing 5 concurrent requests...");
+const results = await Promise.all([
+  fetchData("hot:key"),
+  fetchData("hot:key"),
+  fetchData("hot:key"),
+  fetchData("hot:key"),
+  fetchData("hot:key"),
+]);
+
+console.log("\\nAll results identical:", results.every(r => JSON.stringify(r) === JSON.stringify(results[0])));
+console.log("Fetcher called:", fetchCount, "time(s)");
+console.log("Stats:", JSON.stringify(cache.getStats()));`,
+  },
+  {
+    id: "circuit-breaker",
+    title: "Circuit Breaker",
+    description: "Failure threshold and recovery",
+    code: `// Simulating circuit breaker behavior
+const { cache } = createPlaygroundCache();
+let attempts = 0;
+let successes = 0;
+
+console.log("Simulating failing fetcher...\\n");
+
+// Attempt multiple fetches - simulate failures
+for (let i = 0; i < 5; i++) {
+  attempts++;
+  try {
+    const result = await cache.get(\`key:\${i}\`, async () => {
+      if (i < 3) {
+        console.log(\`  Attempt \${i + 1}: Fetcher FAILED\`);
+        throw new Error("Database connection failed");
+      }
+      console.log(\`  Attempt \${i + 1}: Fetcher succeeded\`);
+      return { value: \`data-\${i}\` };
+    }, 30);
+    successes++;
+  } catch (e) {
+    console.log(\`  -> Error caught (attempt \${i + 1})\`);
+  }
+}
+
+console.log(\`\\nResults: \${successes}/\${attempts} successful\`);
+console.log("Stats:", JSON.stringify(cache.getStats()));`,
+  },
+  {
+    id: "write-behind",
+    title: "Write-Behind",
+    description: "Deferred writes with batch flush",
+    code: `// Simulating write-behind pattern
+const { cache } = createPlaygroundCache();
+const writeQueue = [];
+
+// Fast local write
+async function setLocal(key, value) {
+  await cache.set(key, value);
+  writeQueue.push({ key, value });
+  console.log(\`Queued write for "\${key}" (queue: \${writeQueue.length})\`);
+}
+
+// Batch flush to "remote" layers
+async function flushWrites() {
+  if (writeQueue.length === 0) return;
+  console.log(\`\\nFlushing \${writeQueue.length} writes to remote...\`);
+  const batch = [...writeQueue];
+  writeQueue.length = 0;
+
+  for (const entry of batch) {
+    console.log(\`  Flushed: \${entry.key}\`);
+  }
+  console.log(\`Flushed \${batch.length} entries\`);
+}
+
+// Simulate rapid writes
+await setLocal("user:1", { name: "Alice" });
+await setLocal("user:2", { name: "Bob" });
+await setLocal("user:3", { name: "Charlie" });
+
+console.log("\\nCache stats before flush:");
+console.log(JSON.stringify(cache.getStats()));
+
+await flushWrites();
+
+console.log("\\nFinal stats:", JSON.stringify(cache.getStats()));`,
+  },
+];

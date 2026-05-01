@@ -26,18 +26,29 @@ export interface LayerTtlMap {
   [layerName: string]: number | undefined
 }
 
-export interface CacheWriteOptions {
+export type CacheEntryWriteKind = 'value' | 'empty'
+
+export interface CacheEntryWriteOptions {
   tags?: string[]
   ttl?: number | LayerTtlMap
   ttlPolicy?: CacheTtlPolicy
-  negativeCache?: boolean
   negativeTtl?: number | LayerTtlMap
   staleWhileRevalidate?: number | LayerTtlMap
   staleIfError?: number | LayerTtlMap
   ttlJitter?: number | LayerTtlMap
+  adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
+}
+
+export interface CacheContextOptionsContext {
+  key: string
+  value: unknown
+  kind: CacheEntryWriteKind
+}
+
+export interface CacheWriteOptions extends CacheEntryWriteOptions {
+  negativeCache?: boolean
   slidingTtl?: boolean
   refreshAhead?: number | LayerTtlMap
-  adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
   circuitBreaker?: CacheCircuitBreakerOptions
   fetcherRateLimit?: CacheRateLimitOptions
   /**
@@ -49,13 +60,40 @@ export interface CacheWriteOptions {
    * cache.get('key', fetchData, { shouldCache: (v) => v.status === 200 })
    */
   shouldCache?: (value: unknown) => boolean
+  /**
+   * Optional resolver that can override cache entry options using the current
+   * write context. This runs right before a value is stored, so callers can
+   * derive TTLs or tags from the fetched value instead of guessing upfront.
+   *
+   * Returned values override any static entry options already present on the
+   * same object. Fetch controls like `shouldCache`, `negativeCache`,
+   * `refreshAhead`, or `circuitBreaker` are not affected.
+   *
+   * @example
+   * cache.get('oauth:token', fetchToken, {
+   *   ttl: 300_000,
+   *   contextOptions: ({ value }) => ({
+   *     ttl: Math.max(1, Math.floor(((value as { refreshExpiresIn: number }).refreshExpiresIn ?? 0) / 1_000))
+   *   })
+   * })
+   */
+  contextOptions?: (context: CacheContextOptionsContext) => CacheEntryWriteOptions | undefined
 }
 
 export interface CacheGetOptions extends CacheWriteOptions {}
 
+export interface CacheFetcherContext<T = unknown> {
+  key: string
+  currentValue: T | undefined
+  state: 'miss' | 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
+  layer?: string
+}
+
+export type CacheFetcher<T = unknown> = (context: CacheFetcherContext<T>) => Promise<T>
+
 export interface CacheMGetEntry<T> {
   key: string
-  fetch?: () => Promise<T>
+  fetch?: CacheFetcher<T>
   options?: CacheGetOptions
 }
 
@@ -185,7 +223,7 @@ export interface InvalidationMessage {
   scope: 'key' | 'keys' | 'clear'
   sourceId: string
   keys?: string[]
-  operation?: 'write' | 'delete' | 'invalidate' | 'clear'
+  operation?: 'write' | 'delete' | 'invalidate' | 'expire' | 'clear'
 }
 
 export interface InvalidationBus {
@@ -301,7 +339,7 @@ export interface CacheWriteBehindOptions {
 
 export interface CacheWarmEntry<T = unknown> {
   key: string
-  fetcher: () => Promise<T>
+  fetcher: CacheFetcher<T>
   options?: CacheGetOptions
   priority?: number
 }
@@ -380,6 +418,8 @@ export interface CacheStackEvents {
   set: { key: string; kind: string; tags?: string[] }
   /** Fired after one or more keys are deleted. */
   delete: { keys: string[] }
+  /** Fired after one or more keys are marked expired but retained. */
+  expire: { keys: string[] }
   /** Fired when a value is backfilled into a faster layer. */
   backfill: { key: string; layer: string }
   /** Fired when a stale value is returned to the caller. */

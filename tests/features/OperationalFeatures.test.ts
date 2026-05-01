@@ -639,6 +639,131 @@ describe('operational features', () => {
     await expect(cache.get('user:1')).resolves.toBeNull()
   })
 
+  it('supports context-aware entry options for fetched values', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await expect(
+      cache.get(
+        'oauth:token',
+        async () => ({
+          accessToken: 'a',
+          refreshTtlMs: 2_000,
+          tenant: 'acme'
+        }),
+        {
+          ttl: 60_000,
+          tags: ['fallback'],
+          contextOptions: ({ value }) => {
+            const token = value as { refreshTtlMs: number; tenant: string }
+            return {
+              ttl: token.refreshTtlMs,
+              tags: ['oauth', `tenant:${token.tenant}`]
+            }
+          }
+        }
+      )
+    ).resolves.toEqual({
+      accessToken: 'a',
+      refreshTtlMs: 2_000,
+      tenant: 'acme'
+    })
+
+    await expect(cache.inspect('oauth:token')).resolves.toEqual(
+      expect.objectContaining({
+        tags: ['oauth', 'tenant:acme'],
+        freshTtlMs: expect.any(Number)
+      })
+    )
+  })
+
+  it('supports context-aware entry options for direct set operations', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await cache.set(
+      'report:daily',
+      { scope: 'daily', expiresInMs: 1_000 },
+      {
+        ttl: 60_000,
+        contextOptions: ({ value }) => ({
+          ttl: (value as { expiresInMs: number }).expiresInMs
+        })
+      }
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(cache.get('report:daily')).resolves.toBeNull()
+  })
+
+  it('falls back to static entry options when context-aware overrides are omitted', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await cache.set(
+      'report:weekly',
+      { expiresInMs: 10_000 },
+      {
+        ttl: 1_000,
+        tags: ['reports'],
+        contextOptions: () => undefined
+      }
+    )
+
+    await expect(cache.inspect('report:weekly')).resolves.toEqual(
+      expect.objectContaining({
+        tags: ['reports'],
+        freshTtlMs: expect.any(Number)
+      })
+    )
+  })
+
+  it('surfaces invalid context-aware entry options clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await expect(
+      cache.get('broken:entry', async () => ({ ttl: -1 }), {
+        contextOptions: () => ({ ttl: -1 })
+      })
+    ).rejects.toThrow(/contextOptions\(\) returned invalid entry options/i)
+  })
+
+  it('surfaces context-aware resolver failures clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await expect(
+      cache.get('broken:resolver', async () => ({ ok: true }), {
+        contextOptions: () => {
+          throw new Error('resolver exploded')
+        }
+      })
+    ).rejects.toThrow(/contextOptions\(\) failed for key "broken:resolver"/i)
+  })
+
+  it('rejects non-object context-aware resolver results clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await expect(
+      cache.get('broken:primitive', async () => ({ ok: true }), {
+        contextOptions: () => 123 as never
+      })
+    ).rejects.toThrow(/must return a plain object or undefined/i)
+
+    await expect(
+      cache.get('broken:array', async () => ({ ok: true }), {
+        contextOptions: () => ['bad'] as never
+      })
+    ).rejects.toThrow(/must return a plain object or undefined/i)
+  })
+
+  it('rejects async context-aware resolvers clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await expect(
+      cache.get('broken:async', async () => ({ ok: true }), {
+        contextOptions: (async () => ({ ttl: 1 })) as never
+      })
+    ).rejects.toThrow(/async resolvers are not supported/i)
+  })
+
   it('does not negative-cache null fetch results unless explicitly enabled', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const fetcher = vi.fn(async () => null)
@@ -654,6 +779,9 @@ describe('operational features', () => {
 
     await expect(cache.get('')).rejects.toThrow(/must not be empty/i)
     await expect(cache.set('user:1', { id: 1 }, { negativeTtl: -1 })).rejects.toThrow(/non-negative finite/i)
+    await expect(cache.set('user:1', { id: 1 }, { contextOptions: 'nope' as never })).rejects.toThrow(
+      /contextOptions must be a function/i
+    )
   })
 
   it('validates conflicting constructor options eagerly', () => {

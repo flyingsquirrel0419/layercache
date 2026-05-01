@@ -151,7 +151,7 @@ const mem = await caching('memory', {
 })
 const red = await caching(redisStore, {
   url: 'redis://localhost:6379',
-  ttl: 300_000 * 1000       // ms
+  ttl: 300 * 1000       // ms
 })
 const cache = multiCaching([mem, red])
 
@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## 比較
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
-| スタンピード防止 | -- | -- | -- | **Yes** |
-| タグ無効化 | -- | Yes | Yes | **Yes** |
-| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
-| イベントフック | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | 部分 | **Yes** |
+| スタンピード防止 | -- | -- | -- | 部分 | **Yes** |
+| タグ無効化 | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript ファースト | 部分 | Yes | Yes | Yes | **Yes** |
+| イベントフック | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>全機能比較（19 項目、クリックで展開）</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
-| スタンピード防止 | -- | -- | -- | **Yes** |
-| 分散シングルフライト | -- | -- | -- | **Yes** |
-| タグ無効化 | -- | Yes | Yes | **Yes** |
-| 分散タグ | -- | -- | -- | **Yes** |
-| クロスサーバー L1 フラッシュ | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| サーキットブレーカー | -- | -- | -- | **Yes** |
-| グレースフルデグラデーション | -- | -- | -- | **Yes** |
-| スライディング / アダプティブ TTL | -- | -- | -- | **Yes** |
-| キャッシュウォーミング | -- | -- | -- | **Yes** |
-| スナップショット永続性 | -- | -- | -- | **Yes** |
-| 圧縮 | -- | -- | Yes | **Yes** |
-| 管理 CLI | -- | -- | -- | **Yes** |
-| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
-| Wrap / デコレーター API | Yes | -- | -- | **Yes** |
-| ネームスペース | -- | Yes | Yes | **Yes** |
-| イベントフック | Yes | Yes | Yes | **Yes** |
-| カスタムレイヤー | 部分 | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | 部分 | **Yes** |
+| スタンピード防止 | -- | -- | -- | 部分 | **Yes** |
+| 分散シングルフライト | -- | -- | -- | -- | **Yes** |
+| タグ無効化 | -- | Yes | Yes | Yes | **Yes** |
+| 分散タグ | -- | -- | -- | -- | **Yes** |
+| クロスサーバー L1 フラッシュ | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| サーキットブレーカー | -- | -- | -- | Yes | **Yes** |
+| グレースフルデグラデーション | -- | -- | -- | Yes | **Yes** |
+| スライディング / アダプティブ TTL | -- | -- | -- | -- | **Yes** |
+| キャッシュウォーミング | -- | -- | -- | -- | **Yes** |
+| スナップショット永続性 | -- | -- | -- | -- | **Yes** |
+| 圧縮 | -- | -- | Yes | -- | **Yes** |
+| 管理 CLI | -- | -- | -- | -- | **Yes** |
+| TypeScript ファースト | 部分 | Yes | Yes | Yes | **Yes** |
+| Wrap / デコレーター API | Yes | -- | -- | 部分 | **Yes** |
+| ネームスペース | -- | Yes | Yes | Yes | **Yes** |
+| イベントフック | Yes | Yes | Yes | Yes | **Yes** |
+| カスタムレイヤー | 部分 | -- | -- | Yes | **Yes** |
 
 </details>
 
@@ -258,6 +258,7 @@ const cache = new CacheStack([
 | **タグ無効化** | タグ一つで、全レイヤーの関連キーをまとめて削除 |
 | **バッチタグ無効化** | `any` / `all` セマンティクスで複数タグを一括処理 |
 | **ワイルドカード / プレフィックス無効化** | `user:*` のようなパターンマッチで範囲削除 |
+| **削除しない期限切れ化** | 値を消さずに stale として扱い、SWR で引き続き利用できる |
 | **ジェネレーションローテーション** | スキャンなしでネームスペースごと丸ごと切り替え |
 | **Stale-while-revalidate** | キャッシュ値を先に返して、バックグラウンドでこっそりリフレッシュ |
 | **Stale-if-error** | 上流が落ちたら期限切れデータでもとにかく返す |
@@ -265,6 +266,7 @@ const cache = new CacheStack([
 | **アダプティブ TTL** | 人気キーほど TTL が自動で伸びていく |
 | **Refresh-ahead** | 期限切れになる前に裏でリフレッシュしておく |
 | **TTL ポリシー** | 0 時ぴったり、n 時ぴったりなど、期限をカレンダー境界に合わせられる |
+| **コンテキスト対応エントリオプション** | 保存直前にキャッシュ値から TTL とタグを動的に導出する |
 
 ### レジリエンスと運用
 
@@ -286,7 +288,7 @@ const cache = new CacheStack([
 | **メトリクス** | ヒット、ミス、フェッチ、ステールヒット、サーキットブレーカートリップをすべて追跡 |
 | **レイヤー別レイテンシ** | Welford アルゴリズムで平均・最大・サンプル数を計測 |
 | **ヘルスチェック** | レイヤーごとの非同期ヘルスエンドポイント、レイテンシも測れる |
-| **イベントフック** | `hit`、`miss`、`set`、`delete`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
+| **イベントフック** | `hit`、`miss`、`set`、`delete`、`expire`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
 | **OpenTelemetry** | コードに手を入れず、イベントフックだけで分散トレーシングに接続 |
 | **Prometheus エクスポーター** | レイテンシゲージ付きでメトリクスをエクスポート |
 | **HTTP 統計ハンドラー** | ダッシュボードにそのまま使える JSON エンドポイント |

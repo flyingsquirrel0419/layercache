@@ -151,7 +151,7 @@ const mem = await caching('memory', {
 })
 const red = await caching(redisStore, {
   url: 'redis://localhost:6379',
-  ttl: 300_000 * 1000       // ms
+  ttl: 300 * 1000       // ms
 })
 const cache = multiCaching([mem, red])
 
@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## Comparison
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| Multi-layer + auto backfill | Partial | Plugin | -- | **Yes** |
-| Stampede prevention | -- | -- | -- | **Yes** |
-| Tag invalidation | -- | Yes | Yes | **Yes** |
-| TypeScript-first | Partial | Yes | Yes | **Yes** |
-| Event hooks | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Multi-layer + auto backfill | Partial | Plugin | -- | Partial | **Yes** |
+| Stampede prevention | -- | -- | -- | Partial | **Yes** |
+| Tag invalidation | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript-first | Partial | Yes | Yes | Yes | **Yes** |
+| Event hooks | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>Full comparison (19 features)</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| Multi-layer with auto backfill | Partial | Plugin | -- | **Yes** |
-| Stampede prevention | -- | -- | -- | **Yes** |
-| Distributed single-flight | -- | -- | -- | **Yes** |
-| Tag invalidation | -- | Yes | Yes | **Yes** |
-| Distributed tags | -- | -- | -- | **Yes** |
-| Cross-server L1 flush | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| Circuit breaker | -- | -- | -- | **Yes** |
-| Graceful degradation | -- | -- | -- | **Yes** |
-| Sliding / adaptive TTL | -- | -- | -- | **Yes** |
-| Cache warming | -- | -- | -- | **Yes** |
-| Persistence / snapshots | -- | -- | -- | **Yes** |
-| Compression | -- | -- | Yes | **Yes** |
-| Admin CLI | -- | -- | -- | **Yes** |
-| TypeScript-first | Partial | Yes | Yes | **Yes** |
-| Wrap / decorator API | Yes | -- | -- | **Yes** |
-| Namespaces | -- | Yes | Yes | **Yes** |
-| Event hooks | Yes | Yes | Yes | **Yes** |
-| Custom layers | Partial | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Multi-layer with auto backfill | Partial | Plugin | -- | Partial | **Yes** |
+| Stampede prevention | -- | -- | -- | Partial | **Yes** |
+| Distributed single-flight | -- | -- | -- | -- | **Yes** |
+| Tag invalidation | -- | Yes | Yes | Yes | **Yes** |
+| Distributed tags | -- | -- | -- | -- | **Yes** |
+| Cross-server L1 flush | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| Circuit breaker | -- | -- | -- | Yes | **Yes** |
+| Graceful degradation | -- | -- | -- | Yes | **Yes** |
+| Sliding / adaptive TTL | -- | -- | -- | -- | **Yes** |
+| Cache warming | -- | -- | -- | -- | **Yes** |
+| Persistence / snapshots | -- | -- | -- | -- | **Yes** |
+| Compression | -- | -- | Yes | -- | **Yes** |
+| Admin CLI | -- | -- | -- | -- | **Yes** |
+| TypeScript-first | Partial | Yes | Yes | Yes | **Yes** |
+| Wrap / decorator API | Yes | -- | -- | Partial | **Yes** |
+| Namespaces | -- | Yes | Yes | Yes | **Yes** |
+| Event hooks | Yes | Yes | Yes | Yes | **Yes** |
+| Custom layers | Partial | -- | -- | Yes | **Yes** |
 
 </details>
 
@@ -265,6 +265,7 @@ const cache = new CacheStack([
 | **Adaptive TTL** | Auto-ramp TTL for hot keys up to a ceiling |
 | **Refresh-ahead** | Proactively refresh before expiry |
 | **TTL policies** | Align expirations to calendar boundaries (`until-midnight`, `next-hour`, custom) |
+| **Context-aware entry options** | Derive TTLs and tags from the cached value right before storage |
 
 ### Resilience & Operations
 
@@ -286,7 +287,7 @@ const cache = new CacheStack([
 | **Metrics** | Hits, misses, fetches, stale hits, circuit breaker trips, and more |
 | **Per-layer latency** | Avg, max, and sample count using Welford's algorithm |
 | **Health checks** | Async health endpoint per layer with latency measurement |
-| **Event hooks** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
+| **Event hooks** | `hit`, `miss`, `set`, `delete`, `expire`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
 | **OpenTelemetry** | Hook-based distributed tracing support without method monkey-patching |
 | **Prometheus exporter** | Metrics export including latency gauges |
 | **HTTP stats handler** | JSON endpoint for dashboards |

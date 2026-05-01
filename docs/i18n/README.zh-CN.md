@@ -151,7 +151,7 @@ const mem = await caching('memory', {
 })
 const red = await caching(redisStore, {
   url: 'redis://localhost:6379',
-  ttl: 300_000 * 1000       // ms
+  ttl: 300 * 1000       // ms
 })
 const cache = multiCaching([mem, red])
 
@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## 横向对比
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
-| 缓存击穿保护 | -- | -- | -- | **Yes** |
-| 标签失效 | -- | Yes | Yes | **Yes** |
-| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
-| 事件钩子 | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自动回填多层缓存 | 部分 | 插件 | -- | 部分 | **Yes** |
+| 缓存击穿保护 | -- | -- | -- | 部分 | **Yes** |
+| 标签失效 | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript 优先 | 部分 | Yes | Yes | Yes | **Yes** |
+| 事件钩子 | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>完整对比（19 项功能，点击展开）</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
-| 缓存击穿保护 | -- | -- | -- | **Yes** |
-| 分布式单飞 | -- | -- | -- | **Yes** |
-| 标签失效 | -- | Yes | Yes | **Yes** |
-| 分布式标签 | -- | -- | -- | **Yes** |
-| 跨实例 L1 刷新 | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| 熔断器 | -- | -- | -- | **Yes** |
-| 优雅降级 | -- | -- | -- | **Yes** |
-| 滑动 / 自适应 TTL | -- | -- | -- | **Yes** |
-| 缓存预热 | -- | -- | -- | **Yes** |
-| 快照持久化 | -- | -- | -- | **Yes** |
-| 压缩 | -- | -- | Yes | **Yes** |
-| 管理 CLI | -- | -- | -- | **Yes** |
-| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
-| Wrap / 装饰器 API | Yes | -- | -- | **Yes** |
-| 命名空间 | -- | Yes | Yes | **Yes** |
-| 事件钩子 | Yes | Yes | Yes | **Yes** |
-| 自定义层 | 部分 | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自动回填多层缓存 | 部分 | 插件 | -- | 部分 | **Yes** |
+| 缓存击穿保护 | -- | -- | -- | 部分 | **Yes** |
+| 分布式单飞 | -- | -- | -- | -- | **Yes** |
+| 标签失效 | -- | Yes | Yes | Yes | **Yes** |
+| 分布式标签 | -- | -- | -- | -- | **Yes** |
+| 跨实例 L1 刷新 | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| 熔断器 | -- | -- | -- | Yes | **Yes** |
+| 优雅降级 | -- | -- | -- | Yes | **Yes** |
+| 滑动 / 自适应 TTL | -- | -- | -- | -- | **Yes** |
+| 缓存预热 | -- | -- | -- | -- | **Yes** |
+| 快照持久化 | -- | -- | -- | -- | **Yes** |
+| 压缩 | -- | -- | Yes | -- | **Yes** |
+| 管理 CLI | -- | -- | -- | -- | **Yes** |
+| TypeScript 优先 | 部分 | Yes | Yes | Yes | **Yes** |
+| Wrap / 装饰器 API | Yes | -- | -- | 部分 | **Yes** |
+| 命名空间 | -- | Yes | Yes | Yes | **Yes** |
+| 事件钩子 | Yes | Yes | Yes | Yes | **Yes** |
+| 自定义层 | 部分 | -- | -- | Yes | **Yes** |
 
 </details>
 
@@ -258,6 +258,7 @@ const cache = new CacheStack([
 | **标签失效** | 一个标签，所有层的关联 key 一起删 |
 | **批量标签失效** | `any` / `all` 语义，多标签一次搞定 |
 | **通配符 / 前缀失效** | `user:*` 这种模式匹配，批量删除 |
+| **不删除的过期标记** | 不删除缓存值，只把它标记为 stale，让 SWR 仍可使用 |
 | **代际轮换** | 不用扫描，整个命名空间直接换一代 |
 | **Stale-while-revalidate** | 先返回缓存值，后台默默刷新 |
 | **Stale-if-error** | 上游挂了？过期数据照样顶着用 |
@@ -265,6 +266,7 @@ const cache = new CacheStack([
 | **自适应 TTL** | 热点 key 的 TTL 自动往上涨，直到上限 |
 | **Refresh-ahead** | 还没过期就开始提前刷新 |
 | **TTL 策略** | 对齐到零点、整点，或者自定义日历边界 |
+| **上下文感知条目选项** | 在写入前从缓存值中动态派生 TTL 和标签 |
 
 ### 弹性与运维
 
@@ -286,7 +288,7 @@ const cache = new CacheStack([
 | **指标采集** | 命中、未命中、fetch、过期命中、熔断跳闸，全都有 |
 | **层级延迟统计** | Welford 算法算平均、最大值和采样数 |
 | **健康检查** | 每层一个异步健康端点，延迟也能量 |
-| **事件钩子** | `hit`、`miss`、`set`、`delete`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
+| **事件钩子** | `hit`、`miss`、`set`、`delete`、`expire`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
 | **OpenTelemetry** | 不改代码，通过事件钩子接入分布式追踪 |
 | **Prometheus 导出器** | 延迟指标也给你导出去 |
 | **HTTP 统计接口** | 给仪表盘用的 JSON 端点 |

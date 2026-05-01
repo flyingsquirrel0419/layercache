@@ -9,6 +9,9 @@ export type {
   CacheLayerSetManyEntry,
   CacheMetricsSnapshot,
   CacheRateLimitOptions,
+  CacheContextOptionsContext,
+  CacheEntryWriteKind,
+  CacheEntryWriteOptions,
   CacheTtlPolicy,
   CacheTtlPolicyContext,
   CacheWriteOptions

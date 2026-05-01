@@ -1,0 +1,593 @@
+---
+title: "Cache Layers"
+description: "Deep dive into cache layer implementations and configuration"
+---
+
+# Cache Layers
+
+layercache provides several built-in cache layer implementations, each optimized for different use cases. You can also create custom layers by implementing the `CacheLayer` interface.
+
+## Table of Contents
+
+- [MemoryLayer](#memorylayer)
+- [RedisLayer](#redislayer)
+- [DiskLayer](#disklayer)
+- [MemcachedLayer](#memcachedlayer)
+- [Custom Layers](#custom-layers)
+
+---
+
+## MemoryLayer
+
+In-process cache with configurable eviction policies. Perfect for L1 caching with sub-microsecond latency.
+
+### Features
+
+- **Eviction policies**: LRU (default), LFU, or FIFO
+- **Max size enforcement**: Automatically evicts when limit reached
+- **TTL support**: Per-entry expiration with optional cleanup interval
+- **Snapshot support**: Export/import state for persistence
+- **Zero dependencies**: Pure in-memory storage
+
+### Configuration
+
+```ts
+import { MemoryLayer } from 'layercache'
+
+const memoryLayer = new MemoryLayer({
+  ttl: 60_000,                      // Default TTL in milliseconds
+  maxSize: 5_000,               // Maximum number of entries
+  name: 'memory',               // Layer name for metrics
+  evictionPolicy: 'lru',        // 'lru' | 'lfu' | 'fifo'
+  cleanupIntervalMs: 60_000,    // Expired entry cleanup interval
+  onEvict: (key, value) => {    // Optional eviction callback
+    console.log(`Evicted: ${key}`)
+  }
+})
+```
+
+### Eviction Policies
+
+#### LRU (Least Recently Used) - Default
+
+Evicts entries that haven't been accessed for the longest time. Best for general-purpose caching.
+
+```ts
+new MemoryLayer({
+  evictionPolicy: 'lru',
+  maxSize: 1_000
+})
+```
+
+#### LFU (Least Frequently Used)
+
+Evicts entries with the lowest access count. Best for workloads with hot spots.
+
+```ts
+new MemoryLayer({
+  evictionPolicy: 'lfu',
+  maxSize: 1_000
+})
+```
+
+#### FIFO (First In, First Out)
+
+Evicts the oldest entries regardless of access pattern. Best for time-series data.
+
+```ts
+new MemoryLayer({
+  evictionPolicy: 'fifo',
+  maxSize: 1_000
+})
+```
+
+### State Persistence
+
+```ts
+// Export current state
+const snapshot = memoryLayer.exportState()
+// [{ key: 'user:123', value: {...}, expiresAt: 1712847652000 }, ...]
+
+// Import state (e.g., after process restart)
+memoryLayer.importState(snapshot)
+```
+
+### Cleanup Interval
+
+MemoryLayer periodically scans for expired entries to free memory.
+
+```ts
+new MemoryLayer({
+  ttl: 300_000,
+  cleanupIntervalMs: 30_000  // Cleanup every 30 seconds
+})
+```
+
+Set to `0` or omit to disable periodic cleanup (entries still expire on access).
+
+---
+
+## RedisLayer
+
+Distributed caching layer backed by Redis with compression, serialization, and pipeline optimizations.
+
+### Features
+
+- **Shared state**: Multiple processes/servers share the same cache
+- **Compression**: gzip or brotli compression with configurable threshold
+- **Serializer chain**: Try multiple deserializers for smooth migrations
+- **Pipeline batch ops**: Fast multi-key reads/writes
+- **Scan-based operations**: Efficient keys/clear without blocking
+- **Prefix support**: Isolate different applications in the same Redis instance
+
+### Configuration
+
+```ts
+import { RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+const redisLayer = new RedisLayer({
+  client: new Redis(),           // ioredis client instance
+  ttl: 300_000,                      // Default TTL in milliseconds
+  prefix: 'myapp:cache:',        // Key prefix for namespacing
+  compression: 'gzip',           // 'gzip' | 'brotli' | undefined
+  compressionThreshold: 1_024,   // Min bytes to compress (default: 1024)
+  decompressionMaxBytes: 64 * 1_024 * 1_024,  // Max decompressed size
+  serializer: new MsgpackSerializer(),  // Custom serializer
+  name: 'redis',                 // Layer name for metrics
+  allowUnprefixedClear: false,   // Require prefix for clear()
+  scanCount: 100,                // SCAN COUNT batch size
+  disconnectOnDispose: false     // Disconnect client on dispose
+})
+```
+
+### Compression
+
+Reduce Redis memory usage for large values:
+
+```ts
+// Gzip compression (faster, moderate compression)
+new RedisLayer({
+  client: redis,
+  compression: 'gzip',
+  compressionThreshold: 1_024  // Only compress >1KB values
+})
+
+// Brotli compression (slower, better compression)
+new RedisLayer({
+  client: redis,
+  compression: 'brotli',
+  compressionThreshold: 512
+})
+```
+
+### Serialization Chain
+
+Support smooth data format migrations by trying multiple deserializers:
+
+```ts
+import { JsonSerializer, MsgpackSerializer } from 'layercache'
+
+new RedisLayer({
+  client: redis,
+  serializer: [
+    new MsgpackSerializer(),  // Try MessagePack first
+    new JsonSerializer()      // Fall back to JSON
+  ]
+})
+
+// On write: always use first serializer (MessagePack)
+// On read: try each serializer until one succeeds
+// Successful reads auto-migrate to primary format
+```
+
+### Key Prefixing
+
+Isolate different applications or environments:
+
+```ts
+const productionCache = new RedisLayer({
+  client: redis,
+  prefix: 'prod:cache:'
+})
+
+const stagingCache = new RedisLayer({
+  client: redis,
+  prefix: 'staging:cache:'
+})
+```
+
+### Clear Behavior
+
+`clear()` requires a prefix by default to prevent accidental data loss:
+
+```ts
+const layer = new RedisLayer({
+  client: redis,
+  prefix: 'myapp:cache:',
+  allowUnprefixedClear: false  // Default
+})
+
+await layer.clear()  // OK - deletes "myapp:cache:*" only
+
+const unsafeLayer = new RedisLayer({
+  client: redis,
+  prefix: '',
+  allowUnprefixedClear: true  // Explicitly allow dangerous clear
+})
+
+await unsafeLayer.clear()  // DELETES EVERYTHING IN REDIS
+```
+
+### Pipeline Operations
+
+RedisLayer uses ioredis pipelines for efficient bulk operations:
+
+```ts
+// getMany() uses pipeline()
+const values = await redisLayer.getMany(['key1', 'key2', 'key3'])
+
+// setMany() uses pipeline()
+await redisLayer.setMany([
+  { key: 'key1', value: data1, ttl: 60_000 },
+  { key: 'key2', value: data2, ttl: 60_000 }
+])
+
+// deleteMany() uses pipeline()
+await redisLayer.deleteMany(['key1', 'key2', 'key3'])
+```
+
+---
+
+## DiskLayer
+
+Persistent file-based cache with atomic writes and LRU eviction. Perfect for caching across restarts without Redis.
+
+### Features
+
+- **Persistent storage**: Survives process restarts
+- **Atomic writes**: Uses temp file + rename for crash safety
+- **SHA-256 hashed filenames**: Safe for any cache key
+- **Max files enforcement**: LRU eviction when limit exceeded
+- **Size limits**: Configurable max entry size
+- **Concurrent operations**: Safe for multi-process access
+
+### Configuration
+
+```ts
+import { DiskLayer } from 'layercache'
+import { resolve } from 'node:path'
+
+const diskLayer = new DiskLayer({
+  directory: resolve('./var/cache/layercache'),  // Cache directory
+  ttl: 3_600_000,                                     // Default TTL in milliseconds
+  name: 'disk',                                  // Layer name for metrics
+  maxFiles: 50_000,                              // Maximum cache files (default: 50,000)
+  maxEntryBytes: 16 * 1_024 * 1_024,             // Max 16MiB per entry
+  serializer: new JsonSerializer(),               // Optional custom serializer
+  encryptionKey: process.env.CACHE_ENCRYPTION_KEY, // Optional AES-256-GCM encryption
+  signingKey: process.env.CACHE_SIGNING_KEY        // Optional HMAC-SHA256 signing
+})
+```
+
+### At-Rest Protection
+
+DiskLayer supports optional at-rest protection for cached data using AES-256-GCM encryption or HMAC-SHA256 signing:
+
+```ts
+// Full encryption (recommended)
+new DiskLayer({
+  directory: './cache',
+  encryptionKey: process.env.CACHE_ENCRYPTION_KEY  // AES-256-GCM
+})
+
+// Signing only (integrity verification without encryption)
+new DiskLayer({
+  directory: './cache',
+  signingKey: process.env.CACHE_SIGNING_KEY  // HMAC-SHA256
+})
+
+// Both — signingKey is ignored when encryptionKey is provided
+// (encryption already provides authenticated integrity)
+new DiskLayer({
+  directory: './cache',
+  encryptionKey: process.env.CACHE_ENCRYPTION_KEY,
+  signingKey: process.env.CACHE_SIGNING_KEY
+})
+```
+
+### File Storage
+
+Each cache entry is stored as a separate file:
+
+```ts
+// Cache key -> SHA-256 hash
+'user:123:profile' -> 'a1b2c3d4...lf'
+
+// File contents (JSON)
+{
+  "key": "user:123:profile",
+  "value": { "name": "Alice", ... },
+  "expiresAt": 1712847652000
+}
+```
+
+### Atomic Writes
+
+DiskLayer uses temp file + rename for crash-safe writes:
+
+```ts
+// Write to temp file first
+await fs.writeFile('cache/a1b2...lf.tmp.12345.67890.tmp', data)
+
+// Atomic rename (fails if target exists)
+await fs.rename('cache/a1b2...lf.tmp.12345.67890.tmp', 'cache/a1b2...lf')
+```
+
+If the process crashes mid-write, the temp file is cleaned up on next access.
+
+### Max Files Enforcement
+
+When `maxFiles` is exceeded, oldest files (by mtime) are evicted:
+
+```ts
+new DiskLayer({
+  directory: './cache',
+  maxFiles: 10_000  // Keep only 10k most recent entries
+})
+```
+
+### Size Limits
+
+Prevent disk space exhaustion with entry size limits:
+
+```ts
+new DiskLayer({
+  directory: './cache',
+  maxEntryBytes: 16 * 1_024 * 1_024  // Reject entries >16MiB
+})
+
+// Disable size limit
+new DiskLayer({
+  directory: './cache',
+  maxEntryBytes: false
+})
+```
+
+Oversized entries are treated as corrupted and deleted.
+
+---
+
+## MemcachedLayer
+
+Memcached-backed cache layer with key validation and pluggable serializers.
+
+### Features
+
+- **Binary protocol**: Compatible with `memjs` and `memcache-client`
+- **Key validation**: Enforces 250-byte key limit
+- **Pluggable serializers**: JSON default, MessagePack supported
+- **Bulk operations**: getMany, deleteMany support
+
+### Configuration
+
+```ts
+import { MemcachedLayer } from 'layercache'
+import Memjs from 'memjs'
+
+const memcached = Memjs.Client.create('localhost:11211')
+
+const memcachedLayer = new MemcachedLayer({
+  client: memcached,          // Memcached client (memjs or memcache-client)
+  ttl: 300_000,                   // Default TTL in milliseconds
+  name: 'memcached',          // Layer name for metrics
+  keyPrefix: 'myapp:',        // Optional key prefix
+  serializer: new JsonSerializer()  // Optional custom serializer
+})
+```
+
+### Key Limit Validation
+
+Memcached enforces a 250-byte key limit. MemcachedLayer validates keys before sending:
+
+```ts
+// This throws: key exceeds 250 bytes
+await cache.set('a'.repeat(251), value)
+
+// This throws: key contains invalid characters
+await cache.set('key with spaces', value)
+```
+
+Use a short `keyPrefix` to reserve space for dynamic keys:
+
+```ts
+const layer = new MemcachedLayer({
+  client: memcached,
+  keyPrefix: 'app1:'  // Uses 5 bytes, leaves 245 for dynamic keys
+})
+```
+
+### Clear Not Supported
+
+Memcached doesn't support pattern-based deletion. Use key prefix rotation instead:
+
+```ts
+// DON'T do this - throws
+await memcachedLayer.clear()
+
+// DO this instead - rotate prefix
+const cache = new CacheStack([
+  new MemcachedLayer({ client: memcached, keyPrefix: 'v1:' })
+])
+
+// To invalidate all keys, deploy with new prefix
+const cache2 = new CacheStack([
+  new MemcachedLayer({ client: memcached, keyPrefix: 'v2:' })
+])
+```
+
+---
+
+## Custom Layers
+
+Implement the `CacheLayer` interface to create custom cache backends.
+
+### Interface
+
+```ts
+interface CacheLayer {
+  readonly name: string
+  readonly defaultTtl?: number
+  readonly isLocal?: boolean
+
+  // Required methods
+  get<T>(key: string): Promise<T | null>
+  set(key: string, value: unknown, ttl?: number): Promise<void>
+  delete(key: string): Promise<void>
+  clear(): Promise<void>
+
+  // Optional optimizations
+  getEntry?<T>(key: string): Promise<T | null>
+  getMany?<T>(keys: string[]): Promise<Array<T | null>>
+  setMany?(entries: Array<{ key: string; value: unknown; ttl?: number }>): Promise<void>
+  deleteMany?(keys: string[]): Promise<void>
+  keys?(): Promise<string[]>
+  forEachKey?(visitor: (key: string) => void | Promise<void>): Promise<void>
+  has?(key: string): Promise<boolean>
+  ttl?(key: string): Promise<number | null>
+  size?(): Promise<number>
+  ping?(): Promise<boolean>
+  dispose?(): Promise<void>
+}
+```
+
+### Example: Cloudflare KV Layer
+
+```ts
+interface KVLayerOptions {
+  namespace: KVNamespace
+  ttl?: number
+  name?: string
+}
+
+class KVLayer implements CacheLayer {
+  readonly name: string
+  readonly defaultTtl?: number
+  readonly isLocal = false
+
+  constructor(private options: KVLayerOptions) {
+    this.name = options.name ?? 'kv'
+    this.defaultTtl = options.ttl
+  }
+
+  async get<T>(key: string): Promise<T | null> {
+    const value = await this.options.namespace.get(key, 'json')
+    return value as T | null
+  }
+
+  async set(key: string, value: unknown, ttl?: number): Promise<void> {
+    await this.options.namespace.put(key, JSON.stringify(value), {
+      expirationTtl: ttl ?? this.defaultTtl
+    })
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.options.namespace.delete(key)
+  }
+
+  async clear(): Promise<void> {
+    // KV doesn't support clear - implement key listing if needed
+    throw new Error('KVLayer.clear() is not supported')
+  }
+
+  // Optional optimizations
+  async getMany<T>(keys: string[]): Promise<Array<T | null>> {
+    return Promise.all(keys.map(key => this.get<T>(key)))
+  }
+
+  async deleteMany(keys: string[]): Promise<void> {
+    await Promise.all(keys.map(key => this.delete(key)))
+  }
+}
+```
+
+### Example: S3 Layer
+
+```ts
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+
+class S3Layer implements CacheLayer {
+  readonly name = 's3'
+  readonly defaultTtl?: number
+  readonly isLocal = false
+
+  constructor(
+    private s3: S3Client,
+    private bucket: string,
+    private prefix: string
+  ) {}
+
+  async get<T>(key: string): Promise<T | null> {
+    try {
+      const response = await this.s3.send(new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: `${this.prefix}${key}`
+      }))
+      const body = await response.Body.transformToString()
+      return JSON.parse(body) as T
+    } catch {
+      return null
+    }
+  }
+
+  async set(key: string, value: unknown, ttl?: number): Promise<void> {
+    await this.s3.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: `${this.prefix}${key}`,
+      Body: JSON.stringify(value),
+      Expires: ttl ? new Date(Date.now() + ttl * 1000) : undefined
+    }))
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.s3.send(new DeleteObjectCommand({
+      Bucket: this.bucket,
+      Key: `${this.prefix}${key}`
+    }))
+  }
+
+  async clear(): Promise<void> {
+    // S3 doesn't support clear - use lifecycle rules or prefix rotation
+    throw new Error('S3Layer.clear() is not supported')
+  }
+}
+```
+
+### Best Practices
+
+1. **Implement optional methods**: `getMany`, `setMany`, `deleteMany` provide significant performance improvements
+
+2. **Return correct TTL**: If your backend supports TTL, implement the `ttl()` method
+
+3. **Handle errors gracefully**: Return `null` on network errors instead of throwing
+
+4. **Use `getEntry` for metadata**: If your backend stores metadata (e.g., creation time), implement `getEntry` to support stale-while-revalidate
+
+5. **Set `isLocal` correctly**: This affects distributed invalidation behavior
+
+6. **Implement `dispose`**: Clean up resources (connections, timers) when the layer is no longer needed
+
+```ts
+class MyLayer implements CacheLayer {
+  readonly name = 'custom'
+  readonly defaultTtl = 300
+  readonly isLocal = true  // Set based on your backend
+
+  // Implement all required methods...
+
+  async dispose(): Promise<void> {
+    // Clean up connections, timers, etc.
+    await this.connection.close()
+  }
+}
+```

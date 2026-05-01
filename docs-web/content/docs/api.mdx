@@ -1,0 +1,907 @@
+---
+title: "API Reference"
+description: "Complete API documentation for layercache"
+---
+
+# API Reference
+
+Complete API documentation for layercache.
+
+## Table of Contents
+
+- [CacheStack](#cachestack)
+  - [Constructor](#constructor)
+  - [Read Operations](#read-operations)
+  - [Write Operations](#write-operations)
+  - [Invalidation](#invalidation)
+  - [Wrapping & Namespaces](#wrapping--namespaces)
+  - [Warming & Persistence](#warming--persistence)
+  - [Observability](#observability)
+  - [Generation Management](#generation-management)
+  - [Lifecycle](#lifecycle)
+- [Cache Layers](#cache-layers)
+  - [MemoryLayer](#memorylayer)
+  - [RedisLayer](#redislayer)
+  - [DiskLayer](#disklayer)
+  - [MemcachedLayer](#memcachedlayer)
+  - [Custom Layers](#custom-layers)
+- [Options Reference](#options-reference)
+  - [CacheStackOptions](#cachestackoptions)
+  - [Per-Operation Options](#per-operation-options)
+- [Invalidation Strategies](#invalidation-strategies)
+- [Freshness Strategies](#freshness-strategies)
+- [Resilience](#resilience)
+- [Compression & Serialization](#compression--serialization)
+- [Distributed Features](#distributed-features)
+- [Event Hooks](#event-hooks)
+- [Framework Integrations](#framework-integrations)
+- [Admin CLI](#admin-cli)
+
+---
+
+## CacheStack
+
+The main class that orchestrates reads, writes, and invalidation across multiple cache layers.
+
+### Constructor
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+
+const cache = new CacheStack(layers, options?)
+```
+
+**Parameters:**
+- `layers` - `CacheLayer[]` - Array of cache layers, ordered from fastest (L1) to slowest (Ln)
+- `options` - `CacheStackOptions` - Optional configuration (see [CacheStackOptions](#cachestackoptions))
+
+---
+
+### Read Operations
+
+#### `cache.get<T>(key, fetcher?, options?): Promise<T | null>`
+
+Reads through all layers in order. On a partial hit (found in L2 but not L1), backfills the upper layers automatically. On a full miss, runs the fetcher if provided.
+
+```ts
+// Without fetcher - returns null on miss
+const user = await cache.get<User>('user:123')
+
+// With fetcher - runs once on miss, fills all layers
+const user = await cache.get<User>('user:123', () => db.findUser(123))
+
+// With full options
+const user = await cache.get<User>('user:123', () => db.findUser(123), {
+  ttl: { memory: 30, redis: 600 },
+  tags: ['user', 'user:123'],
+  negativeCache: true,
+  negativeTtl: 15_000,
+  staleWhileRevalidate: 30_000,
+  staleIfError: 300_000,
+  ttlJitter: 5
+})
+```
+
+#### `cache.getOrThrow<T>(key, fetcher?, options?): Promise<T>`
+
+Like `get()`, but throws `CacheMissError` instead of returning `null`.
+
+```ts
+import { CacheMissError } from 'layercache'
+
+try {
+  const config = await cache.getOrThrow<Config>('app:config')
+} catch (err) {
+  if (err instanceof CacheMissError) {
+    console.error(`Missing key: ${err.key}`)
+  }
+}
+```
+
+#### `cache.mget<T>(entries): Promise<Array<T | null>>`
+
+Concurrent multi-key fetch. Uses layer-level `getMany()` fast paths when all entries are simple reads.
+
+```ts
+const [user1, user2] = await cache.mget([
+  { key: 'user:1', fetch: () => db.findUser(1) },
+  { key: 'user:2', fetch: () => db.findUser(2) },
+])
+```
+
+#### `cache.has(key): Promise<boolean>`
+
+Check if a key exists in any layer.
+
+#### `cache.ttl(key): Promise<number | null>`
+
+Get the remaining TTL in milliseconds for a key in the first layer that has it. Returns `null` if the key doesn't exist.
+
+#### `cache.inspect(key): Promise<CacheInspectResult | null>`
+
+Returns detailed metadata about a cache key for debugging.
+
+```ts
+const info = await cache.inspect('user:123')
+// {
+//   key: 'user:123',
+//   foundInLayers: ['memory', 'redis'],
+//   freshTtlMs: 45,
+//   staleTtlMs: 75,
+//   errorTtlMs: 345,
+//   isStale: false,
+//   tags: ['user', 'user:123']
+// }
+```
+
+---
+
+### Write Operations
+
+#### `cache.set<T>(key, value, options?): Promise<void>`
+
+Writes to all layers simultaneously.
+
+```ts
+await cache.set('user:123', user, {
+  ttl: { memory: 60_000, redis: 600_000 },
+  tags: ['user', 'user:123'],
+  staleWhileRevalidate: { redis: 30_000 },
+  staleIfError: { redis: 120_000 },
+  ttlJitter: { redis: 5_000 }
+})
+
+// Uniform TTL across all layers
+await cache.set('user:123', user, { ttl: 120_000, tags: ['user'] })
+```
+
+#### `cache.mset<T>(entries): Promise<void>`
+
+Concurrent multi-key write.
+
+#### `cache.delete(key): Promise<void>`
+
+Delete from all layers.
+
+#### `cache.mdelete(keys): Promise<void>`
+
+Bulk delete.
+
+#### `cache.clear(): Promise<void>`
+
+Delete all keys from all layers.
+
+---
+
+### Invalidation
+
+#### `cache.invalidateByTag(tag): Promise<void>`
+
+Deletes every key stored with this tag across all layers.
+
+```ts
+await cache.set('user:123',       user,  { tags: ['user:123'] })
+await cache.set('user:123:posts', posts, { tags: ['user:123'] })
+
+await cache.invalidateByTag('user:123') // both keys gone
+```
+
+#### `cache.invalidateByTags(tags, mode?): Promise<void>`
+
+Delete keys matching any or all of a set of tags.
+
+```ts
+await cache.invalidateByTags(['tenant:a', 'users'], 'all') // keys tagged with both
+await cache.invalidateByTags(['users', 'posts'], 'any')    // keys tagged with either
+```
+
+#### `cache.invalidateByPattern(pattern): Promise<void>`
+
+Glob-style deletion. Patterns must be non-empty, at most 1024 characters, and free of control characters.
+
+```ts
+await cache.invalidateByPattern('user:*')
+```
+
+#### `cache.invalidateByPrefix(prefix): Promise<void>`
+
+Hierarchical prefix-based invalidation. Prefer this over glob when keys are hierarchical.
+
+```ts
+await cache.invalidateByPrefix('user:123:') // deletes user:123:profile, user:123:posts, ...
+```
+
+---
+
+### Wrapping & Namespaces
+
+#### `cache.wrap(prefix, fetcher, options?)`
+
+Wraps an async function so every call is transparently cached. The key is derived from function arguments unless you supply a `keyResolver`.
+
+```ts
+const getUser = cache.wrap('user', (id: number) => db.findUser(id))
+const user = await getUser(123) // key -> "user:123"
+
+// Custom key resolver
+const getUser = cache.wrap(
+  'user',
+  (id: number) => db.findUser(id),
+  { keyResolver: (id) => String(id), ttl: 300_000 }
+)
+```
+
+#### `cache.namespace(prefix): CacheNamespace`
+
+Returns a scoped view with the same full API. `clear()` only touches `prefix:*` keys.
+
+```ts
+const users = cache.namespace('users')
+const posts = cache.namespace('posts')
+
+await users.set('123', userData)    // stored as "users:123"
+await users.clear()                 // only deletes "users:*"
+
+// Nested namespaces
+const tenant = cache.namespace('tenant:abc')
+const tenantPosts = tenant.namespace('posts')
+await tenantPosts.set('1', data)   // stored as "tenant:abc:posts:1"
+```
+
+Namespace prefixes must be non-empty, at most 256 characters, and free of control characters.
+
+---
+
+### Warming & Persistence
+
+#### `cache.warm(entries, options?)`
+
+Pre-populate layers at startup. Higher `priority` values run first.
+
+```ts
+await cache.warm(
+  [
+    { key: 'config',  fetcher: () => db.getConfig(),  priority: 10 },
+    { key: 'user:1',  fetcher: () => db.findUser(1),  priority: 5 },
+    { key: 'user:2',  fetcher: () => db.findUser(2),  priority: 5 },
+  ],
+  { concurrency: 4, continueOnError: true }
+)
+```
+
+#### `cache.exportState() / cache.importState(snapshot)`
+
+In-memory snapshot transfer.
+
+```ts
+const snapshot = await cache.exportState()
+await anotherCache.importState(snapshot)
+```
+
+#### `cache.persistToFile(path) / cache.restoreFromFile(path)`
+
+Disk-based snapshot persistence. Restricted to `process.cwd()` by default (configurable via `snapshotBaseDir`).
+
+```ts
+await cache.persistToFile('./cache-snapshot.json')
+await cache.restoreFromFile('./cache-snapshot.json')
+```
+
+---
+
+### Observability
+
+#### `cache.getMetrics(): CacheMetricsSnapshot`
+
+```ts
+const { hits, misses, fetches, staleHits, refreshes, writeFailures } = cache.getMetrics()
+```
+
+#### `cache.getStats(): CacheStatsSnapshot`
+
+Returns metrics, per-layer degradation state, and background refresh count.
+
+```ts
+const { metrics, layers, backgroundRefreshes } = cache.getStats()
+// layers: [{ name, isLocal, degradedUntil }]
+```
+
+#### `cache.getHitRate()`
+
+Computed hit rate overall and per-layer.
+
+#### `cache.healthCheck(): Promise<CacheHealthCheckResult[]>`
+
+```ts
+const health = await cache.healthCheck()
+// [{ layer: 'memory', healthy: true, latencyMs: 0.03 }, ...]
+```
+
+#### `cache.resetMetrics(): void`
+
+Resets all counters to zero.
+
+---
+
+### Generation Management
+
+Add a generation prefix to every key and rotate it for bulk invalidation without scanning.
+
+```ts
+const cache = new CacheStack([...], { generation: 1 })
+
+await cache.set('user:123', user)
+cache.bumpGeneration() // now reads use v2:user:123
+
+// Optional: auto-cleanup old generation keys
+const cache = new CacheStack([...], {
+  generation: 1,
+  generationCleanup: { batchSize: 500 }
+})
+```
+
+#### `cache.bumpGeneration()`
+
+Rotate cache namespace by incrementing generation.
+
+#### `cache.getGeneration()`
+
+Get current generation number.
+
+---
+
+### Lifecycle
+
+#### `cache.disconnect(): Promise<void>`
+
+Graceful shutdown (unsubscribes from invalidation bus, etc.).
+
+---
+
+## Cache Layers
+
+All layers implement the `CacheLayer` interface:
+
+```ts
+interface CacheLayer {
+  readonly name: string
+  readonly defaultTtl?: number
+  readonly isLocal?: boolean
+
+  get<T>(key: string): Promise<T | null>
+  getEntry?<T>(key: string): Promise<unknown | null>
+  getMany?<T>(keys: string[]): Promise<Array<unknown | null>>
+  set(key: string, value: unknown, ttl?: number): Promise<void>
+  setMany?(entries: Array<{ key: string; value: unknown; ttl?: number }>): Promise<void>
+  delete(key: string): Promise<void>
+  deleteMany?(keys: string[]): Promise<void>
+  clear(): Promise<void>
+  keys?(): Promise<string[]>
+  forEachKey?(visitor: (key: string) => void | Promise<void>): Promise<void>
+  has?(key: string): Promise<boolean>
+  ttl?(key: string): Promise<number | null>
+  size?(): Promise<number>
+  ping?(): Promise<boolean>
+  dispose?(): Promise<void>
+}
+```
+
+### MemoryLayer
+
+In-process LRU/LFU/FIFO eviction with configurable max size.
+
+```ts
+new MemoryLayer({
+  ttl: 60_000,
+  maxSize: 5_000,
+  name: 'memory'    // default
+})
+```
+
+### RedisLayer
+
+Distributed caching via ioredis with compression, serializers, and optional prefix.
+
+```ts
+new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  prefix: 'myapp:cache:',
+  compression: 'gzip',
+  compressionThreshold: 1_024,
+  serializer: new MsgpackSerializer(),
+  name: 'redis',
+  allowUnprefixedClear: false
+})
+```
+
+### DiskLayer
+
+Persistent file-based caching with atomic writes and optional at-rest protection.
+
+```ts
+import { resolve } from 'node:path'
+
+new DiskLayer({
+  directory: resolve('./var/cache/layercache'),
+  maxFiles: 50_000,
+  name: 'disk'
+})
+```
+
+#### At-Rest Protection
+
+DiskLayer supports AES-256-GCM encryption or HMAC-SHA256 signing to protect cached data on disk:
+
+```ts
+new DiskLayer({
+  directory: resolve('./var/cache/layercache'),
+  encryptionKey: process.env.CACHE_ENCRYPTION_KEY,  // AES-256-GCM encryption
+  signingKey: process.env.CACHE_SIGNING_KEY,         // HMAC-SHA256 signing (ignored if encryptionKey is set)
+  name: 'disk'
+})
+```
+
+Encryption also provides authenticated integrity — a separate `signingKey` is unnecessary when `encryptionKey` is provided.
+
+### MemcachedLayer
+
+Memcached support with pluggable serializers and bulk operations.
+
+```ts
+new MemcachedLayer({
+  client: memcachedClient,
+  ttl: 300_000,
+  name: 'memcached'
+})
+```
+
+### Custom Layers
+
+Implement `CacheLayer` to plug in any backend:
+
+```ts
+class MyCustomLayer implements CacheLayer {
+  readonly name = 'custom'
+  readonly defaultTtl = 300
+  readonly isLocal = false
+
+  async get<T>(key: string): Promise<T | null> { /* ... */ }
+  async set(key: string, value: unknown, ttl?: number): Promise<void> { /* ... */ }
+  async delete(key: string): Promise<void> { /* ... */ }
+  async clear(): Promise<void> { /* ... */ }
+}
+```
+
+---
+
+## Options Reference
+
+### CacheStackOptions
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `logger` | `Logger \| boolean` | `false` | Pluggable logger interface or boolean |
+| `metrics` | `boolean` | `true` | Enable/disable metrics collection |
+| `stampedePrevention` | `boolean` | `true` | In-process request deduplication |
+| `stampedeMaxInFlight` | `number` | - | Max concurrent in-flight deduplicated requests |
+| `stampedeEntryTimeoutMs` | `number` | - | Per-entry timeout for stampede guard |
+| `invalidationBus` | `RedisInvalidationBus` | - | Distributed L1 invalidation |
+| `tagIndex` | `TagIndex \| RedisTagIndex` | in-memory | Custom tag tracking |
+| `generation` | `number` | - | Generation prefix for bulk invalidation |
+| `generationCleanup` | `boolean \| { batchSize: number }` | - | Auto-prune stale generation keys |
+| `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
+| `negativeCaching` | `boolean` | `false` | Cache nulls globally |
+| `negativeTtl` | `number \| LayerTtlMap` | - | Global TTL for negative cache entries |
+| `staleWhileRevalidate` | `number \| LayerTtlMap` | - | Global stale-while-revalidate window (milliseconds) |
+| `staleIfError` | `number \| LayerTtlMap` | - | Global stale-if-error window (milliseconds) |
+| `ttlJitter` | `number \| LayerTtlMap` | - | Global TTL jitter (milliseconds) |
+| `refreshAhead` | `number \| LayerTtlMap` | - | Global refresh-ahead threshold (milliseconds) |
+| `adaptiveTtl` | `boolean \| AdaptiveTtlOptions` | - | Auto-ramp TTLs for hot keys |
+| `circuitBreaker` | `CircuitBreakerOptions` | - | Per-fetcher failure tracking |
+| `gracefulDegradation` | `boolean \| { retryAfterMs: number }` | - | Skip failed layers temporarily |
+| `writePolicy` | `'strict' \| 'best-effort'` | `'strict'` | Write failure behavior |
+| `writeStrategy` | `'write-through' \| 'write-behind'` | `'write-through'` | Write batching strategy |
+| `writeBehind` | `WriteBehindOptions` | - | Batch size, flush interval, max queue |
+| `fetcherRateLimit` | `RateLimitOptions` | - | Global rate limiting |
+| `backgroundRefreshTimeoutMs` | `number` | `30000` | Max time for stale refresh attempts |
+| `singleFlightCoordinator` | `RedisSingleFlightCoordinator` | - | Distributed deduplication |
+| `singleFlightLeaseMs` | `number` | `30000` | Distributed lock duration |
+| `singleFlightTimeoutMs` | `number` | `5000` | Wait timeout for distributed lock |
+| `singleFlightPollMs` | `number` | `50` | Polling interval |
+| `singleFlightRenewIntervalMs` | `number` | - | Lease renewal cadence |
+| `snapshotBaseDir` | `string \| false` | `process.cwd()` | Base directory for file snapshots |
+| `snapshotMaxBytes` | `number \| false` | - | Max snapshot file size |
+| `snapshotMaxEntries` | `number \| false` | - | Max entries in a snapshot |
+| `invalidationMaxKeys` | `number \| false` | - | Safety limit for invalidation scans |
+| `maxProfileEntries` | `number` | `100000` | Max size before pruning internal maps |
+
+### Per-Operation Options
+
+| Option | Type | Description |
+|---|---|---|
+| `tags` | `string[]` | Tags for tag-based invalidation |
+| `ttl` | `number \| LayerTtlMap` | TTL in milliseconds, or per-layer overrides |
+| `ttlPolicy` | `string \| object \| function` | `'until-midnight'`, `'next-hour'`, `{ alignTo }`, or custom |
+| `negativeCache` | `boolean` | Cache null results |
+| `negativeTtl` | `number` | Short TTL for misses |
+| `staleWhileRevalidate` | `number \| LayerTtlMap` | Return stale and refresh in background |
+| `staleIfError` | `number \| LayerTtlMap` | Keep serving stale if refresh fails |
+| `ttlJitter` | `number \| LayerTtlMap` | +/- random jitter on expiry |
+| `slidingTtl` | `boolean` | Reset TTL on every read |
+| `refreshAhead` | `number` | Trigger background refresh when TTL drops below threshold |
+| `adaptiveTtl` | `AdaptiveTtlOptions` | Auto-ramp TTL for hot keys |
+| `circuitBreaker` | `CircuitBreakerOptions` | Per-operation circuit breaker |
+| `fetcherRateLimit` | `RateLimitOptions` | Per-operation rate limiting |
+| `shouldCache` | `(value: T) => boolean` | Predicate to skip caching specific results |
+
+---
+
+## Invalidation Strategies
+
+### Tag Invalidation
+
+```ts
+await cache.set('user:123', user, { tags: ['user', 'user:123'] })
+await cache.invalidateByTag('user:123')
+```
+
+### Batch Tag Invalidation
+
+```ts
+await cache.invalidateByTags(['tenant:a', 'users'], 'all')
+await cache.invalidateByTags(['users', 'posts'], 'any')
+```
+
+### Wildcard Invalidation
+
+```ts
+await cache.invalidateByPattern('user:*')
+```
+
+### Prefix Invalidation
+
+```ts
+await cache.invalidateByPrefix('user:123:')
+```
+
+### Generation-Based Invalidation
+
+```ts
+cache.bumpGeneration() // instant bulk invalidation without scanning
+```
+
+---
+
+## Freshness Strategies
+
+### Stale-While-Revalidate
+
+```ts
+await cache.set('config', config, {
+  ttl: 60_000,
+  staleWhileRevalidate: 30_000,  // serve stale for 30s while refreshing
+  staleIfError: 300_000           // serve stale for 5min if refresh fails
+})
+```
+
+### Sliding TTL
+
+```ts
+await cache.get('session:abc', fetchSession, { slidingTtl: true })
+```
+
+### Adaptive TTL
+
+```ts
+await cache.get('popular-post', fetchPost, {
+  adaptiveTtl: { hotAfter: 5, step: 60_000, maxTtl: 3_600_000 }
+})
+```
+
+### Refresh-Ahead
+
+```ts
+await cache.get('leaderboard', fetchLeaderboard, {
+  ttl: 120_000,
+  refreshAhead: 30_000 // refresh when <= 30s remain
+})
+```
+
+### TTL Policies
+
+```ts
+await cache.set('daily-report', report, { ttlPolicy: 'until-midnight' })
+await cache.set('hourly-rollup', rollup, { ttlPolicy: 'next-hour' })
+await cache.set('aligned', value, { ttlPolicy: { alignTo: 300_000 } })
+await cache.set('custom', value, {
+  ttlPolicy: ({ key }) => key.startsWith('hot:') ? 30_000 : 300_000
+})
+```
+
+### Per-Layer TTL Overrides
+
+```ts
+await cache.set('session:abc', data, {
+  ttl: { memory: 30, redis: 3600 }
+})
+```
+
+### Conditional Caching
+
+```ts
+const data = await cache.get('api:response', fetchFromApi, {
+  shouldCache: (value) => (value as any).status === 200
+})
+```
+
+---
+
+## Resilience
+
+### Graceful Degradation
+
+```ts
+new CacheStack([...], {
+  gracefulDegradation: { retryAfterMs: 10_000 }
+})
+```
+
+### Circuit Breaker
+
+```ts
+new CacheStack([...], {
+  circuitBreaker: { failureThreshold: 5, cooldownMs: 30_000 }
+})
+
+// Per-operation
+await cache.get('fragile-key', fetch, {
+  circuitBreaker: { failureThreshold: 3, cooldownMs: 10_000 }
+})
+```
+
+### Write Policies
+
+```ts
+// Strict (default): fail if any layer fails
+new CacheStack([...], { writePolicy: 'strict' })
+
+// Best-effort: only fail if every layer fails
+new CacheStack([...], { writePolicy: 'best-effort' })
+```
+
+### Scoped Fetcher Rate Limiting
+
+```ts
+await cache.get('user:123', fetchUser, {
+  fetcherRateLimit: { maxConcurrent: 1, scope: 'key' }
+})
+```
+
+---
+
+## Compression & Serialization
+
+### Compression
+
+```ts
+new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  compression: 'gzip',         // or 'brotli'
+  compressionThreshold: 1_024  // skip compression for small values
+})
+```
+
+### MessagePack Serializer
+
+```ts
+import { MsgpackSerializer } from 'layercache'
+
+new RedisLayer({
+  client: redis,
+  ttl: 300_000,
+  serializer: new MsgpackSerializer()
+})
+```
+
+---
+
+## Distributed Features
+
+### Distributed Single-Flight
+
+```ts
+import { RedisSingleFlightCoordinator } from 'layercache'
+
+const coordinator = new RedisSingleFlightCoordinator({ client: redis })
+
+new CacheStack([...], {
+  singleFlightCoordinator: coordinator,
+  singleFlightLeaseMs: 30_000,
+  singleFlightRenewIntervalMs: 10_000,
+})
+```
+
+### Cross-Server L1 Invalidation
+
+```ts
+import { RedisInvalidationBus } from 'layercache'
+
+const bus = new RedisInvalidationBus({ publisher: redis, subscriber: new Redis() })
+
+new CacheStack([...], {
+  invalidationBus: bus,
+  broadcastL1Invalidation: true
+})
+```
+
+### Distributed Tag Index
+
+```ts
+import { RedisTagIndex } from 'layercache'
+
+const tagIndex = new RedisTagIndex({
+  client: redis,
+  prefix: 'myapp:tag-index',
+  knownKeysShards: 8
+})
+
+new CacheStack([...], { tagIndex })
+```
+
+---
+
+## Event Hooks
+
+`CacheStack` extends `EventEmitter`:
+
+| Event | Payload |
+|---|---|
+| `hit` | `{ key, layer }` |
+| `miss` | `{ key }` |
+| `set` | `{ key }` |
+| `delete` | `{ key }` |
+| `stale-serve` | `{ key, state, layer }` |
+| `stampede-dedupe` | `{ key }` |
+| `backfill` | `{ key, fromLayer, toLayer }` |
+| `warm` | `{ key }` |
+| `error` | `{ event, context }` |
+
+```ts
+cache.on('hit',   ({ key, layer }) => metrics.inc('cache.hit', { layer }))
+cache.on('miss',  ({ key })        => metrics.inc('cache.miss'))
+cache.on('error', ({ event, context }) => logger.error(event, context))
+```
+
+---
+
+## Framework Integrations
+
+### Express
+
+```ts
+import { createExpressCacheMiddleware } from 'layercache'
+
+app.get('/api/users', createExpressCacheMiddleware(cache, {
+  ttl: 30_000,
+  tags: ['users'],
+  keyResolver: (req) => `user:${req.url}`
+}), handler)
+```
+
+### Fastify
+
+```ts
+import { createFastifyLayercachePlugin } from 'layercache/integrations/fastify'
+
+await fastify.register(createFastifyLayercachePlugin(cache, {
+  statsPath: '/cache/stats'
+}))
+```
+
+### Hono
+
+```ts
+import { createHonoCacheMiddleware } from 'layercache/integrations/hono'
+
+app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60_000 }))
+```
+
+### tRPC
+
+```ts
+import { createTrpcCacheMiddleware } from 'layercache/integrations/trpc'
+
+const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60_000 })
+export const cachedProcedure = t.procedure.use(cacheMiddleware)
+```
+
+### GraphQL
+
+```ts
+import { cacheGraphqlResolver } from 'layercache/integrations/graphql'
+
+const resolvers = {
+  Query: {
+    user: cacheGraphqlResolver(cache, 'user', (_root, { id }) => db.findUser(id), {
+      keyResolver: (_root, { id }) => id,
+      ttl: 300_000
+    })
+  }
+}
+```
+
+### NestJS
+
+Use `CacheStack` directly in your NestJS modules:
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+@Module({
+  providers: [
+    {
+      provide: 'CACHE',
+      useFactory: () => new CacheStack([
+        new MemoryLayer({ ttl: 20 }),
+        new RedisLayer({ client: new Redis(), ttl: 300_000 })
+      ])
+    }
+  ],
+  exports: ['CACHE']
+})
+export class CacheModule {}
+```
+
+> **Note:** The separate `@cachestack/nestjs` package was removed in v1.3.2. Import directly from `layercache` instead.
+
+### OpenTelemetry
+
+```ts
+import { createOpenTelemetryPlugin } from 'layercache/integrations/opentelemetry'
+
+createOpenTelemetryPlugin(cache, tracer)
+```
+
+### Stats HTTP Handler
+
+```ts
+import { createCacheStatsHandler } from 'layercache'
+import http from 'node:http'
+
+const statsHandler = createCacheStatsHandler(cache)
+http.createServer(statsHandler).listen(9090)
+```
+
+---
+
+## Admin CLI
+
+Inspect and manage Redis-backed caches from the terminal.
+
+```bash
+npx layercache stats      --redis redis://localhost:6379
+npx layercache keys       --redis redis://localhost:6379 --pattern "user:*"
+npx layercache invalidate --redis redis://localhost:6379 --tag user:123
+npx layercache invalidate --redis redis://localhost:6379 --pattern "session:*"
+```
+
+---
+
+## Debug Logging
+
+```bash
+DEBUG=layercache:debug node server.js
+```
+
+Or pass a logger instance:
+
+```ts
+new CacheStack([...], {
+  logger: {
+    debug(message, context) { myLogger.debug(message, context) }
+  }
+})
+```

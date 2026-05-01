@@ -4,6 +4,7 @@ import { generationPrefix, stripGenerationPrefix } from '../../src/internal/Cach
 import { createStoredValueEnvelope } from '../../src/internal/StoredValue'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import type { CacheLayer } from '../../src/types'
+import type { CacheFetcher, CacheFetcherContext } from '../../src/types'
 
 function makeLayer(name: string, overrides: Partial<CacheLayer> = {}): CacheLayer {
   return {
@@ -413,6 +414,118 @@ describe('CacheStack internals', () => {
     ).resolves.toBeNull()
   })
 
+  it('expires layer entries through invalidation support edge cases', async () => {
+    const skippedGetEntry = vi.fn(async () => createStoredValueEnvelope({ kind: 'value', value: 'skip' }))
+    const skippedSet = vi.fn(async () => undefined)
+    const skippedLayer = makeLayer('skipped-expire', {
+      get: vi.fn(async () => {
+        throw new Error('degrade first')
+      }),
+      getEntry: skippedGetEntry,
+      set: skippedSet
+    })
+    const set = vi.fn(async () => undefined)
+    const layer = makeLayer('expire-layer', {
+      get: vi.fn(async (key: string) => (key === 'plain' ? 'plain-value' : null)),
+      getEntry: vi.fn(async (key: string) => {
+        if (key === 'missing') {
+          return null
+        }
+        if (key === 'plain') {
+          return 'plain-value'
+        }
+        if (key === 'boom') {
+          throw new Error('expire failed')
+        }
+        return createStoredValueEnvelope({
+          kind: 'value',
+          value: { id: 1 },
+          freshTtlMs: 60_000,
+          staleWhileRevalidateMs: 30_000
+        })
+      }),
+      set
+    })
+    const cache = new CacheStack([skippedLayer, layer], { gracefulDegradation: true })
+    const failures: unknown[] = []
+    cache.on('error', (event) => failures.push(event))
+
+    await expect(cache.has('prime:skip')).resolves.toBe(false)
+
+    await expect(
+      (
+        cache as {
+          invalidation: {
+            expireKeysInLayers: (layers: CacheLayer[], keys: string[]) => Promise<Set<string>>
+          }
+        }
+      ).invalidation.expireKeysInLayers([skippedLayer, layer], ['missing', 'plain', 'fresh', 'boom'])
+    ).resolves.toEqual(new Set(['plain', 'fresh']))
+
+    expect(skippedGetEntry).not.toHaveBeenCalled()
+    expect(skippedSet).not.toHaveBeenCalled()
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith(
+      'fresh',
+      expect.objectContaining({
+        __layercache: 1,
+        freshTtlMs: 60_000,
+        staleWhileRevalidateMs: 30_000
+      }),
+      expect.any(Number)
+    )
+    expect(failures).toContainEqual(expect.objectContaining({ layer: 'expire-layer', operation: 'expire' }))
+
+    await expect(
+      (
+        cache as {
+          expireKeysInLayers: (keys: string[], layers: CacheLayer[]) => Promise<Set<string>>
+        }
+      ).expireKeysInLayers([], [layer])
+    ).resolves.toEqual(new Set())
+  })
+
+  it('reports invalidation delete failures and get-fallback expire misses', async () => {
+    const deleteManyLayer = makeLayer('delete-many-fails', {
+      deleteMany: vi.fn(async () => {
+        throw new Error('bulk delete failed')
+      })
+    })
+    const deleteLayer = makeLayer('delete-fails', {
+      delete: vi.fn(async () => {
+        throw new Error('delete failed')
+      })
+    })
+    const getFallbackLayer = makeLayer('get-fallback-miss', {
+      get: vi.fn(async () => null)
+    })
+    const cache = new CacheStack([deleteManyLayer, deleteLayer, getFallbackLayer], { gracefulDegradation: true })
+    const failures: unknown[] = []
+    cache.on('error', (event) => failures.push(event))
+
+    await (
+      cache as {
+        invalidation: {
+          deleteKeysFromLayers: (layers: CacheLayer[], keys: string[]) => Promise<void>
+          expireKeysInLayers: (layers: CacheLayer[], keys: string[]) => Promise<Set<string>>
+        }
+      }
+    ).invalidation.deleteKeysFromLayers([deleteManyLayer, deleteLayer], ['user:1'])
+
+    await expect(
+      (
+        cache as {
+          invalidation: {
+            expireKeysInLayers: (layers: CacheLayer[], keys: string[]) => Promise<Set<string>>
+          }
+        }
+      ).invalidation.expireKeysInLayers([getFallbackLayer], ['missing'])
+    ).resolves.toEqual(new Set())
+
+    expect(failures).toContainEqual(expect.objectContaining({ layer: 'delete-many-fails', operation: 'delete' }))
+    expect(failures).toContainEqual(expect.objectContaining({ layer: 'delete-fails', operation: 'delete' }))
+  })
+
   it('covers background refresh, invalidation-message, write-behind, and timeout branches', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       writeStrategy: 'write-behind',
@@ -546,7 +659,14 @@ describe('CacheStack internals', () => {
     const policyCache = new CacheStack([makeLayer('policy', { set: vi.fn(async () => undefined) })])
     const scheduleSpy = vi
       .spyOn(
-        policyCache as object as { scheduleBackgroundRefresh: (key: string, fetcher: () => Promise<string>) => void },
+        policyCache as object as {
+          scheduleBackgroundRefresh: (
+            key: string,
+            fetcher: CacheFetcher<string>,
+            options?: unknown,
+            fetcherContext?: CacheFetcherContext<string>
+          ) => void
+        },
         'scheduleBackgroundRefresh'
       )
       .mockImplementation(() => undefined)
@@ -563,7 +683,7 @@ describe('CacheStack internals', () => {
             layerName: string
           },
           options: { refreshAhead?: number; slidingTtl?: boolean },
-          fetcher?: () => Promise<string>
+          fetcher?: CacheFetcher<string>
         ) => Promise<void>
       }
     ).applyFreshReadPolicies(
@@ -629,7 +749,7 @@ describe('CacheStack internals', () => {
             layerName: string
           },
           options: { refreshAhead?: number; slidingTtl?: boolean },
-          fetcher?: () => Promise<string>
+          fetcher?: CacheFetcher<string>
         ) => Promise<void>
       }
     ).applyFreshReadPolicies(
@@ -863,10 +983,15 @@ describe('CacheStack internals', () => {
     ).reader.runScheduleBackgroundRefresh = scheduleSpy
     ;(
       cache as unknown as {
-        scheduleBackgroundRefresh: (key: string, fetcher: () => Promise<string>, options?: unknown) => void
+        scheduleBackgroundRefresh: (
+          key: string,
+          fetcher: CacheFetcher<string>,
+          options?: unknown,
+          fetcherContext?: CacheFetcherContext<string>
+        ) => void
       }
     ).scheduleBackgroundRefresh('key1', async () => 'val', { ttl: 30_000 })
 
-    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30_000 })
+    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30_000 }, undefined)
   })
 })

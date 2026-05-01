@@ -1,0 +1,591 @@
+---
+title: "CLI Tool"
+description: "Inspect and manage Redis-backed caches from the command line"
+---
+
+Layercache provides a command-line interface for inspecting and managing Redis-backed caches. Use it to check statistics, list keys, inspect values, and invalidate data without writing code.
+
+## Installation
+
+### Global Install
+
+```bash
+npm install -g layercache
+```
+
+### Using npx
+
+No installation required:
+
+```bash
+npx layercache stats --redis redis://localhost:6379
+```
+
+## Commands
+
+### stats
+
+Display cache statistics with optional pattern filtering.
+
+#### Basic Usage
+
+```bash
+layercache stats --redis redis://localhost:6379
+```
+
+#### Response
+
+```json
+{
+  "totalKeys": 1234,
+  "pattern": "*"
+}
+```
+
+#### With Pattern Filter
+
+```bash
+layercache stats --redis redis://localhost:6379 --pattern "user:*"
+```
+
+#### Use Cases
+
+- Check cache size before deployment
+- Monitor key growth over time
+- Verify pattern-based key distribution
+
+### keys
+
+List all cached keys matching a pattern.
+
+#### Basic Usage
+
+```bash
+layercache keys --redis redis://localhost:6379
+```
+
+#### Output
+
+```
+user:1
+user:2
+user:3
+session:abc123
+config:app
+...
+```
+
+#### With Pattern Filter
+
+```bash
+layercache keys --redis redis://localhost:6379 --pattern "user:*"
+```
+
+#### Output
+
+```
+user:1
+user:2
+user:3
+...
+```
+
+#### Use Cases
+
+- Find all keys for a specific entity
+- Debug cache key patterns
+- Export key lists for analysis
+- Verify tag index contents
+
+### inspect
+
+Inspect a specific cache key to view metadata and value.
+
+#### Basic Usage
+
+```bash
+layercache inspect --redis redis://localhost:6379 --key "user:123"
+```
+
+#### Response
+
+```json
+{
+  "key": "user:123",
+  "exists": true,
+  "ttlMs": 245,
+  "sizeBytes": 1024,
+  "isEnvelope": true,
+  "state": "fresh",
+  "preview": {
+    "kind": "fresh",
+    "value": {
+      "id": 123,
+      "name": "John Doe",
+      "email": "john@example.com"
+    },
+    "freshUntil": 1712848000000,
+    "staleUntil": 1712848300000,
+    "errorUntil": 1712848900000
+  }
+}
+```
+
+#### Non-Existent Key
+
+```json
+{
+  "key": "user:999",
+  "exists": false,
+  "ttlMs": null,
+  "sizeBytes": 0,
+  "isEnvelope": false,
+  "state": null,
+  "preview": null
+}
+```
+
+#### Field Descriptions
+
+- **exists** - Whether the key exists in Redis
+- **ttlMs** - Remaining TTL in milliseconds (-1 if no expiry, -2 if key does not exist)
+- **sizeBytes** - Size of the stored value in bytes
+- **isEnvelope** - Whether the value is a Layercache envelope (vs raw)
+- **state** - Cache state: `fresh`, `stale`, or `error`
+- **preview** - Value preview with metadata
+
+#### Use Cases
+
+- Debug cache contents
+- Verify TTL configuration
+- Check value state (fresh/stale/error)
+- Inspect envelope metadata
+
+### invalidate
+
+Invalidate cached data by pattern or tag.
+
+#### By Pattern
+
+```bash
+layercache invalidate --redis redis://localhost:6379 --pattern "user:*"
+```
+
+#### Response
+
+```json
+{
+  "deletedKeys": 123,
+  "pattern": "user:*"
+}
+```
+
+#### By Tag
+
+```bash
+layercache invalidate --redis redis://localhost:6379 --tag "user:123"
+```
+
+#### Response
+
+```json
+{
+  "deletedKeys": 5,
+  "tag": "user:123"
+}
+```
+
+#### Safety Guard for Untargeted Invalidation
+
+Running `invalidate` without `--pattern` or `--tag` defaults to matching all keys (`*`). This now requires an explicit `--force` flag to prevent accidental cache wipes:
+
+```bash
+# This shows a warning and aborts
+layercache invalidate --redis redis://localhost:6379
+
+# Explicitly confirm full invalidation
+layercache invalidate --redis redis://localhost:6379 --force
+```
+
+#### Custom Tag Index Prefix
+
+```bash
+layercache invalidate \
+  --redis redis://localhost:6379 \
+  --tag "tenant:abc" \
+  --tag-index-prefix "myapp:tag-index"
+```
+
+#### Use Cases
+
+- Bulk invalidation after data updates
+- Clear user-specific caches on logout
+- Invalidate by entity type (e.g., all products)
+- Clear tenant-specific data
+
+## Options
+
+### Global Options
+
+#### `--redis &lt;url&gt;`
+
+Redis connection URL (required).
+
+```bash
+--redis redis://localhost:6379
+--redis redis://user:pass@localhost:6379/2
+--redis rediss://prod-redis.example.com:6380  # TLS
+```
+
+Supported formats:
+- `redis://[user:pass@]host[:port][/db]`
+- `rediss://[user:pass@]host[:port][/db]` (TLS)
+- `host:port` (simplified)
+- `host` (defaults to port 6379)
+
+### Command-Specific Options
+
+#### `--pattern &lt;glob&gt;`
+
+Glob pattern for filtering keys (used with `stats`, `keys`, `invalidate`).
+
+```bash
+# All user keys
+--pattern "user:*"
+
+# Specific user
+--pattern "user:123:*"
+
+# Multiple patterns
+--pattern "user:*"
+--pattern "session:*"
+```
+
+#### `--key &lt;key&gt;`
+
+Exact cache key to inspect (used with `inspect`).
+
+```bash
+--key "user:123"
+--key "config:app"
+```
+
+#### `--tag &lt;tag&gt;`
+
+Tag for invalidation (used with `invalidate`).
+
+```bash
+--tag "user:123"
+--tag "tenant:abc"
+```
+
+#### `--tag-index-prefix &lt;prefix&gt;`
+
+Redis key prefix for tag index (used with `invalidate`).
+
+```bash
+--tag-index-prefix "layercache:tag-index"
+--tag-index-prefix "myapp:cache:tags"
+```
+
+#### `--require-tls`
+
+Require TLS connection. Fails if the Redis URL uses `redis://` (plaintext) instead of `rediss://`.
+
+```bash
+layercache stats --redis redis://localhost:6379 --require-tls
+# Error: --require-tls is set but the URL uses redis:// (plaintext).
+```
+
+#### `--force`
+
+Bypass the safety guard for untargeted `invalidate` operations. Required when running `invalidate` without `--pattern` or `--tag`.
+
+```bash
+# Without --force: warns and aborts
+layercache invalidate --redis redis://localhost:6379
+
+# With --force: proceeds with full invalidation
+layercache invalidate --redis redis://localhost:6379 --force
+```
+
+## Usage Examples
+
+### Check Cache Health
+
+```bash
+# Total keys in cache
+layercache stats --redis redis://localhost:6379
+
+# Keys by pattern
+layercache stats --redis redis://localhost:6379 --pattern "user:*"
+layercache stats --redis redis://localhost:6379 --pattern "session:*"
+layercache stats --redis redis://localhost:6379 --pattern "config:*"
+```
+
+### Debug Cache Issues
+
+```bash
+# Inspect a specific key
+layercache inspect --redis redis://localhost:6379 --key "user:123"
+
+# Check if key exists and its TTL
+layercache inspect --redis redis://localhost:6379 --key "config:app"
+
+# View all keys for a user
+layercache keys --redis redis://localhost:6379 --pattern "user:123:*"
+```
+
+### Invalidate Data
+
+```bash
+# Invalidate all user caches
+layercache invalidate --redis redis://localhost:6379 --pattern "user:*"
+
+# Invalidate specific user
+layercache invalidate --redis redis://localhost:6379 --tag "user:123"
+
+# Invalidate all sessions
+layercache invalidate --redis redis://localhost:6379 --pattern "session:*"
+
+# Invalidate tenant data
+layercache invalidate --redis redis://localhost:6379 --tag "tenant:abc"
+```
+
+### Deployment Scripts
+
+```bash
+#!/bin/bash
+# deploy.sh - Clear caches before deployment
+
+REDIS_URL="redis://prod-redis.example.com:6379"
+
+# Check current state
+echo "Current cache size:"
+layercache stats --redis "$REDIS_URL"
+
+# Clear all application caches
+echo "Clearing application caches..."
+layercache invalidate --redis "$REDIS_URL" --pattern "app:*"
+
+# Verify cleared
+echo "After invalidation:"
+layercache stats --redis "$REDIS_URL" --pattern "app:*"
+```
+
+### Monitoring Scripts
+
+```bash
+#!/bin/bash
+# monitor-cache.sh - Monitor cache growth
+
+REDIS_URL="redis://localhost:6379"
+
+while true; do
+  echo "$(date): Total keys"
+  layercache stats --redis "$REDIS_URL"
+  echo "$(date): User keys"
+  layercache stats --redis "$REDIS_URL" --pattern "user:*"
+  echo "---"
+  sleep 300  # Every 5 minutes
+done
+```
+
+### Cron Jobs
+
+```bash
+# Clear expired sessions hourly
+0 * * * * layercache invalidate --redis redis://localhost:6379 --pattern "session:expired:*"
+
+# Invalidate stale configs daily
+0 3 * * * layercache invalidate --redis redis://localhost:6379 --pattern "config:daily:*"
+
+# Report cache size weekly
+0 9 * * 1 layercache stats --redis redis://localhost:6379 > /var/log/cache-size.log
+```
+
+## Error Handling
+
+### Connection Errors
+
+```bash
+# Invalid URL
+$ layercache stats --redis "invalid-url"
+Error: Failed to connect to Redis at invalid-url: connect ECONNREFUSED
+
+# Missing --redis flag
+$ layercache stats
+Error: --redis requires a value (e.g. redis://localhost:6379)
+```
+
+### Scan Limits
+
+The CLI stops scanning after 1,000,000 keys to prevent runaway scans:
+
+```bash
+$ layercache keys --redis redis://localhost:6379 --pattern "*"
+Warning: stopped scanning after 1000000 keys. Use a more specific --pattern to narrow results.
+```
+
+### Missing Keys
+
+```bash
+# Inspect non-existent key
+$ layercache inspect --redis redis://localhost:6379 --key "missing"
+{
+  "key": "missing",
+  "exists": false,
+  "ttlMs": null,
+  "sizeBytes": 0,
+  "isEnvelope": false,
+  "state": null,
+  "preview": null
+}
+```
+
+## Best Practices
+
+### 1. Use Specific Patterns
+
+Avoid scanning all keys:
+
+```bash
+# Bad - scans entire database
+layercache keys --redis redis://localhost:6379 --pattern "*"
+
+# Good - specific pattern
+layercache keys --redis redis://localhost:6379 --pattern "user:*"
+```
+
+### 2. Use Tag Invalidation
+
+Prefer tags over pattern matching:
+
+```bash
+# Slower - scans and deletes each key
+layercache invalidate --redis redis://localhost:6379 --pattern "user:123:*"
+
+# Faster - uses tag index
+layercache invalidate --redis redis://localhost:6379 --tag "user:123"
+```
+
+### 3. Verify Before Invalidating
+
+Check what will be invalidated:
+
+```bash
+# First, check what matches
+layercache stats --redis redis://localhost:6379 --pattern "user:*"
+
+# Then invalidate
+layercache invalidate --redis redis://localhost:6379 --pattern "user:*"
+```
+
+### 4. Use Connection Pooling
+
+For frequent CLI operations, use a connection pool or reuse connections in scripts.
+
+### 5. Set Timeouts
+
+For slow Redis instances, set connection timeouts:
+
+```bash
+# The CLI uses 5-second connect timeout
+# Adjust by modifying Redis client options in your scripts
+```
+
+## Integration with CI/CD
+
+### GitHub Actions
+
+```yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Clear caches
+        run: |
+          npx layercache invalidate \
+            --redis ${{ secrets.REDIS_URL }} \
+            --pattern "app:*"
+```
+
+### Docker
+
+```dockerfile
+FROM node:20-alpine
+
+RUN npm install -g layercache
+
+# Use in entrypoint script
+COPY entrypoint.sh /
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+```
+
+```bash
+#!/bin/bash
+# entrypoint.sh
+
+# Clear caches on startup
+layercache invalidate --redis "$REDIS_URL" --pattern "temp:*"
+
+# Start application
+exec node server.js
+```
+
+## Advanced Usage
+
+### Piping to Other Tools
+
+```bash
+# Count keys
+layercache keys --redis redis://localhost:6379 --pattern "user:*" | wc -l
+
+# Search for specific user
+layercache keys --redis redis://localhost:6379 | grep "user:123"
+
+# Export to file
+layercache keys --redis redis://localhost:6379 --pattern "user:*" > user-keys.txt
+
+# Analyze with jq
+layercache inspect --redis redis://localhost:6379 --key "user:123" | jq '.preview.value'
+```
+
+### Batch Operations
+
+```bash
+# Invalidate multiple tags
+for tag in user:123 user:456 user:789; do
+  layercache invalidate --redis redis://localhost:6379 --tag "$tag"
+done
+
+# Check multiple patterns
+for pattern in user:* session:* config:*; do
+  echo "Pattern: $pattern"
+  layercache stats --redis redis://localhost:6379 --pattern "$pattern"
+done
+```
+
+### Monitoring with Grafana
+
+Export stats to Prometheus via a cron job:
+
+```bash
+#!/bin/bash
+# Export to Prometheus pushgateway
+
+STATS=$(layercache stats --redis redis://localhost:6379 --pattern "user:*")
+cat <<EOF | curl --data-binary @- http://pushgateway:9091/metrics/job/layercache
+# HELP layercache_keys_total Total number of cache keys
+# TYPE layercache_keys_total gauge
+layercache_keys_total{pattern="user:*"} $(echo "$STATS" | jq -r '.totalKeys')
+EOF
+```

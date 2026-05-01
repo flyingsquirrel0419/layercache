@@ -196,6 +196,20 @@ export function refreshStoredEnvelope(stored: unknown, now = Date.now()): unknow
   })
 }
 
+export function expireStoredEnvelope(stored: unknown, now = Date.now()): unknown {
+  if (!isStoredValueEnvelope(stored)) {
+    return stored
+  }
+
+  const futureDeadlines = [stored.staleUntil, stored.errorUntil].filter((value): value is number => value !== null)
+  const freshUntil = futureDeadlines.length > 0 ? Math.min(now, ...futureDeadlines) : now
+
+  return {
+    ...stored,
+    freshUntil
+  }
+}
+
 function maxExpiry(stored: StoredValueEnvelope): number | null {
   const values = [stored.freshUntil, stored.staleUntil, stored.errorUntil].filter(
     (value): value is number => value !== null

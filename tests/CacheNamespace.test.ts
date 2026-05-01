@@ -132,6 +132,27 @@ describe('CacheNamespace', () => {
     await expect(tenantB.get('user:1')).resolves.toEqual({ id: 2 })
   })
 
+  it('expires only qualified namespace keys and tags', async () => {
+    const cache = makeCache()
+    const tenantA = cache.namespace('tenant-a')
+    const tenantB = cache.namespace('tenant-b')
+
+    await tenantA.set('user:1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['user'] })
+    await tenantB.set('user:1', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['user'] })
+
+    await tenantA.expireByTag('user')
+
+    await expect(tenantA.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(tenantB.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    await tenantA.set('posts:1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000 })
+    await tenantA.set('posts:2', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000 })
+    await tenantA.expireByPrefix('posts:')
+
+    await expect(tenantA.inspect('posts:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(tenantA.inspect('posts:2')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+  })
+
   it('strips namespace prefixes from inspect tags', async () => {
     const cache = makeCache()
     const ns = cache.namespace('tenant-a')
@@ -212,6 +233,22 @@ describe('CacheNamespace', () => {
 
     await posts.invalidateByPattern('*')
     await expect(posts.get('2')).resolves.toBeNull()
+  })
+
+  it('supports nested namespaces plus expireByTags and expireByPattern', async () => {
+    const cache = makeCache()
+    const tenant = cache.namespace('tenant')
+    const posts = tenant.namespace('posts')
+
+    await posts.set('1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['published', 'feed'] })
+    await posts.set('2', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['draft'] })
+
+    await posts.expireByTags(['published', 'feed'], 'all')
+    await expect(posts.inspect('1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(posts.inspect('2')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    await posts.expireByPattern('*')
+    await expect(posts.inspect('2')).resolves.toEqual(expect.objectContaining({ isStale: true }))
   })
 
   it('supports invalidateByPrefix, warm, and inspect misses', async () => {

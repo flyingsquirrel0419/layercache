@@ -74,9 +74,9 @@ const user = await cache.get<User>('user:123', () => db.findUser(123), {
   ttl: { memory: 30_000, redis: 600_000 },
   tags: ['user', 'user:123'],
   negativeCache: true,
-  negativeTtl: 15,
-  staleWhileRevalidate: 30,
-  staleIfError: 300,
+  negativeTtl: 15_000,
+  staleWhileRevalidate: 30_000,
+  staleIfError: 300_000,
   ttlJitter: 5_000
 })
 ```
@@ -125,9 +125,9 @@ const info = await cache.inspect('user:123')
 // {
 //   key: 'user:123',
 //   foundInLayers: ['memory', 'redis'],
-//   freshTtlSeconds: 45,
-//   staleTtlSeconds: 75,
-//   errorTtlSeconds: 345,
+//   freshTtlMs: 45,
+//   staleTtlMs: 75,
+//   errorTtlMs: 345,
 //   isStale: false,
 //   tags: ['user', 'user:123']
 // }
@@ -208,6 +208,45 @@ Hierarchical prefix-based invalidation. Prefer this over glob when keys are hier
 
 ```ts
 await cache.invalidateByPrefix('user:123:') // deletes user:123:profile, user:123:posts, ...
+```
+
+#### `cache.expireByTag(tag): Promise<void>`
+
+Marks every key stored with this tag as no longer fresh while keeping the cached value available for stale-while-revalidate / stale-if-error windows.
+
+```ts
+await cache.set('user:123', user, {
+  ttl: 60_000,
+  staleWhileRevalidate: 30_000,
+  tags: ['user:123']
+})
+
+await cache.expireByTag('user:123') // value remains, next read can serve stale and refresh
+```
+
+#### `cache.expireByTags(tags, mode?): Promise<void>`
+
+Expire keys matching any or all of a set of tags without deleting the stored values.
+
+```ts
+await cache.expireByTags(['tenant:a', 'users'], 'all')
+await cache.expireByTags(['users', 'posts'], 'any')
+```
+
+#### `cache.expireByPattern(pattern): Promise<void>`
+
+Glob-style expiration. Matching envelope-backed entries keep their stale windows; plain layer values that do not carry layercache freshness metadata are left unchanged.
+
+```ts
+await cache.expireByPattern('user:*')
+```
+
+#### `cache.expireByPrefix(prefix): Promise<void>`
+
+Hierarchical prefix-based expiration. Prefer this over glob when keys are hierarchical.
+
+```ts
+await cache.expireByPrefix('user:123:')
 ```
 
 ---
@@ -511,6 +550,7 @@ class MyCustomLayer implements CacheLayer {
 | `adaptiveTtl` | `AdaptiveTtlOptions` | Auto-ramp TTL for hot keys |
 | `circuitBreaker` | `CircuitBreakerOptions` | Per-operation circuit breaker |
 | `fetcherRateLimit` | `RateLimitOptions` | Per-operation rate limiting |
+| `contextOptions` | `(context) => CacheEntryWriteOptions` | Override stored entry TTLs/tags from `{ key, value, kind }` right before write |
 | `shouldCache` | `(value: T) => boolean` | Predicate to skip caching specific results |
 
 ---
@@ -543,6 +583,17 @@ await cache.invalidateByPattern('user:*')
 await cache.invalidateByPrefix('user:123:')
 ```
 
+### Expiration Without Deletion
+
+Use the `expireBy*` counterparts when stale serving is preferable to removing values immediately.
+
+```ts
+await cache.expireByTag('user:123')
+await cache.expireByTags(['tenant:a', 'users'], 'all')
+await cache.expireByPattern('user:*')
+await cache.expireByPrefix('user:123:')
+```
+
 ### Generation-Based Invalidation
 
 ```ts
@@ -558,8 +609,8 @@ cache.bumpGeneration() // instant bulk invalidation without scanning
 ```ts
 await cache.set('config', config, {
   ttl: 60_000,
-  staleWhileRevalidate: 30,  // serve stale for 30s while refreshing
-  staleIfError: 300           // serve stale for 5min if refresh fails
+  staleWhileRevalidate: 30_000,  // serve stale for 30s while refreshing
+  staleIfError: 300_000           // serve stale for 5min if refresh fails
 })
 ```
 
@@ -573,7 +624,7 @@ await cache.get('session:abc', fetchSession, { slidingTtl: true })
 
 ```ts
 await cache.get('popular-post', fetchPost, {
-  adaptiveTtl: { hotAfter: 5, step: 60, maxTtl: 3600 }
+  adaptiveTtl: { hotAfter: 5, step: 60_000, maxTtl: 3_600_000 }
 })
 ```
 
@@ -582,7 +633,7 @@ await cache.get('popular-post', fetchPost, {
 ```ts
 await cache.get('leaderboard', fetchLeaderboard, {
   ttl: 120_000,
-  refreshAhead: 30 // refresh when <= 30s remain
+  refreshAhead: 30_000 // refresh when <= 30s remain
 })
 ```
 
@@ -593,9 +644,29 @@ await cache.set('daily-report', report, { ttlPolicy: 'until-midnight' })
 await cache.set('hourly-rollup', rollup, { ttlPolicy: 'next-hour' })
 await cache.set('aligned', value, { ttlPolicy: { alignTo: 300_000 } })
 await cache.set('custom', value, {
-  ttlPolicy: ({ key }) => key.startsWith('hot:') ? 30 : 300
+  ttlPolicy: ({ key }) => key.startsWith('hot:') ? 30_000 : 300_000
 })
 ```
+
+### Context-Aware Entry Options
+
+```ts
+await cache.get('oauth:token', fetchToken, {
+  ttl: 300_000,
+  contextOptions: ({ value }) => {
+    const token = value as { refreshExpiresInMs: number; tenantId: string }
+    return {
+      ttl: Math.max(1, token.refreshExpiresInMs),
+      tags: ['oauth', `tenant:${token.tenantId}`]
+    }
+  }
+})
+```
+
+`contextOptions()` runs immediately before a cache write and overrides static
+entry settings on the same call. Use it for value-dependent `ttl`,
+`negativeTtl`, `staleWhileRevalidate`, `staleIfError`, `ttlJitter`,
+`adaptiveTtl`, or `tags`.
 
 ### Per-Layer TTL Overrides
 

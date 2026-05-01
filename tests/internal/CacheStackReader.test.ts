@@ -9,7 +9,7 @@ import { createStoredValueEnvelope } from '../../src/internal/StoredValue'
 import { TtlResolver } from '../../src/internal/TtlResolver'
 import { TagIndex } from '../../src/invalidation/TagIndex'
 import { StampedeGuard } from '../../src/stampede/StampedeGuard'
-import type { CacheGetOptions, CacheLayer } from '../../src/types'
+import type { CacheFetcherContext, CacheGetOptions, CacheLayer } from '../../src/types'
 
 // --- Mock helpers ---
 
@@ -366,6 +366,29 @@ describe('CacheStackReader', () => {
       expect(options.emit).toHaveBeenCalledWith('stale-serve', expect.objectContaining({ key: 'key:1' }))
     })
 
+    it('stale-while-revalidate passes stale fetcher context to background refresh', async () => {
+      const { reader, options } = createReader()
+      const stale = createStoredValueEnvelope({
+        kind: 'value',
+        value: 'stale-data',
+        freshTtlMs: 1_000,
+        staleWhileRevalidateMs: 60_000,
+        now: Date.now() - 2_000
+      })
+      options.layers = [createMockLayer('L0', { get: vi.fn(async () => stale) })]
+      const fetcher = vi.fn(async () => 'fresh-data')
+
+      await reader.getPrepared('key:1', fetcher)
+      await Promise.all(reader.getAllRefreshPromises())
+
+      expect(fetcher).toHaveBeenCalledWith({
+        key: 'key:1',
+        currentValue: 'stale-data',
+        state: 'stale-while-revalidate',
+        layer: 'L0'
+      })
+    })
+
     it('stale-while-revalidate without fetcher: returns value, no refresh', async () => {
       const { reader, options } = createReader()
       const stale = createStoredValueEnvelope({
@@ -391,13 +414,19 @@ describe('CacheStackReader', () => {
         staleIfErrorMs: 300_000,
         now: Date.now() - 2_000
       })
-      // staleWhileRevalidateSeconds also needed so that staleUntil < now but errorUntil > now
+      // staleWhileRevalidateMs also needed so that staleUntil < now but errorUntil > now
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => staleIfError) })]
       const fetcher = vi.fn(async () => 'new-value')
       options.storeEntry = vi.fn(async () => {})
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBe('new-value')
+      expect(fetcher).toHaveBeenCalledWith({
+        key: 'key:1',
+        currentValue: 'stale-for-error',
+        state: 'stale-if-error',
+        layer: 'L0'
+      })
     })
 
     it('stale-if-error with fetcher error: returns stale value, logs error', async () => {
@@ -442,6 +471,11 @@ describe('CacheStackReader', () => {
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBe('fetched')
       expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', 'fetched', undefined)
+      expect(fetcher).toHaveBeenCalledWith({
+        key: 'key:1',
+        currentValue: undefined,
+        state: 'miss'
+      })
     })
 
     it('increments misses metric on miss', async () => {
@@ -800,7 +834,12 @@ describe('CacheStackReader', () => {
         fetcher
       )
 
-      expect(options.scheduleBackgroundRefreshDispatch).toHaveBeenCalledWith('key:1', fetcher, undefined)
+      expect(options.scheduleBackgroundRefreshDispatch).toHaveBeenCalledWith('key:1', fetcher, undefined, {
+        key: 'key:1',
+        currentValue: 'ahead',
+        state: 'fresh',
+        layer: 'L0'
+      } satisfies CacheFetcherContext<string>)
     })
   })
 

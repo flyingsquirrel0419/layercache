@@ -1,6 +1,8 @@
 import type { StampedeGuard } from '../stampede/StampedeGuard'
 import type {
   CacheCircuitBreakerOptions,
+  CacheFetcher,
+  CacheFetcherContext,
   CacheGetOptions,
   CacheLayer,
   CacheLogger,
@@ -69,7 +71,12 @@ interface CacheStackReaderOptions {
   withTimeout: <T>(promise: Promise<T>, timeoutMs: number, createError: () => Error) => Promise<T>
   isDisconnecting: () => boolean
   isGracefulDegradationEnabled: () => boolean
-  scheduleBackgroundRefreshDispatch: <T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions) => void
+  scheduleBackgroundRefreshDispatch: <T>(
+    key: string,
+    fetcher: CacheFetcher<T>,
+    options?: CacheGetOptions,
+    fetcherContext?: CacheFetcherContext<T>
+  ) => void
 
   // Config values
   stampedePrevention?: boolean
@@ -95,11 +102,7 @@ export class CacheStackReader {
     return this.backgroundRefreshes.size
   }
 
-  async getPrepared<T>(
-    normalizedKey: string,
-    fetcher?: () => Promise<T>,
-    options?: CacheGetOptions
-  ): Promise<T | null> {
+  async getPrepared<T>(normalizedKey: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     const hit = await this.readFromLayers<T>(normalizedKey, options, 'allow-stale')
     if (hit.found) {
       this.options.ttlResolver.recordAccess(normalizedKey)
@@ -118,7 +121,7 @@ export class CacheStackReader {
         this.options.metricsCollector.increment('staleHits')
         this.options.emit('stale-serve', { key: normalizedKey, state: hit.state, layer: hit.layerName })
         if (fetcher) {
-          this.scheduleBackgroundRefresh(normalizedKey, fetcher, options)
+          this.scheduleBackgroundRefresh(normalizedKey, fetcher, options, this.createFetcherContext(normalizedKey, hit))
         }
         return hit.value
       }
@@ -131,7 +134,15 @@ export class CacheStackReader {
       }
 
       try {
-        return await this.fetchWithGuards(normalizedKey, fetcher, options)
+        return await this.fetchWithGuards(
+          normalizedKey,
+          fetcher,
+          options,
+          undefined,
+          undefined,
+          false,
+          this.createFetcherContext(normalizedKey, hit)
+        )
       } catch (error) {
         this.options.metricsCollector.increment('staleHits')
         this.options.metricsCollector.increment('refreshErrors')
@@ -148,7 +159,11 @@ export class CacheStackReader {
       return null
     }
 
-    return this.fetchWithGuards(normalizedKey, fetcher, options, undefined, undefined, true)
+    return this.fetchWithGuards(normalizedKey, fetcher, options, undefined, undefined, true, {
+      key: normalizedKey,
+      currentValue: undefined,
+      state: 'miss'
+    })
   }
 
   async readLayerEntry(layer: CacheLayer, key: string): Promise<unknown | null> {
@@ -268,11 +283,16 @@ export class CacheStackReader {
 
   private async fetchWithGuards<T>(
     key: string,
-    fetcher: () => Promise<T>,
+    fetcher: CacheFetcher<T>,
     options?: CacheGetOptions,
     expectedClearEpoch?: number,
     expectedKeyEpoch?: number,
-    initialMissConfirmed = false
+    initialMissConfirmed = false,
+    fetcherContext: CacheFetcherContext<T> = {
+      key,
+      currentValue: undefined,
+      state: 'miss'
+    }
   ): Promise<T | null> {
     const fetchTask = async (): Promise<T | null> => {
       const shouldRecheckFreshLayers = !(initialMissConfirmed && this.options.singleFlightCoordinator)
@@ -284,7 +304,7 @@ export class CacheStackReader {
         }
       }
 
-      return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
+      return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
     }
 
     const singleFlightTask = async (): Promise<T | null> => {
@@ -297,7 +317,7 @@ export class CacheStackReader {
           key,
           this.resolveSingleFlightOptions(),
           fetchTask,
-          () => this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
+          () => this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
         )
       } catch (error) {
         if (!this.options.isGracefulDegradationEnabled()) {
@@ -327,10 +347,15 @@ export class CacheStackReader {
 
   private async waitForFreshValue<T>(
     key: string,
-    fetcher: () => Promise<T>,
+    fetcher: CacheFetcher<T>,
     options?: CacheGetOptions,
     expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
+    expectedKeyEpoch?: number,
+    fetcherContext: CacheFetcherContext<T> = {
+      key,
+      currentValue: undefined,
+      state: 'miss'
+    }
   ): Promise<T | null> {
     const timeoutMs = this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS
     const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
@@ -348,15 +373,20 @@ export class CacheStackReader {
       await this.options.sleep(pollIntervalMs)
     }
 
-    return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch)
+    return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
   }
 
   private async fetchAndPopulate<T>(
     key: string,
-    fetcher: () => Promise<T>,
+    fetcher: CacheFetcher<T>,
     options?: CacheGetOptions,
     expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
+    expectedKeyEpoch?: number,
+    fetcherContext: CacheFetcherContext<T> = {
+      key,
+      currentValue: undefined,
+      state: 'miss'
+    }
   ): Promise<T | null> {
     this.options.circuitBreakerManager.assertClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
     this.options.metricsCollector.increment('fetches')
@@ -367,7 +397,7 @@ export class CacheStackReader {
       fetched = await this.options.fetchRateLimiter.schedule(
         options?.fetcherRateLimit ?? this.options.fetcherRateLimit,
         { key, fetcher },
-        fetcher
+        () => fetcher(fetcherContext)
       )
       this.options.circuitBreakerManager.recordSuccess(key)
       this.options.logger.debug?.('fetch', { key, durationMs: Date.now() - fetchStart })
@@ -425,11 +455,25 @@ export class CacheStackReader {
     return fetched
   }
 
-  runScheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
-    this.scheduleBackgroundRefresh(key, fetcher, options)
+  runScheduleBackgroundRefresh<T>(
+    key: string,
+    fetcher: CacheFetcher<T>,
+    options?: CacheGetOptions,
+    fetcherContext?: CacheFetcherContext<T>
+  ): void {
+    this.scheduleBackgroundRefresh(key, fetcher, options, fetcherContext)
   }
 
-  private scheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
+  private scheduleBackgroundRefresh<T>(
+    key: string,
+    fetcher: CacheFetcher<T>,
+    options?: CacheGetOptions,
+    fetcherContext: CacheFetcherContext<T> = {
+      key,
+      currentValue: undefined,
+      state: 'miss'
+    }
+  ): void {
     if (
       !shouldStartBackgroundRefresh({
         isDisconnecting: this.options.isDisconnecting(),
@@ -446,7 +490,7 @@ export class CacheStackReader {
       this.options.metricsCollector.increment('refreshes')
       try {
         if (this.backgroundRefreshAbort.get(key)) return
-        await this.runBackgroundRefresh(key, fetcher, options, clearEpoch, keyEpoch)
+        await this.runBackgroundRefresh(key, fetcher, options, clearEpoch, keyEpoch, fetcherContext)
       } catch (error) {
         if (this.backgroundRefreshAbort.get(key)) return
         this.options.metricsCollector.increment('refreshErrors')
@@ -465,21 +509,28 @@ export class CacheStackReader {
 
   private async runBackgroundRefresh<T>(
     key: string,
-    fetcher: () => Promise<T>,
+    fetcher: CacheFetcher<T>,
     options?: CacheGetOptions,
     expectedClearEpoch?: number,
-    expectedKeyEpoch?: number
+    expectedKeyEpoch?: number,
+    fetcherContext: CacheFetcherContext<T> = {
+      key,
+      currentValue: undefined,
+      state: 'miss'
+    }
   ): Promise<void> {
     const timeoutMs = this.options.backgroundRefreshTimeoutMs ?? DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS
     await this.fetchWithGuards(
       key,
-      () =>
-        this.options.withTimeout(fetcher(), timeoutMs, () => {
+      (context) =>
+        this.options.withTimeout(fetcher(context), timeoutMs, () => {
           return new Error(`Background refresh timed out after ${timeoutMs}ms for key "${key}".`)
         }),
       options,
       expectedClearEpoch,
-      expectedKeyEpoch
+      expectedKeyEpoch,
+      false,
+      fetcherContext
     )
   }
 
@@ -494,7 +545,7 @@ export class CacheStackReader {
       layerName: string
     },
     options: CacheGetOptions | undefined,
-    fetcher?: () => Promise<T>
+    fetcher?: CacheFetcher<T>
   ): Promise<void> {
     return this.applyFreshReadPolicies(key, hit as Extract<ReadHit<T>, { found: true }>, options, fetcher)
   }
@@ -503,7 +554,7 @@ export class CacheStackReader {
     key: string,
     hit: Extract<ReadHit<T>, { found: true }>,
     options: CacheGetOptions | undefined,
-    fetcher?: () => Promise<T>
+    fetcher?: CacheFetcher<T>
   ): Promise<void> {
     const plan = planFreshReadPolicies({
       stored: hit.stored,
@@ -529,7 +580,16 @@ export class CacheStackReader {
     }
 
     if (fetcher && plan.shouldScheduleBackgroundRefresh) {
-      this.options.scheduleBackgroundRefreshDispatch(key, fetcher, options)
+      this.options.scheduleBackgroundRefreshDispatch(key, fetcher, options, this.createFetcherContext(key, hit))
+    }
+  }
+
+  private createFetcherContext<T>(key: string, hit: Extract<ReadHit<T>, { found: true }>): CacheFetcherContext<T> {
+    return {
+      key,
+      currentValue: hit.value === null ? undefined : hit.value,
+      state: hit.state,
+      layer: hit.layerName
     }
   }
 

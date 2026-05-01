@@ -37,8 +37,8 @@ interface MemcachedLayerOptions {
  *
  * const memcached = Memjs.Client.create('localhost:11211')
  * const cache = new CacheStack([
- *   new MemoryLayer({ ttl: 30 }),
- *   new MemcachedLayer({ client: memcached, ttl: 300 })
+ *   new MemoryLayer({ ttl: 30_000 }),
+ *   new MemcachedLayer({ client: memcached, ttl: 300_000 })
  * ])
  * ```
  */

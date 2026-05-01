@@ -179,8 +179,8 @@ Keep serving cached data even after expiry while refreshing in the background:
 ```ts
 const config = await cache.get('app:config', fetchConfig, {
   ttl: 60_000,
-  staleWhileRevalidate: 30,  // serve stale for 30s while refreshing
-  staleIfError: 300           // serve stale for 5min if refresh fails
+  staleWhileRevalidate: 30_000,  // serve stale for 30s while refreshing
+  staleIfError: 300_000           // serve stale for 5min if refresh fails
 })
 ```
 
@@ -189,7 +189,7 @@ Combined with **refresh-ahead** to proactively refresh before expiry:
 ```ts
 const leaderboard = await cache.get('leaderboard', fetchLeaderboard, {
   ttl: 120_000,
-  refreshAhead: 30    // start refreshing when <= 30s remain
+  refreshAhead: 30_000    // start refreshing when <= 30s remain
 })
 ```
 

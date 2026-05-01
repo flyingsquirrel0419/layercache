@@ -8,6 +8,7 @@ import {
   diffNamespaceMetrics
 } from './internal/CacheNamespaceMetrics'
 import type {
+  CacheFetcher,
   CacheGetOptions,
   CacheHitRateSnapshot,
   CacheInspectResult,
@@ -31,18 +32,18 @@ export class CacheNamespace {
     validateNamespaceKey(prefix)
   }
 
-  async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.get(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
-  async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
   /**
    * Like `get()`, but throws `CacheMissError` instead of returning `null`.
    */
-  async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
+  async getOrThrow<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T> {
     return this.trackMetrics(() => this.cache.getOrThrow(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
@@ -98,9 +99,22 @@ export class CacheNamespace {
     await this.trackMetrics(() => this.cache.invalidateByTag(this.qualifyTag(tag)))
   }
 
+  async expireByTag(tag: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByTag(this.qualifyTag(tag)))
+  }
+
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.trackMetrics(() =>
       this.cache.invalidateByTags(
+        tags.map((tag) => this.qualifyTag(tag)),
+        mode
+      )
+    )
+  }
+
+  async expireByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
+    await this.trackMetrics(() =>
+      this.cache.expireByTags(
         tags.map((tag) => this.qualifyTag(tag)),
         mode
       )
@@ -111,8 +125,16 @@ export class CacheNamespace {
     await this.trackMetrics(() => this.cache.invalidateByPattern(this.qualify(pattern)))
   }
 
+  async expireByPattern(pattern: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByPattern(this.qualify(pattern)))
+  }
+
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByPrefix(this.qualify(prefix)))
+  }
+
+  async expireByPrefix(prefix: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByPrefix(this.qualify(prefix)))
   }
 
   /**

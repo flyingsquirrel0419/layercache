@@ -1,0 +1,672 @@
+---
+title: "Migration Guide"
+description: "Migrate from node-cache-manager, keyv, cacheable, and other caching libraries"
+---
+
+This guide helps you migrate from popular Node.js caching libraries to Layercache. Each section includes before/after code examples, API mappings, and key differences.
+
+## From node-cache-manager
+
+### Basic Setup
+
+**Before (node-cache-manager):**
+
+```tsx
+import { caching, multiCaching } from 'cache-manager'
+import { redisStore } from 'cache-manager-redis-yet'
+
+const memoryCache = await caching('memory', { max: 100, ttl: 60 * 1000 })
+const redisCache = await caching(redisStore, {
+  url: 'redis://localhost:6379',
+  ttl: 300 * 1000
+})
+const cache = multiCaching([memoryCache, redisCache])
+```
+
+**After (layercache):**
+
+```tsx
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
+])
+```
+
+### Read-Through Fetch
+
+**Before:**
+
+```tsx
+const user = await cache.wrap('user:123', () => db.findUser(123))
+```
+
+**After:**
+
+```tsx
+const user = await cache.get('user:123', () => db.findUser(123))
+```
+
+### Set with TTL
+
+**Before:**
+
+```tsx
+await cache.set('user:123', user, 60000)  // TTL in milliseconds
+```
+
+**After:**
+
+```tsx
+await cache.set('user:123', user, { ttl: 60_000 })  // TTL in milliseconds
+```
+
+### Delete
+
+**Before:**
+
+```tsx
+await cache.del('user:123')
+```
+
+**After:**
+
+```tsx
+await cache.delete('user:123')
+```
+
+### Clear All
+
+**Before:**
+
+```tsx
+await cache.reset()
+```
+
+**After:**
+
+```tsx
+await cache.clear()
+```
+
+### API Mapping
+
+| node-cache-manager | layercache | Notes |
+|--------------------|------------|-------|
+| `cache.wrap(key, fn)` | `cache.get(key, fn)` | Read-through fetch |
+| `cache.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in milliseconds |
+| `cache.get(key)` | `cache.get(key)` | Same API |
+| `cache.del(key)` | `cache.delete(key)` | Renamed |
+| `cache.reset()` | `cache.clear()` | Renamed |
+| Per-store TTL | `ttl: { memory: 60_000, redis: 300_000 }` | Per-layer TTL map |
+| - | `cache.invalidateByTag(tag)` | New: tag invalidation |
+| - | `cache.wrap(prefix, fn)` | New: transparent function caching |
+
+### Key Differences
+
+#### TTL is in Milliseconds
+
+**node-cache-manager uses milliseconds:**
+
+```tsx
+await cache.set('key', value, 60000)  // 60 seconds
+```
+
+**Layercache uses milliseconds:**
+
+```tsx
+await cache.set('key', value, { ttl: 60_000 })  // 60 seconds
+```
+
+#### Auto Backfill
+
+**node-cache-manager requires manual warming:**
+
+```tsx
+// After a cache miss in L1, L1 stays cold
+const value = await cache.wrap('key', fetcher)
+// Next request might still hit L2 instead of L1
+```
+
+**Layercache auto-backfills L1:**
+
+```tsx
+// After a cache miss in L1, L1 is automatically backfilled
+const value = await cache.get('key', fetcher)
+// Next request hits L1 immediately
+```
+
+#### Stampede Prevention
+
+**node-cache-manager requires plugins:**
+
+```tsx
+// No built-in stampede prevention
+// Need external solutions
+```
+
+**Layercache has built-in stampede prevention:**
+
+```tsx
+// Enabled by default
+// Multiple concurrent requests for same key share single fetcher
+```
+
+#### Tag Invalidation
+
+**node-cache-manager:**
+
+```tsx
+// Manual key tracking required
+const userKeys = [`user:${id}`, `user:${id}:posts`, `user:${id}:profile`]
+await Promise.all(userKeys.map(key => cache.del(key)))
+```
+
+**Layercache:**
+
+```tsx
+await cache.set('user:123', user, { tags: ['user:123'] })
+await cache.set('user:123:posts', posts, { tags: ['user:123'] })
+await cache.invalidateByTag('user:123')  // Deletes both
+```
+
+## From keyv
+
+### Basic Setup
+
+**Before (keyv):**
+
+```tsx
+import Keyv from 'keyv'
+import KeyvRedis from '@keyv/redis'
+
+const keyv = new Keyv({
+  store: new KeyvRedis('redis://localhost:6379')
+})
+
+await keyv.set('user:123', user, 60000)
+const user = await keyv.get('user:123')
+```
+
+**After (layercache):**
+
+```tsx
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
+])
+
+await cache.set('user:123', user, { ttl: 60_000 })
+const user = await cache.get('user:123')
+```
+
+### Read-Through Fetch
+
+**Before:**
+
+```tsx
+// No built-in read-through
+let user = await keyv.get('user:123')
+if (!user) {
+  user = await fetchUser(123)
+  await keyv.set('user:123', user, 60000)
+}
+```
+
+**After:**
+
+```tsx
+// Built-in read-through fetch
+const user = await cache.get('user:123', () => fetchUser(123))
+```
+
+### API Mapping
+
+| keyv | layercache | Notes |
+|------|------------|-------|
+| `keyv.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in milliseconds |
+| `keyv.get(key)` | `cache.get(key)` | Same |
+| `keyv.delete(key)` | `cache.delete(key)` | Same |
+| `keyv.clear()` | `cache.clear()` | Same |
+| Namespace via constructor | `cache.namespace(prefix)` | Scoped views |
+| - | `cache.get(key, fetcher)` | New: read-through fetch |
+| - | `cache.wrap(prefix, fn)` | New: function caching |
+
+### Key Differences
+
+#### Multi-Layer is Native
+
+**keyv requires plugins:**
+
+```tsx
+// Multi-layer is not native
+// Requires custom adapters
+```
+
+**Layercache has native multi-layer:**
+
+```tsx
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
+])
+// Reads cascade through layers with auto backfill
+```
+
+#### Read-Through Fetch
+
+**keyv requires manual checks:**
+
+```tsx
+let value = await keyv.get('key')
+if (value === undefined) {
+  value = await fetcher()
+  await keyv.set('key', value)
+}
+```
+
+**Layercache has built-in read-through:**
+
+```tsx
+const value = await cache.get('key', fetcher)
+```
+
+#### Namespaces
+
+**keyv:**
+
+```tsx
+const userCache = new Keyv({ namespace: 'users' })
+const postCache = new Keyv({ namespace: 'posts' })
+```
+
+**Layercache:**
+
+```tsx
+const userCache = cache.namespace('users')
+const postCache = cache.namespace('posts')
+
+// Full CacheStack API on namespaces
+await userCache.set('123', data)  // Stored as "users:123"
+await userCache.clear()           // Only deletes "users:*"
+```
+
+## From cacheable
+
+### Basic Setup
+
+**Before (cacheable):**
+
+```tsx
+import { Cacheable } from 'cacheable'
+
+const cache = new Cacheable({ ttl: '1h' })
+await cache.set('key', value)
+```
+
+**After (layercache):**
+
+```tsx
+import { CacheStack, MemoryLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 3_600_000 })
+])
+await cache.set('key', value)
+```
+
+### API Mapping
+
+| cacheable | layercache | Notes |
+|-----------|------------|-------|
+| `new Cacheable({ ttl: '1h' })` | `new CacheStack([{ ttl: 3_600_000 }])` | TTL in milliseconds |
+| `cache.set(key, val)` | `cache.set(key, val)` | Same |
+| `cache.get(key)` | `cache.get(key)` | Same |
+| `cache.delete(key)` | `cache.delete(key)` | Same |
+| `cache.clear()` | `cache.clear()` | Same |
+
+### Key Differences
+
+#### TTL Format
+
+**cacheable uses string durations:**
+
+```tsx
+const cache = new Cacheable({ ttl: '1h' })
+```
+
+**Layercache uses numeric milliseconds:**
+
+```tsx
+const cache = new CacheStack([new MemoryLayer({ ttl: 3_600_000 })])
+```
+
+#### Multi-Layer Orchestration
+
+**cacheable:**
+
+```tsx
+// Limited multi-layer support
+// Manual coordination required
+```
+
+**Layercache:**
+
+```tsx
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 }),
+  new DiskLayer({ ttl: 3_600_000 })
+])
+// Automatic cascading reads and writes
+```
+
+#### Distributed Consistency
+
+**cacheable:**
+
+```tsx
+// No built-in distributed features
+// Manual implementation required
+```
+
+**Layercache:**
+
+```tsx
+import { RedisInvalidationBus, RedisTagIndex } from 'layercache'
+
+const bus = new RedisInvalidationBus({ publisher: redis })
+const tagIndex = new RedisTagIndex({ client: redis })
+
+const cache = new CacheStack([/* ... */], {
+  invalidationBus: bus,
+  broadcastL1Invalidation: true,
+  tagIndex
+})
+```
+
+#### Stampede Prevention
+
+**cacheable:**
+
+```tsx
+// No built-in stampede prevention
+```
+
+**Layercache:**
+
+```tsx
+const cache = new CacheStack([/* ... */], {
+  stampedePrevention: true  // Enabled by default
+})
+```
+
+## Operational Migration Tips
+
+### Replace Ad-Hoc Redis Key Scans
+
+**Before:**
+
+```bash
+# Manual Redis scans
+redis-cli --scan --pattern "user:*" | xargs redis-cli del
+```
+
+**After:**
+
+```bash
+# Use Layercache CLI
+npx layercache keys --redis redis://localhost:6379 --pattern "user:*"
+npx layercache invalidate --redis redis://localhost:6379 --pattern "user:*"
+```
+
+### Replace Manual Prefill Scripts
+
+**Before:**
+
+```tsx
+// Custom warm-up script
+for (const key of criticalKeys) {
+  const val = await fetch(key)
+  await redis.set(key, JSON.stringify(val), 'EX', 300)
+}
+```
+
+**After:**
+
+```tsx
+// Built-in warm() method
+await cache.warm(
+  criticalKeys.map(key => ({
+    key,
+    fetcher: () => fetchByKey(key),
+    priority: 10
+  })),
+  { concurrency: 4, continueOnError: true }
+)
+```
+
+### Replace Custom Stats Endpoints
+
+**Before:**
+
+```tsx
+// Custom stats endpoint
+app.get('/stats', (req, res) => {
+  res.json({
+    hits: myCounter.hits,
+    misses: myCounter.misses
+  })
+})
+```
+
+**After:**
+
+```tsx
+import { createCacheStatsHandler } from 'layercache'
+
+app.get('/cache/stats', createCacheStatsHandler(cache))
+```
+
+### Replace Manual Tag Tracking
+
+**Before:**
+
+```tsx
+// Manual tag-to-key mapping
+const tagMap = new Map()
+
+async function setWithTags(key, value, tags) {
+  await redis.set(key, JSON.stringify(value))
+  for (const tag of tags) {
+    const keys = tagMap.get(tag) || []
+    keys.push(key)
+    tagMap.set(tag, keys)
+  }
+}
+
+async function invalidateByTag(tag) {
+  const keys = tagMap.get(tag) || []
+  await Promise.all(keys.map(key => redis.del(key)))
+  tagMap.delete(tag)
+}
+```
+
+**After:**
+
+```tsx
+// Built-in tag support
+await cache.set('user:123', user, { tags: ['user:123'] })
+await cache.invalidateByTag('user:123')
+```
+
+### Replace Custom Invalidation Logic
+
+**Before:**
+
+```tsx
+// Manual prefix-based invalidation
+async function invalidatePrefix(prefix) {
+  const keys = await redis.keys(`${prefix}*`)
+  await Promise.all(keys.map(key => redis.del(key)))
+}
+```
+
+**After:**
+
+```tsx
+// Built-in prefix invalidation
+await cache.invalidateByPrefix('user:123:')
+```
+
+### Replace Custom Locking for Stampede Prevention
+
+**Before:**
+
+```tsx
+// Manual distributed locking
+async function getWithLock(key, fetcher) {
+  const lockKey = `lock:${key}`
+  const lock = await redis.set(lockKey, '1', 'PX', 5000, 'NX')
+
+  if (lock === 'OK') {
+    try {
+      const value = await fetcher()
+      await redis.set(key, JSON.stringify(value))
+      return value
+    } finally {
+      await redis.del(lockKey)
+    }
+  } else {
+    // Wait and retry
+    await sleep(100)
+    return getWithLock(key, fetcher)
+  }
+}
+```
+
+**After:**
+
+```tsx
+// Built-in distributed single-flight
+import { RedisSingleFlightCoordinator } from 'layercache'
+
+const coordinator = new RedisSingleFlightCoordinator({ client: redis })
+
+const cache = new CacheStack([/* ... */], {
+  singleFlightCoordinator: coordinator,
+  singleFlightLeaseMs: 30000
+})
+
+const value = await cache.get(key, fetcher)
+```
+
+## Migration Checklist
+
+### Phase 1: Setup
+
+- [ ] Install Layercache: `npm install layercache`
+- [ ] Create CacheStack with equivalent layers
+- [ ] Keep TTL values in milliseconds
+- [ ] Configure distributed features (if needed)
+
+### Phase 2: Code Changes
+
+- [ ] Replace `cache.wrap()` with `cache.get(key, fetcher)`
+- [ ] Replace `cache.del()` with `cache.delete()`
+- [ ] Replace `cache.reset()` with `cache.clear()`
+- [ ] Update set operations to use options object: `{ ttl: 60_000 }`
+- [ ] Add tags for group invalidation
+
+### Phase 3: Testing
+
+- [ ] Verify cache hits/misses work correctly
+- [ ] Test tag-based invalidation
+- [ ] Test multi-layer cascading
+- [ ] Test distributed coordination (if applicable)
+- [ ] Monitor metrics and hit rates
+
+### Phase 4: Optimization
+
+- [ ] Enable stampede prevention (default)
+- [ ] Configure stale-while-revalidate
+- [ ] Set up Prometheus metrics
+- [ ] Configure health checks
+- [ ] Set up distributed single-flight (if needed)
+
+## Common Migration Issues
+
+### TTL Confusion
+
+**Issue:** Keeping old second-based TTL values after migrating.
+
+**Solution:**
+
+```tsx
+// Wrong
+await cache.set('key', value, { ttl: 60 })  // 60 milliseconds
+
+// Correct
+await cache.set('key', value, { ttl: 60_000 })  // 60 seconds
+```
+
+### Missing Tags
+
+**Issue:** Unable to invalidate related keys.
+
+**Solution:**
+
+```tsx
+// Add tags when setting
+await cache.set('user:123', user, { tags: ['user:123'] })
+await cache.set('user:123:posts', posts, { tags: ['user:123'] })
+
+// Invalidate by tag
+await cache.invalidateByTag('user:123')
+```
+
+### Namespace Confusion
+
+**Issue:** Not using namespaces for scoped caches.
+
+**Solution:**
+
+```tsx
+// Use namespaces instead of separate caches
+const userCache = cache.namespace('users')
+const postCache = cache.namespace('posts')
+
+await userCache.set('123', data)  // Stored as "users:123"
+```
+
+### Not Using Read-Through
+
+**Issue:** Still using manual miss handling.
+
+**Solution:**
+
+```tsx
+// Old way
+let value = await cache.get('key')
+if (!value) {
+  value = await fetcher()
+  await cache.set('key', value)
+}
+
+// New way
+const value = await cache.get('key', fetcher)
+```
+
+## Need Help?
+
+If you run into issues during migration:
+
+1. Check the [API Reference](/docs/api) for detailed method documentation
+2. Review [examples](https://github.com/flyingsquirrel0419/layercache/tree/main/examples) for common patterns
+3. [Open an issue](https://github.com/flyingsquirrel0419/layercache/issues) with your current setup
+
+We're happy to help you find the right approach for your use case!

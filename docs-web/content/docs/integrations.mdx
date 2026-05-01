@@ -1,0 +1,478 @@
+---
+title: "Framework Integrations"
+description: "Integrate Layercache with Express, Fastify, Hono, NestJS, tRPC, GraphQL, and OpenTelemetry"
+---
+
+Layercache provides first-class integrations with popular Node.js frameworks and observability tools. Each integration is designed to be lightweight, type-safe, and minimal in configuration.
+
+## Express
+
+The Express middleware caches JSON responses from your route handlers.
+
+### Installation
+
+```bash
+npm install layercache
+```
+
+### Basic Usage
+
+```tsx
+import express from 'express'
+import { CacheStack, MemoryLayer, RedisLayer, createExpressCacheMiddleware } from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
+])
+
+const app = express()
+
+// Cache all GET requests to /api/users
+app.get('/api/users',
+  createExpressCacheMiddleware(cache, {
+    ttl: 30_000,
+    tags: ['users']
+  }),
+  async (req, res) => {
+    const users = await fetchUsersFromDB()
+    res.json(users)
+  }
+)
+
+app.listen(3000)
+```
+
+### Custom Cache Keys
+
+```tsx
+app.get('/api/users/:id',
+  createExpressCacheMiddleware(cache, {
+    keyResolver: (req) => `user:${req.params.id}`,
+    ttl: 300_000
+  }),
+  async (req, res) => {
+    const user = await fetchUser(req.params.id)
+    res.json(user)
+  }
+)
+```
+
+### Options
+
+- `keyResolver` - Function to generate cache keys from requests
+- `methods` - HTTP methods to cache (default: `['GET']`)
+- `ttl` - Time-to-live in milliseconds
+- `tags` - Tags for invalidation
+- `allowPrivateCaching` - Allow implicit URL-based keys (default: false)
+
+### Response Headers
+
+The middleware adds `x-cache: HIT` or `x-cache: MISS` headers to responses.
+
+## Fastify
+
+The Fastify plugin decorates your app with a cache instance and provides an optional stats endpoint.
+
+### Installation
+
+```bash
+npm install layercache
+```
+
+### Basic Usage
+
+```tsx
+import Fastify from 'fastify'
+import { CacheStack, MemoryLayer, RedisLayer, createFastifyLayercachePlugin } from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
+])
+
+const fastify = Fastify()
+
+await fastify.register(createFastifyLayercachePlugin(cache, {
+  exposeStatsRoute: true,
+  statsPath: '/cache/stats',
+  allowPublicStatsRoute: false
+}))
+
+// Use the cache directly in routes
+fastify.get('/api/users', async (request, reply) => {
+  const users = await cache.get('users', () => fetchUsersFromDB())
+  return users
+})
+```
+
+### Options
+
+- `exposeStatsRoute` - Enable stats endpoint (default: false)
+- `statsPath` - Path for stats endpoint (default: '/cache/stats')
+- `allowPublicStatsRoute` - Allow public access (default: false)
+- `authorizeStatsRoute` - Async authorization function
+- `unauthorizedStatusCode` - Status code for unauthorized (default: 403)
+
+## Hono
+
+The Hono middleware caches JSON responses with minimal overhead.
+
+### Installation
+
+```bash
+npm install layercache
+```
+
+### Basic Usage
+
+```tsx
+import { Hono } from 'hono'
+import { CacheStack, MemoryLayer, createHonoCacheMiddleware } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 20 })
+])
+
+const app = new Hono()
+
+app.use('/api/*', createHonoCacheMiddleware(cache, {
+  ttl: 60_000,
+  tags: ['api']
+}))
+
+app.get('/api/users', async (c) => {
+  const users = await fetchUsersFromDB()
+  return c.json(users)
+})
+```
+
+### Custom Cache Keys
+
+```tsx
+app.get('/api/users/:id',
+  createHonoCacheMiddleware(cache, {
+    keyResolver: (req) => `user:${req.path.split('/').pop()}`,
+    ttl: 300_000
+  }),
+  async (c) => {
+    const id = c.req.param('id')
+    const user = await fetchUser(id)
+    return c.json(user)
+  }
+)
+```
+
+## NestJS
+
+Use `CacheStack` directly in your NestJS providers. Import from `layercache` — no separate package needed.
+
+### Module Setup
+
+```tsx
+import { Module } from '@nestjs/common'
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+@Module({
+  providers: [
+    {
+      provide: 'CACHE_STACK',
+      useFactory: () => new CacheStack([
+        new MemoryLayer({ ttl: 20 }),
+        new RedisLayer({ client: new Redis(), ttl: 300_000 })
+      ])
+    }
+  ],
+  exports: ['CACHE_STACK']
+})
+export class CacheModule {}
+```
+
+### Async Configuration
+
+```tsx
+import { Module } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+@Module({
+  providers: [
+    {
+      provide: 'CACHE_STACK',
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => new CacheStack([
+        new MemoryLayer({ ttl: 20 }),
+        new RedisLayer({
+          client: new Redis(config.get('REDIS_URL')),
+          ttl: 300_000
+        })
+      ])
+    }
+  ],
+  exports: ['CACHE_STACK']
+})
+export class CacheModule {}
+```
+
+### Using in Services
+
+```tsx
+import { Injectable, Inject } from '@nestjs/common'
+import { CacheStack } from 'layercache'
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @Inject('CACHE_STACK') private readonly cache: CacheStack
+  ) {}
+
+  async getUser(id: string): Promise<User> {
+    return this.cache.get(`user:${id}`, () =>
+      this.usersRepository.findOne(id)
+    )
+  }
+}
+```
+
+> **Note:** The separate `@cachestack/nestjs` package was removed in v1.3.2. Use `CacheStack` directly from `layercache`.
+
+## tRPC
+
+The tRPC middleware caches procedure results based on input arguments.
+
+### Installation
+
+```bash
+npm install layercache
+```
+
+### Basic Usage
+
+```tsx
+import { initTRPC } from '@trpc/server'
+import { CacheStack, MemoryLayer, createTrpcCacheMiddleware } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 })
+])
+
+const t = initTRPC.create()
+
+const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', {
+  keyResolver: (input) => JSON.stringify(input),
+  ttl: 300_000
+})
+
+export const cachedProcedure = t.procedure.use(cacheMiddleware)
+
+export const appRouter = t.router({
+  user: cachedProcedure
+    .input((val: unknown) => val as { id: string })
+    .query(async ({ input }) => {
+      return fetchUser(input.id)
+    })
+})
+```
+
+### Context-Aware Caching
+
+```tsx
+const cacheMiddleware = createTrpcCacheMiddleware(cache, 'user', {
+  keyResolver: (input, path, type) => {
+    return `${type}:${path}:${JSON.stringify(input)}`
+  },
+  ttl: 300_000
+})
+```
+
+## GraphQL
+
+Cache resolver results with the GraphQL wrapper.
+
+### Installation
+
+```bash
+npm install layercache
+```
+
+### Basic Usage
+
+```tsx
+import { CacheStack, MemoryLayer, cacheGraphqlResolver } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 })
+])
+
+const resolvers = {
+  Query: {
+    user: cacheGraphqlResolver(
+      cache,
+      'user',
+      async (_root, { id }) => {
+        return fetchUser(id)
+      },
+      {
+        keyResolver: (_root, { id }) => id,
+        ttl: 300_000
+      }
+    )
+  }
+}
+```
+
+### With Tags
+
+```tsx
+const resolvers = {
+  Query: {
+    user: cacheGraphqlResolver(
+      cache,
+      'user',
+      async (_root, { id }) => {
+        return fetchUser(id)
+      },
+      {
+        keyResolver: (_root, { id }) => id,
+        ttl: 300_000,
+        tags: ({ id }) => ['user', `user:${id}`]
+      }
+    )
+  }
+}
+```
+
+## OpenTelemetry
+
+Add distributed tracing to cache operations with OpenTelemetry integration.
+
+### Installation
+
+```bash
+npm install layercache @opentelemetry/api
+```
+
+### Basic Setup
+
+```tsx
+import { trace } from '@opentelemetry/api'
+import { CacheStack, MemoryLayer, createOpenTelemetryPlugin } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 })
+])
+
+const tracer = trace.getTracer('layercache')
+
+const plugin = createOpenTelemetryPlugin(cache, tracer)
+
+// Cache operations are now traced
+await cache.get('user:123', fetchUser)
+
+// Clean up on shutdown
+plugin.uninstall()
+```
+
+### Span Attributes
+
+Each cache operation creates a span with the following attributes:
+
+- `layercache.success` - Whether the operation succeeded
+- `layercache.result` - The result type (hit, miss, etc.)
+- Error details if the operation failed
+
+### Custom Tracer
+
+```tsx
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
+import { Resource } from '@opentelemetry/resources'
+
+const provider = new NodeTracerProvider({
+  resource: new Resource({ service: 'my-app' })
+})
+provider.register()
+
+const tracer = trace.getTracer('my-app', '1.0.0')
+const plugin = createOpenTelemetryPlugin(cache, tracer)
+```
+
+## Stats HTTP Handler
+
+Expose cache statistics via HTTP for monitoring dashboards.
+
+### Basic Usage
+
+```tsx
+import { createCacheStatsHandler } from 'layercache'
+import http from 'node:http'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60_000 })
+])
+
+const handler = createCacheStatsHandler(cache)
+
+const server = http.createServer(handler)
+server.listen(9090)
+```
+
+### With Authorization
+
+```tsx
+const handler = createCacheStatsHandler(cache, {
+  authorize: async (req) => {
+    const authHeader = req.headers['authorization']
+    return authHeader === `Bearer ${process.env.API_KEY}`
+  },
+  unauthorizedStatusCode: 401
+})
+```
+
+### Public Access
+
+```tsx
+const handler = createCacheStatsHandler(cache, {
+  allowPublicAccess: true
+})
+```
+
+### Response Format
+
+```json
+{
+  "metrics": {
+    "hits": 1234,
+    "misses": 56,
+    "fetches": 56,
+    "sets": 890,
+    "deletes": 12,
+    "backfills": 234,
+    "invalidations": 45,
+    "staleHits": 5,
+    "refreshes": 3,
+    "refreshErrors": 0,
+    "writeFailures": 0,
+    "singleFlightWaits": 7,
+    "negativeCacheHits": 12,
+    "circuitBreakerTrips": 0,
+    "degradedOperations": 0
+  },
+  "layers": [
+    {
+      "name": "memory",
+      "isLocal": true,
+      "degradedUntil": null
+    },
+    {
+      "name": "redis",
+      "isLocal": false,
+      "degradedUntil": null
+    }
+  ],
+  "backgroundRefreshes": 3
+}
+```
