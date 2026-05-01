@@ -7,3 +7,7 @@ coverage/
 .env.*
 *.tgz
 benchmark-results/
+
+# Docs website
+.next/
+docs-web/tsconfig.tsbuildinfo
