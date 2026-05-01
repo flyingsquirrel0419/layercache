@@ -265,6 +265,7 @@ const cache = new CacheStack([
 | **TTL adaptativo** | Las claves calientes ven su TTL crecer automáticamente |
 | **Refresh-ahead** | Refresca antes de que expire, sin que nadie lo pida |
 | **Políticas de TTL** | Alinea expiraciones a medianoche, a la hora en punto, o como quieras |
+| **Opciones de entrada contextuales** | Deriva TTLs y tags del valor cacheado justo antes de almacenarlo |
 
 ### Resiliencia y operaciones
 
