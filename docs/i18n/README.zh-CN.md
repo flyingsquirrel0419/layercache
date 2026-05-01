@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## 横向对比
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
-| 缓存击穿保护 | -- | -- | -- | **Yes** |
-| 标签失效 | -- | Yes | Yes | **Yes** |
-| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
-| 事件钩子 | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自动回填多层缓存 | 部分 | 插件 | -- | 部分 | **Yes** |
+| 缓存击穿保护 | -- | -- | -- | 部分 | **Yes** |
+| 标签失效 | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript 优先 | 部分 | Yes | Yes | Yes | **Yes** |
+| 事件钩子 | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>完整对比（19 项功能，点击展开）</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自动回填多层缓存 | 部分 | 插件 | -- | **Yes** |
-| 缓存击穿保护 | -- | -- | -- | **Yes** |
-| 分布式单飞 | -- | -- | -- | **Yes** |
-| 标签失效 | -- | Yes | Yes | **Yes** |
-| 分布式标签 | -- | -- | -- | **Yes** |
-| 跨实例 L1 刷新 | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| 熔断器 | -- | -- | -- | **Yes** |
-| 优雅降级 | -- | -- | -- | **Yes** |
-| 滑动 / 自适应 TTL | -- | -- | -- | **Yes** |
-| 缓存预热 | -- | -- | -- | **Yes** |
-| 快照持久化 | -- | -- | -- | **Yes** |
-| 压缩 | -- | -- | Yes | **Yes** |
-| 管理 CLI | -- | -- | -- | **Yes** |
-| TypeScript 优先 | 部分 | Yes | Yes | **Yes** |
-| Wrap / 装饰器 API | Yes | -- | -- | **Yes** |
-| 命名空间 | -- | Yes | Yes | **Yes** |
-| 事件钩子 | Yes | Yes | Yes | **Yes** |
-| 自定义层 | 部分 | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自动回填多层缓存 | 部分 | 插件 | -- | 部分 | **Yes** |
+| 缓存击穿保护 | -- | -- | -- | 部分 | **Yes** |
+| 分布式单飞 | -- | -- | -- | -- | **Yes** |
+| 标签失效 | -- | Yes | Yes | Yes | **Yes** |
+| 分布式标签 | -- | -- | -- | -- | **Yes** |
+| 跨实例 L1 刷新 | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| 熔断器 | -- | -- | -- | Yes | **Yes** |
+| 优雅降级 | -- | -- | -- | Yes | **Yes** |
+| 滑动 / 自适应 TTL | -- | -- | -- | -- | **Yes** |
+| 缓存预热 | -- | -- | -- | -- | **Yes** |
+| 快照持久化 | -- | -- | -- | -- | **Yes** |
+| 压缩 | -- | -- | Yes | -- | **Yes** |
+| 管理 CLI | -- | -- | -- | -- | **Yes** |
+| TypeScript 优先 | 部分 | Yes | Yes | Yes | **Yes** |
+| Wrap / 装饰器 API | Yes | -- | -- | 部分 | **Yes** |
+| 命名空间 | -- | Yes | Yes | Yes | **Yes** |
+| 事件钩子 | Yes | Yes | Yes | Yes | **Yes** |
+| 自定义层 | 部分 | -- | -- | Yes | **Yes** |
 
 </details>
 
