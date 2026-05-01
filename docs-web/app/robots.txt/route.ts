@@ -1,3 +1,5 @@
+import { SITE_URL } from "@/lib/site-url";
+
 export const dynamic = "force-static";
 
 const BODY = `# Layercache robots.txt
@@ -10,7 +12,7 @@ Allow: /
 Disallow: /playground
 Disallow: /api/markdown
 
-Sitemap: https://layercache.dev/sitemap.xml
+Sitemap: ${SITE_URL}/sitemap.xml
 `;
 
 export function GET() {

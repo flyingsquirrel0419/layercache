@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **TTL values now use milliseconds across the public API** — layer defaults, per-operation `ttl`, `negativeTtl`, `staleWhileRevalidate`, `staleIfError`, `ttlJitter`, `refreshAhead`, adaptive TTL steps, and TTL policy return values are now documented and handled as milliseconds. Redis writes now use `PX`, Redis TTL reads use `PTTL`, and CLI inspect output now reports `ttlMs`.
+
+### Added
+
+- **Stale-preserving expiration APIs** — `expireByTag()`, `expireByTags()`, `expireByPattern()`, and `expireByPrefix()` mark matching entries stale without deleting their stale-while-revalidate / stale-if-error windows, enabling revalidation while still serving existing values.
+- **Context-aware cache entry options** — `contextOptions` can derive write-time TTLs and tags from the resolved `{ key, value, kind }` context for both fetched values and direct `set()` operations.
+- **Real Redis integration coverage** — Docker Compose, `scripts/run-integration-tests.mjs`, `vitest.integration.config.ts`, and Redis integration suites now cover RedisLayer, RedisInvalidationBus, RedisTagIndex, distributed single-flight, and multi-instance behavior against a real Redis service.
+- **Docs web app** — added the `docs-web/` Next.js documentation site with MDX docs, search, playground, `.well-known` API/agent metadata routes, markdown export, sitemap, robots.txt, and UI state tests.
+- **BentoCache comparison docs** — README, localized READMEs, and `docs/comparison.md` now include BentoCache feature comparisons.
+
+### Changed
+
+- **Documentation examples now use millisecond TTLs** across README, localized READMEs, root docs, docs-web content, examples, middleware snippets, and migration guides.
+- **Validation now runs broader CI coverage** with Node.js 20/22, Biome GitHub annotations, real Redis integration tests on Node.js 20, and a validation summary.
+- **Test baseline increased to 549 passing tests** with added coverage for context-aware options, stale-preserving expiration, Redis integration behavior, millisecond TTL handling, and docs-web utilities.
+
+### Fixed
+
+- **Stale expiration preserves stale deadlines** instead of discarding stale-while-revalidate / stale-if-error windows when expiring stored envelopes.
+- **Invalidation expiration keeps remaining TTLs in milliseconds**, matching the new stored-envelope TTL helpers.
+- **CLI inspect and docs-web CLI docs now use `ttlMs`**, aligning CLI output with Redis `PTTL` and millisecond semantics.
+- **Docs-web playground cache state reporting** now stays aligned with the worker timeout and state-reporting helpers.
+- **Refresh-ahead coverage is no longer timing-sensitive** under Node.js 20 coverage runs.
+
 ## [1.3.4] — 2026-04-29
 
 ### Changed
@@ -323,7 +349,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`has(key)`** method on `CacheStack`, `CacheNamespace`, `MemoryLayer`, and `RedisLayer` — check key existence without deserializing the value.
-- **`ttl(key)`** method on `CacheStack`, `CacheNamespace`, `MemoryLayer`, and `RedisLayer` — query remaining TTL in seconds.
+- **`ttl(key)`** method on `CacheStack`, `CacheNamespace`, `MemoryLayer`, and `RedisLayer` — query remaining TTL.
 - **`mdelete(keys)`** bulk-delete method on `CacheStack` and `CacheNamespace`.
 - **`getOrSet(key, fetcher, options)`** explicit alias for `get()` on `CacheStack` and `CacheNamespace`.
 - **`getHitRate()`** method on `CacheStack` and `CacheNamespace` returning `CacheHitRateSnapshot` (overall and per-layer hit rates).

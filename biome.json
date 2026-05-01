@@ -36,6 +36,6 @@
     }
   },
   "files": {
-    "ignore": ["dist", "node_modules", "coverage", "*.json", "docs-web"]
+    "ignore": ["dist", "node_modules", "coverage", ".vercel", "*.json", "docs-web"]
   }
 }

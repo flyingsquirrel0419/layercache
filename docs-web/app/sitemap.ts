@@ -1,8 +1,9 @@
 import type { MetadataRoute } from "next";
 import { getAllSlugs } from "@/lib/docs-config";
+import { SITE_URL } from "@/lib/site-url";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = "https://layercache.dev";
+  const baseUrl = SITE_URL;
 
   const docSlugs = getAllSlugs();
   const docPages = docSlugs.map((slug) => ({

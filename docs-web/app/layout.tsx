@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
+import { SITE_URL } from "@/lib/site-url";
 import "./globals.css";
 
 const inter = Inter({
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Layercache — Multi-Layer Caching for Node.js",
     description: "Production-ready multi-layer caching with stampede prevention, tag invalidation, and full observability.",
-    url: "https://layercache.dev",
+    url: SITE_URL,
     siteName: "Layercache",
     type: "website",
   },
@@ -28,7 +29,7 @@ export const metadata: Metadata = {
     title: "Layercache — Multi-Layer Caching for Node.js",
     description: "Production-ready multi-layer caching with stampede prevention, tag invalidation, and full observability.",
   },
-  metadataBase: new URL("https://layercache.dev"),
+  metadataBase: new URL(SITE_URL),
   alternates: {
     canonical: "/",
     types: {

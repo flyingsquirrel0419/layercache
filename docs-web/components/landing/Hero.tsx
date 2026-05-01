@@ -88,7 +88,7 @@ export function Hero() {
 
         <div className="flex items-center justify-center gap-2 mb-8 flex-wrap">
           <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/20">
-            v1.3.4
+            main docs
           </span>
           <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-surface text-text-secondary border border-border">
             Node.js ≥ 20
@@ -97,7 +97,7 @@ export function Hero() {
             Apache-2.0
           </span>
           <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-surface text-text-secondary border border-border">
-            529 tests
+            549 tests
           </span>
         </div>
 

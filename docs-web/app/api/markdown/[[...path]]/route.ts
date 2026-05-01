@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import fs from "fs";
 import path from "path";
 import { getAllDocs } from "@/lib/mdx";
+import { SITE_URL } from "@/lib/site-url";
 
 export const dynamic = "force-static";
 
@@ -64,8 +65,8 @@ const user = await cache.get('user:123', () => db.findUser(123))
 
 ## Links
 
-- Docs: https://layercache.dev/docs
-- API Reference: https://layercache.dev/docs/api
+- Docs: ${SITE_URL}/docs
+- API Reference: ${SITE_URL}/docs/api
 - Source: https://github.com/flyingsquirrel0419/layercache
 - License: Apache-2.0
 `;
