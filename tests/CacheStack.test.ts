@@ -670,6 +670,24 @@ describe('CacheStack', () => {
     expect(cache.getMetrics().deletes).toBe(0)
   })
 
+  it('removes stale tag entries when expiration finds no stored value', async () => {
+    const tagIndex = {
+      clear: vi.fn(async () => undefined),
+      keysForTag: vi.fn(async () => ['session:missing']),
+      matchPattern: vi.fn(async () => []),
+      remove: vi.fn(async () => undefined),
+      touch: vi.fn(async () => undefined),
+      track: vi.fn(async () => undefined)
+    }
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { tagIndex: tagIndex as never })
+
+    await cache.expireByTag('session')
+
+    expect(tagIndex.remove).toHaveBeenCalledWith('session:missing')
+    expect(cache.getMetrics().deletes).toBe(0)
+    expect(cache.getMetrics().invalidations).toBe(1)
+  })
+
   it('can skip write-triggered invalidation broadcasts', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()

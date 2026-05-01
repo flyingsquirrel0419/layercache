@@ -96,6 +96,39 @@ describe('StoredValue', () => {
     expect(
       isStoredValueEnvelope({
         __layercache: 1,
+        kind: 'invalid',
+        value: { id: 1 },
+        freshUntil: now + 1_000,
+        staleUntil: null,
+        errorUntil: null
+      })
+    ).toBe(false)
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: 'bad',
+        staleUntil: null,
+        errorUntil: null
+      })
+    ).toBe(false)
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
+        kind: 'value',
+        value: { id: 1 },
+        freshUntil: now + 1_000,
+        staleUntil: 'bad',
+        errorUntil: null
+      })
+    ).toBe(false)
+
+    expect(
+      isStoredValueEnvelope({
+        __layercache: 1,
         kind: 'value',
         value: { id: 1 },
         freshUntil: now + 1_000,

@@ -413,6 +413,118 @@ describe('CacheStack internals', () => {
     ).resolves.toBeNull()
   })
 
+  it('expires layer entries through invalidation support edge cases', async () => {
+    const skippedGetEntry = vi.fn(async () => createStoredValueEnvelope({ kind: 'value', value: 'skip' }))
+    const skippedSet = vi.fn(async () => undefined)
+    const skippedLayer = makeLayer('skipped-expire', {
+      get: vi.fn(async () => {
+        throw new Error('degrade first')
+      }),
+      getEntry: skippedGetEntry,
+      set: skippedSet
+    })
+    const set = vi.fn(async () => undefined)
+    const layer = makeLayer('expire-layer', {
+      get: vi.fn(async (key: string) => (key === 'plain' ? 'plain-value' : null)),
+      getEntry: vi.fn(async (key: string) => {
+        if (key === 'missing') {
+          return null
+        }
+        if (key === 'plain') {
+          return 'plain-value'
+        }
+        if (key === 'boom') {
+          throw new Error('expire failed')
+        }
+        return createStoredValueEnvelope({
+          kind: 'value',
+          value: { id: 1 },
+          freshTtlSeconds: 60,
+          staleWhileRevalidateSeconds: 30
+        })
+      }),
+      set
+    })
+    const cache = new CacheStack([skippedLayer, layer], { gracefulDegradation: true })
+    const failures: unknown[] = []
+    cache.on('error', (event) => failures.push(event))
+
+    await expect(cache.has('prime:skip')).resolves.toBe(false)
+
+    await expect(
+      (
+        cache as {
+          invalidation: {
+            expireKeysInLayers: (layers: CacheLayer[], keys: string[]) => Promise<Set<string>>
+          }
+        }
+      ).invalidation.expireKeysInLayers([skippedLayer, layer], ['missing', 'plain', 'fresh', 'boom'])
+    ).resolves.toEqual(new Set(['plain', 'fresh']))
+
+    expect(skippedGetEntry).not.toHaveBeenCalled()
+    expect(skippedSet).not.toHaveBeenCalled()
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith(
+      'fresh',
+      expect.objectContaining({
+        __layercache: 1,
+        freshTtlSeconds: 60,
+        staleWhileRevalidateSeconds: 30
+      }),
+      expect.any(Number)
+    )
+    expect(failures).toContainEqual(expect.objectContaining({ layer: 'expire-layer', operation: 'expire' }))
+
+    await expect(
+      (
+        cache as {
+          expireKeysInLayers: (keys: string[], layers: CacheLayer[]) => Promise<Set<string>>
+        }
+      ).expireKeysInLayers([], [layer])
+    ).resolves.toEqual(new Set())
+  })
+
+  it('reports invalidation delete failures and get-fallback expire misses', async () => {
+    const deleteManyLayer = makeLayer('delete-many-fails', {
+      deleteMany: vi.fn(async () => {
+        throw new Error('bulk delete failed')
+      })
+    })
+    const deleteLayer = makeLayer('delete-fails', {
+      delete: vi.fn(async () => {
+        throw new Error('delete failed')
+      })
+    })
+    const getFallbackLayer = makeLayer('get-fallback-miss', {
+      get: vi.fn(async () => null)
+    })
+    const cache = new CacheStack([deleteManyLayer, deleteLayer, getFallbackLayer], { gracefulDegradation: true })
+    const failures: unknown[] = []
+    cache.on('error', (event) => failures.push(event))
+
+    await (
+      cache as {
+        invalidation: {
+          deleteKeysFromLayers: (layers: CacheLayer[], keys: string[]) => Promise<void>
+          expireKeysInLayers: (layers: CacheLayer[], keys: string[]) => Promise<Set<string>>
+        }
+      }
+    ).invalidation.deleteKeysFromLayers([deleteManyLayer, deleteLayer], ['user:1'])
+
+    await expect(
+      (
+        cache as {
+          invalidation: {
+            expireKeysInLayers: (layers: CacheLayer[], keys: string[]) => Promise<Set<string>>
+          }
+        }
+      ).invalidation.expireKeysInLayers([getFallbackLayer], ['missing'])
+    ).resolves.toEqual(new Set())
+
+    expect(failures).toContainEqual(expect.objectContaining({ layer: 'delete-many-fails', operation: 'delete' }))
+    expect(failures).toContainEqual(expect.objectContaining({ layer: 'delete-fails', operation: 'delete' }))
+  })
+
   it('covers background refresh, invalidation-message, write-behind, and timeout branches', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
       writeStrategy: 'write-behind',
