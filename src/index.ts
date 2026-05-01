@@ -33,6 +33,8 @@ export {
   type CacheEntryWriteKind,
   type CacheEntryWriteOptions,
   type CacheDegradationOptions,
+  type CacheFetcher,
+  type CacheFetcherContext,
   type CacheHitRateSnapshot,
   type CacheInspectResult,
   type CacheLayerLatency,

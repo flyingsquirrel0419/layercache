@@ -52,6 +52,8 @@ import {
   type CacheContextOptionsContext,
   type CacheEntryWriteKind,
   type CacheEntryWriteOptions,
+  type CacheFetcher,
+  type CacheFetcherContext,
   type CacheGetOptions,
   type CacheHealthCheckResult,
   type CacheHitRateSnapshot,
@@ -274,8 +276,12 @@ export class CacheStack extends EventEmitter {
       withTimeout: (promise, ms, createError) => this.withTimeout(promise, ms, createError),
       isDisconnecting: () => this.isDisconnecting,
       isGracefulDegradationEnabled: () => this.isGracefulDegradationEnabled(),
-      scheduleBackgroundRefreshDispatch: <T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions) =>
-        this.scheduleBackgroundRefresh(key, fetcher, options),
+      scheduleBackgroundRefreshDispatch: <T>(
+        key: string,
+        fetcher: CacheFetcher<T>,
+        options?: CacheGetOptions,
+        fetcherContext?: CacheFetcherContext<T>
+      ) => this.scheduleBackgroundRefresh(key, fetcher, options, fetcherContext),
       stampedePrevention: options.stampedePrevention,
       singleFlightCoordinator: options.singleFlightCoordinator,
       singleFlightLeaseMs: options.singleFlightLeaseMs,
@@ -298,7 +304,7 @@ export class CacheStack extends EventEmitter {
    * and stores the result across all layers. Returns `null` if the key is not found
    * and no `fetcher` is provided.
    */
-  async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.observeOperation('layercache.get', { 'layercache.key': String(key ?? '') }, async () => {
       const normalizedKey = this.qualifyKey(validateCacheKey(key))
       this.validateWriteOptions(options)
@@ -311,7 +317,7 @@ export class CacheStack extends EventEmitter {
    * Alias for `get(key, fetcher, options)` — explicit get-or-set pattern.
    * Fetches and caches the value if not already present.
    */
-  async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.get(key, fetcher, options)
   }
 
@@ -320,7 +326,7 @@ export class CacheStack extends EventEmitter {
    * Useful when the value is expected to exist or the fetcher is expected to
    * return non-null.
    */
-  async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
+  async getOrThrow<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T> {
     const value = await this.get(key, fetcher, options)
     if (value === null) {
       throw new CacheMissError(key)
@@ -469,7 +475,7 @@ export class CacheStack extends EventEmitter {
           string,
           {
             promise: Promise<T | null>
-            fetch?: () => Promise<T>
+            fetch?: CacheFetcher<T>
             optionsSignature: string
           }
         >()
@@ -1322,8 +1328,13 @@ export class CacheStack extends EventEmitter {
     return this.reader.readLayerEntry(layer, key)
   }
 
-  private scheduleBackgroundRefresh<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): void {
-    this.reader.runScheduleBackgroundRefresh(key, fetcher, options)
+  private scheduleBackgroundRefresh<T>(
+    key: string,
+    fetcher: CacheFetcher<T>,
+    options?: CacheGetOptions,
+    fetcherContext?: CacheFetcherContext<T>
+  ): void {
+    this.reader.runScheduleBackgroundRefresh(key, fetcher, options, fetcherContext)
   }
 
   private async applyFreshReadPolicies<T>(
@@ -1337,7 +1348,7 @@ export class CacheStack extends EventEmitter {
       layerName: string
     },
     options: CacheGetOptions | undefined,
-    fetcher?: () => Promise<T>
+    fetcher?: CacheFetcher<T>
   ): Promise<void> {
     return this.reader.runApplyFreshReadPolicies(key, hit, options, fetcher)
   }

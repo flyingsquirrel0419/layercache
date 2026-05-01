@@ -82,9 +82,18 @@ export interface CacheWriteOptions extends CacheEntryWriteOptions {
 
 export interface CacheGetOptions extends CacheWriteOptions {}
 
+export interface CacheFetcherContext<T = unknown> {
+  key: string
+  currentValue: T | undefined
+  state: 'miss' | 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
+  layer?: string
+}
+
+export type CacheFetcher<T = unknown> = (context: CacheFetcherContext<T>) => Promise<T>
+
 export interface CacheMGetEntry<T> {
   key: string
-  fetch?: () => Promise<T>
+  fetch?: CacheFetcher<T>
   options?: CacheGetOptions
 }
 
@@ -330,7 +339,7 @@ export interface CacheWriteBehindOptions {
 
 export interface CacheWarmEntry<T = unknown> {
   key: string
-  fetcher: () => Promise<T>
+  fetcher: CacheFetcher<T>
   options?: CacheGetOptions
   priority?: number
 }

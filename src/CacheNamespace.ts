@@ -8,6 +8,7 @@ import {
   diffNamespaceMetrics
 } from './internal/CacheNamespaceMetrics'
 import type {
+  CacheFetcher,
   CacheGetOptions,
   CacheHitRateSnapshot,
   CacheInspectResult,
@@ -31,18 +32,18 @@ export class CacheNamespace {
     validateNamespaceKey(prefix)
   }
 
-  async get<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.get(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
-  async getOrSet<T>(key: string, fetcher: () => Promise<T>, options?: CacheGetOptions): Promise<T | null> {
+  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
   /**
    * Like `get()`, but throws `CacheMissError` instead of returning `null`.
    */
-  async getOrThrow<T>(key: string, fetcher?: () => Promise<T>, options?: CacheGetOptions): Promise<T> {
+  async getOrThrow<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T> {
     return this.trackMetrics(() => this.cache.getOrThrow(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
