@@ -333,4 +333,188 @@ describe('FetchRateLimiter', () => {
       vi.useRealTimers()
     }
   })
+
+  it('runs the task when normalized options do not contain active limits', async () => {
+    const limiter = new FetchRateLimiter()
+    const task = vi.fn(async () => 'unlimited')
+
+    await expect(
+      limiter.schedule({ scope: 'global' }, { key: 'user:1', fetcher: async () => 'x' }, task)
+    ).resolves.toBe('unlimited')
+
+    expect(task).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects queued work when disposed before the active task drains it', async () => {
+    const limiter = new FetchRateLimiter()
+    let releaseFirst!: () => void
+
+    const first = limiter.schedule(
+      { maxConcurrent: 1 },
+      { key: 'a', fetcher: async () => 'a' },
+      () =>
+        new Promise<string>((resolve) => {
+          releaseFirst = () => resolve('first')
+        })
+    )
+    const second = limiter.schedule({ maxConcurrent: 1 }, { key: 'b', fetcher: async () => 'b' }, async () => 'second')
+
+    await Promise.resolve()
+    limiter.dispose()
+    releaseFirst()
+
+    await expect(first).resolves.toBe('first')
+    await expect(second).rejects.toThrow(/disposed/i)
+  })
+
+  it('drops empty and sparse pending queues during drain', async () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const pendingBuckets = (limiter as unknown as { pendingBuckets: Set<string> }).pendingBuckets
+
+    queuesByBucket.set('empty', [])
+    queuesByBucket.set('sparse', new Array(1))
+    pendingBuckets.add('empty')
+    pendingBuckets.add('sparse')
+    ;(limiter as unknown as { drain: () => void }).drain()
+
+    expect(queuesByBucket.size).toBe(0)
+    expect(pendingBuckets.size).toBe(0)
+  })
+
+  it('throws when the bucket hard limit cannot be relieved by idle eviction', () => {
+    const limiter = new FetchRateLimiter()
+    const buckets = (limiter as unknown as { buckets: Map<string, { active: number; startedAt: number[] }> }).buckets
+
+    for (let index = 0; index < 10_000; index += 1) {
+      buckets.set(`busy:${index}`, { active: 1, startedAt: [] })
+    }
+
+    expect(() =>
+      (
+        limiter as unknown as {
+          bucketState: (bucketKey: string) => unknown
+        }
+      ).bucketState('overflow')
+    ).toThrow(/bucket limit/i)
+  })
+
+  it('leaves active or queued buckets in place during cleanup', () => {
+    const limiter = new FetchRateLimiter()
+    const buckets = (limiter as unknown as { buckets: Map<string, { active: number; startedAt: number[] }> }).buckets
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const active = { active: 1, startedAt: [] }
+    const queued = { active: 0, startedAt: [] }
+
+    buckets.set('active', active)
+    buckets.set('queued', queued)
+    queuesByBucket.set('queued', [{}])
+    ;(
+      limiter as unknown as {
+        cleanupBucket: (
+          bucketKey: string,
+          bucket: { active: number; startedAt: number[] },
+          intervalMs: number | undefined
+        ) => void
+      }
+    ).cleanupBucket('active', active, 10)
+    ;(
+      limiter as unknown as {
+        cleanupBucket: (
+          bucketKey: string,
+          bucket: { active: number; startedAt: number[] },
+          intervalMs: number | undefined
+        ) => void
+      }
+    ).cleanupBucket('queued', queued, 10)
+
+    expect(buckets.has('active')).toBe(true)
+    expect(buckets.has('queued')).toBe(true)
+  })
+
+  it('handles a queue that disappears between bucket selection and shifting', () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const pendingBuckets = (limiter as unknown as { pendingBuckets: Set<string> }).pendingBuckets
+    const queue = [
+      {
+        bucketKey: 'vanishing',
+        options: { maxConcurrent: 1, scope: 'global' },
+        task: async () => 'unused',
+        resolve: vi.fn(),
+        reject: vi.fn()
+      }
+    ]
+    queue.shift = vi.fn(() => undefined)
+    queuesByBucket.set('vanishing', queue)
+    pendingBuckets.add('vanishing')
+    ;(limiter as unknown as { drain: () => void }).drain()
+
+    expect(queuesByBucket.has('vanishing')).toBe(false)
+    expect(pendingBuckets.has('vanishing')).toBe(false)
+  })
+
+  it('clears stale cleanup timers before running new work and rejects bucket access after disposal', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const timer = setTimeout(() => undefined, 1_000)
+    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout')
+    ;(
+      limiter as unknown as {
+        buckets: Map<string, { active: number; startedAt: number[]; cleanupTimer?: ReturnType<typeof setTimeout> }>
+      }
+    ).buckets.set('global', { active: 0, startedAt: [], cleanupTimer: timer })
+
+    try {
+      await expect(
+        limiter.schedule({ maxConcurrent: 1 }, { key: 'a', fetcher: async () => 'a' }, async () => 'ok')
+      ).resolves.toBe('ok')
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(timer)
+
+      limiter.dispose()
+      expect(() =>
+        (
+          limiter as unknown as {
+            bucketState: (bucketKey: string) => unknown
+          }
+        ).bucketState('after-dispose')
+      ).toThrow(/disposed/i)
+    } finally {
+      clearTimeoutSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps interval buckets when cleanup fires but new queued work exists', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const bucket = {
+      active: 0,
+      startedAt: [Date.now()],
+      cleanupTimer: undefined as ReturnType<typeof setTimeout> | undefined
+    }
+    const buckets = (
+      limiter as unknown as {
+        buckets: Map<string, typeof bucket>
+        queuesByBucket: Map<string, Array<unknown>>
+      }
+    ).buckets
+    const queuesByBucket = (
+      limiter as unknown as {
+        buckets: Map<string, typeof bucket>
+        queuesByBucket: Map<string, Array<unknown>>
+      }
+    ).queuesByBucket
+    buckets.set('interval', bucket)
+    ;(
+      limiter as unknown as {
+        cleanupBucket: (bucketKey: string, bucket: typeof bucket, intervalMs: number | undefined) => void
+      }
+    ).cleanupBucket('interval', bucket, 10)
+    queuesByBucket.set('interval', [{}])
+    await vi.advanceTimersByTimeAsync(10)
+
+    expect(buckets.has('interval')).toBe(true)
+    vi.useRealTimers()
+  })
 })

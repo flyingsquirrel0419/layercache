@@ -132,11 +132,12 @@ export class CacheStackMaintenance {
         onError(generation, error)
       })
 
-    this.generationCleanupPromise = scheduledTask.finally(() => {
-      if (this.generationCleanupPromise === scheduledTask) {
+    const cleanupPromise = scheduledTask.finally(() => {
+      if (this.generationCleanupPromise === cleanupPromise) {
         this.generationCleanupPromise = undefined
       }
     })
+    this.generationCleanupPromise = cleanupPromise
   }
 
   async waitForGenerationCleanup(): Promise<void> {

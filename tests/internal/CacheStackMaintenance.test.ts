@@ -292,4 +292,85 @@ describe('CacheStackMaintenance', () => {
     await vi.advanceTimersByTimeAsync(100)
     expect(flush).toHaveBeenCalledTimes(1)
   })
+
+  it('initializes and disposes write-behind timers only for positive write-behind intervals', () => {
+    vi.useFakeTimers()
+    const maintenance = new CacheStackMaintenance()
+    const flush = vi.fn(async () => undefined)
+
+    maintenance.initializeWriteBehindTimer('write-through', { flushIntervalMs: 10 }, flush)
+    maintenance.initializeWriteBehindTimer('write-behind', { flushIntervalMs: 0 }, flush)
+    vi.advanceTimersByTime(20)
+    expect(flush).not.toHaveBeenCalled()
+
+    maintenance.initializeWriteBehindTimer('write-behind', { flushIntervalMs: 10 }, flush)
+    vi.advanceTimersByTime(10)
+    expect(flush).toHaveBeenCalledTimes(1)
+
+    maintenance.disposeWriteBehindTimer()
+    maintenance.disposeWriteBehindTimer()
+    vi.advanceTimersByTime(10)
+    expect(flush).toHaveBeenCalledTimes(1)
+  })
+
+  it('prunes the oldest key epochs once the epoch map grows beyond its limit', () => {
+    const maintenance = new CacheStackMaintenance()
+
+    for (let index = 0; index < 50_001; index += 1) {
+      maintenance.bumpKeyEpochs([`key:${index}`])
+    }
+
+    expect(maintenance.currentKeyEpoch('key:0')).toBe(0)
+    expect(maintenance.currentKeyEpoch('key:50000')).toBe(1)
+  })
+
+  it('recursively flushes pre-existing write-behind queues larger than one batch', async () => {
+    const maintenance = new CacheStackMaintenance()
+    const executed: string[] = []
+    ;(
+      maintenance as unknown as {
+        writeBehindQueue: Array<() => Promise<void>>
+      }
+    ).writeBehindQueue.push(
+      async () => {
+        executed.push('one')
+      },
+      async () => {
+        executed.push('two')
+      },
+      async () => {
+        executed.push('three')
+      }
+    )
+
+    await maintenance.flushWriteBehindQueue({ batchSize: 2 }, async (batch) => {
+      for (const operation of batch) {
+        await operation()
+      }
+    })
+
+    expect(executed).toEqual(['one', 'two', 'three'])
+  })
+
+  it('uses default write-behind batch sizing when options are omitted', async () => {
+    const maintenance = new CacheStackMaintenance()
+    const flushBatch = vi.fn(async () => undefined)
+
+    await maintenance.enqueueWriteBehind(async () => undefined, undefined, flushBatch)
+    await maintenance.flushWriteBehindQueue(undefined, flushBatch)
+
+    expect(flushBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the generation cleanup promise after the final scheduled cleanup completes', async () => {
+    const maintenance = new CacheStackMaintenance()
+
+    maintenance.scheduleGenerationCleanup(1, async () => undefined, vi.fn())
+    await maintenance.waitForGenerationCleanup()
+    await Promise.resolve()
+
+    expect(
+      (maintenance as unknown as { generationCleanupPromise: Promise<void> | undefined }).generationCleanupPromise
+    ).toBeUndefined()
+  })
 })

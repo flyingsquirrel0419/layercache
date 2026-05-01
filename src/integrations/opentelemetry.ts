@@ -30,6 +30,7 @@ export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemet
       // Evict stale spans if the map grows too large (orphaned from missing operation-end)
       if (spans.size >= MAX_SPANS) {
         const oldest = spans.keys().next().value
+        /* v8 ignore next -- Map has a first key whenever size is at least MAX_SPANS */
         if (oldest !== undefined) {
           spans.get(oldest)?.end()
           spans.delete(oldest)

@@ -37,6 +37,17 @@ describe('RedisInvalidationBus', () => {
     subscriber.disconnect()
   })
 
+  it('uses a duplicated subscriber and default channel when not configured', async () => {
+    const publisher = new Redis()
+    const duplicate = vi.spyOn(publisher, 'duplicate')
+
+    const bus = new RedisInvalidationBus({ publisher })
+
+    expect(duplicate).toHaveBeenCalled()
+    await expect(bus.publish({ scope: 'clear', sourceId: 'instance-a', operation: 'clear' })).resolves.toBeUndefined()
+    publisher.disconnect()
+  })
+
   it('logs handler errors without breaking the subscription', async () => {
     const publisher = new Redis()
     const subscriber = publisher.duplicate()

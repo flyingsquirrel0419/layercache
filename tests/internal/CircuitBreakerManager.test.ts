@@ -122,4 +122,78 @@ describe('CircuitBreakerManager', () => {
       vi.useRealTimers()
     }
   })
+
+  it('truncates long keys in open-circuit errors and counts only open breakers', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 10 })
+      const longKey = 'x'.repeat(80)
+
+      manager.recordFailure('closed', { failureThreshold: 2, cooldownMs: 1_000 })
+      manager.recordFailure(longKey, { failureThreshold: 1, cooldownMs: 1_000 })
+
+      expect(manager.tripCount()).toBe(1)
+      expect(() => manager.assertClosed(longKey, { failureThreshold: 1, cooldownMs: 1_000 })).toThrow(/x{64}\.\.\./)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops pruning after expired entries bring the breaker map back under capacity', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 2 })
+
+      manager.recordFailure('expired', { failureThreshold: 1, cooldownMs: 100 })
+      vi.advanceTimersByTime(200)
+      manager.recordFailure('fresh-a', { failureThreshold: 1, cooldownMs: 1_000 })
+      manager.recordFailure('fresh-b', { failureThreshold: 1, cooldownMs: 1_000 })
+
+      expect(manager.tripCount()).toBe(2)
+      expect(manager.isOpen('fresh-a')).toBe(true)
+      expect(manager.isOpen('fresh-b')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('returns from pruning as soon as expired entries restore capacity', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 1 })
+
+      manager.recordFailure('expired', { failureThreshold: 1, cooldownMs: 100 })
+      vi.advanceTimersByTime(200)
+      manager.recordFailure('fresh', { failureThreshold: 1, cooldownMs: 1_000 })
+
+      expect(manager.isOpen('expired')).toBe(false)
+      expect(manager.isOpen('fresh')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('returns after a full prune pass when the last expired entry restores capacity', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-07T00:00:00Z'))
+    try {
+      const manager = new CircuitBreakerManager({ maxEntries: 2 })
+      const breakers = (
+        manager as unknown as {
+          breakers: Map<string, { failures: number; openUntil: number | null; createdAt: number }>
+        }
+      ).breakers
+      breakers.set('fresh-a', { failures: 1, openUntil: Date.now() + 1_000, createdAt: Date.now() })
+      breakers.set('fresh-b', { failures: 1, openUntil: Date.now() + 1_000, createdAt: Date.now() + 1 })
+      breakers.set('expired-last', { failures: 1, openUntil: Date.now() - 1, createdAt: Date.now() + 2 })
+      ;(manager as unknown as { pruneIfNeeded: () => void }).pruneIfNeeded()
+
+      expect([...breakers.keys()]).toEqual(['fresh-a', 'fresh-b'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

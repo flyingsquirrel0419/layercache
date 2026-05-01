@@ -45,6 +45,12 @@ describe('MemcachedLayer', () => {
     expect(result).toEqual({ hello: 'world' })
   })
 
+  it('stores values without an expiration when ttl is disabled for a write', async () => {
+    await layer.set('forever', 'value', 0)
+
+    expect(await layer.get('forever')).toBe('value')
+  })
+
   it('should return null for missing key', async () => {
     expect(await layer.get('missing')).toBeNull()
   })

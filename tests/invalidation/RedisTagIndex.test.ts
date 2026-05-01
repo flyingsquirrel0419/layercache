@@ -97,6 +97,20 @@ describe('RedisTagIndex', () => {
     expect(byPattern).toEqual(['post:1'])
   })
 
+  it('filters Redis glob pattern scan candidates through the project matcher', async () => {
+    const redis = new Redis()
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:pattern-filter' })
+
+    await index.touch('user1:a')
+
+    const matches: string[] = []
+    await index.forEachKeyMatchingPattern('user[1]:*', async (key) => {
+      matches.push(key)
+    })
+
+    expect(matches).toEqual([])
+  })
+
   it('clears all index keys and rejects invalid shard counts', async () => {
     const redis = new Redis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:clear' })

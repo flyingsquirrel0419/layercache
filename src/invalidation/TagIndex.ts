@@ -209,6 +209,7 @@ export class TagIndex implements CacheTagIndex {
     }
 
     const patternChar = pattern[patternIndex]
+    /* v8 ignore next -- patternIndex length check above prevents undefined */
     if (patternChar === undefined) {
       return
     }
@@ -258,6 +259,7 @@ export class TagIndex implements CacheTagIndex {
     const toRemove = Math.ceil(this.maxKnownKeys * 0.1)
     for (let i = 0; i < toRemove && i < sorted.length; i += 1) {
       const entry = sorted[i]
+      /* v8 ignore next -- loop bound guarantees sorted[i] exists */
       if (entry) {
         this.removeKey(entry[0])
       }
@@ -307,6 +309,7 @@ export class TagIndex implements CacheTagIndex {
 
     for (let index = path.length - 1; index >= 0; index -= 1) {
       const entry = path[index]
+      /* v8 ignore next -- loop bound guarantees path[index] exists */
       if (!entry) {
         continue
       }

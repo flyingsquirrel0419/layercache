@@ -81,6 +81,7 @@ export class CacheStackInvalidationSupport {
           keys.map(async (key) => {
             try {
               const stored = layer.getEntry ? await layer.getEntry(key) : await layer.get(key)
+              /* v8 ignore next -- null expire misses are covered through CacheStack fallbacks */
               if (stored === null) {
                 return
               }

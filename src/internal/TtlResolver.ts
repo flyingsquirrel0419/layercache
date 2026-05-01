@@ -108,7 +108,9 @@ export class TtlResolver {
       return ttl
     }
 
+    /* v8 ignore next -- resolveLayerMs receives a fallback for adaptive step */
     const step = this.resolveLayerMs(layerName, config.step, undefined, Math.max(1, Math.round(ttl / 2))) ?? 0
+    /* v8 ignore next -- resolveLayerMs receives a fallback for adaptive maxTtl */
     const maxTtl = this.resolveLayerMs(layerName, config.maxTtl, undefined, ttl + step * 4) ?? ttl
     const multiplier = Math.floor(profile.hits / hotAfter)
     return Math.min(maxTtl, ttl + step * multiplier)
@@ -169,6 +171,7 @@ export class TtlResolver {
     const sorted = [...this.accessProfiles.entries()].sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt)
     for (let i = 0; i < toRemove && i < sorted.length; i++) {
       const entry = sorted[i]
+      /* v8 ignore next -- loop bound guarantees sorted[i] exists */
       if (entry) {
         this.accessProfiles.delete(entry[0])
       }

@@ -18,9 +18,11 @@ describe('CacheSnapshotFile', () => {
     try {
       await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
       await expect(validateSnapshotFilePath(filePath, 'write', false)).resolves.toBe(resolve(filePath))
+      await expect(validateSnapshotFilePath(filePath, 'write', undefined, dir)).resolves.toBe(filePath)
 
       await writeFile(filePath, '[]', 'utf8')
       await expect(validateSnapshotFilePath(filePath, 'read', dir)).resolves.toBe(filePath)
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -118,6 +120,17 @@ describe('CacheSnapshotFile', () => {
     }
   })
 
+  it('allows writes when the target file does not already exist', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-new-file-'))
+    const filePath = join(dir, 'new.json')
+
+    try {
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reads UTF-8 content with and without size limits', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-read-'))
     const filePath = join(dir, 'snapshot.json')
@@ -149,6 +162,18 @@ describe('CacheSnapshotFile', () => {
       await writeFile(tempPath, 'test', 'utf8')
       await expect(commitAtomicWrite(tempPath, targetPath)).rejects.toThrow()
       await expect(fs.promises.stat(tempPath)).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still rethrows when commit cleanup cannot remove the temp file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-missing-'))
+    const tempPath = join(dir, 'missing-temp.tmp')
+    const targetPath = join(dir, 'nonexistent', 'target.txt')
+
+    try {
+      await expect(commitAtomicWrite(tempPath, targetPath)).rejects.toThrow()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

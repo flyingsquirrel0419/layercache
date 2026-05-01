@@ -191,4 +191,28 @@ describe('CacheKeyDiscovery', () => {
     await expect(discovery.collectKeysMatchingPattern('user:*')).resolves.toEqual(['user:1', 'user:2'])
     await expect(discovery.collectKeysWithPrefix('user:', 1)).rejects.toThrow(/too many keys/i)
   })
+
+  it('tolerates layer key methods that resolve undefined', async () => {
+    const discovery = new CacheKeyDiscovery({
+      layers: [
+        {
+          name: 'undefined-keys',
+          get: vi.fn(),
+          set: vi.fn(),
+          delete: vi.fn(),
+          clear: vi.fn(),
+          keys: vi.fn(async () => undefined as unknown as string[])
+        } as unknown as CacheLayer
+      ],
+      tagIndex: {
+        keysForPrefix: vi.fn(async () => []),
+        matchPattern: vi.fn(async () => [])
+      } as unknown as CacheTagIndex,
+      shouldSkipLayer: () => false,
+      handleLayerFailure: vi.fn(async () => undefined)
+    })
+
+    await expect(discovery.collectKeysWithPrefix('user:')).resolves.toEqual([])
+    await expect(discovery.collectKeysMatchingPattern('user:*')).resolves.toEqual([])
+  })
 })

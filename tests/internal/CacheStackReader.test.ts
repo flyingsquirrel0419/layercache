@@ -228,6 +228,15 @@ describe('CacheStackReader', () => {
   // --- readFromLayers (tested via getPrepared which calls it) ---
 
   describe('readFromLayers', () => {
+    it('skips sparse layer slots while reading', async () => {
+      const { reader, options } = createReader()
+      options.layers = [undefined as unknown as CacheLayer, createMockLayer('L1')]
+
+      const result = await reader.getPrepared('key:1')
+      expect(result).toBeNull()
+      expect(options.metricsCollector.snapshot.misses).toBe(1)
+    })
+
     it('returns miss when all layers return null', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0'), createMockLayer('L1')]
@@ -752,6 +761,44 @@ describe('CacheStackReader', () => {
       reader.runScheduleBackgroundRefresh('key:1', fetcher)
       expect(reader.activeRefreshCount).toBe(0)
     })
+
+    it('returns from background refresh when abort flags are set before work starts', async () => {
+      const { reader, options } = createReader()
+      const fetcher = vi.fn(async () => 'data')
+      const originalIncrement = options.metricsCollector.increment.bind(options.metricsCollector)
+      vi.spyOn(options.metricsCollector, 'increment').mockImplementation((field, amount) => {
+        originalIncrement(field, amount)
+        if (field === 'refreshes') {
+          ;(reader as unknown as { backgroundRefreshAbort: Map<string, boolean> }).backgroundRefreshAbort.set(
+            'key:1',
+            true
+          )
+        }
+      })
+
+      reader.runScheduleBackgroundRefresh('key:1', fetcher)
+      await Promise.all(reader.getAllRefreshPromises())
+
+      expect(fetcher).not.toHaveBeenCalled()
+    })
+
+    it('suppresses background refresh errors when abort flags are set during the refresh', async () => {
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0')]
+      options.withTimeout = vi.fn(async () => {
+        ;(reader as unknown as { backgroundRefreshAbort: Map<string, boolean> }).backgroundRefreshAbort.set(
+          'key:1',
+          true
+        )
+        throw new Error('aborted refresh')
+      })
+      const fetcher = vi.fn(async () => 'data')
+
+      reader.runScheduleBackgroundRefresh('key:1', fetcher)
+      await Promise.all(reader.getAllRefreshPromises())
+
+      expect(options.metricsCollector.snapshot.refreshErrors).toBe(0)
+    })
   })
 
   // --- resolveSingleFlightOptions ---
@@ -837,6 +884,35 @@ describe('CacheStackReader', () => {
       expect(options.scheduleBackgroundRefreshDispatch).toHaveBeenCalledWith('key:1', fetcher, undefined, {
         key: 'key:1',
         currentValue: 'ahead',
+        state: 'fresh',
+        layer: 'L0'
+      } satisfies CacheFetcherContext<string>)
+    })
+
+    it('uses undefined currentValue when a null cache value schedules refresh ahead', async () => {
+      const { reader, options } = createReader()
+      const envelope = createStoredValueEnvelope({ kind: 'empty', freshTtlMs: 10 })
+      options.refreshAhead = 600_000
+      options.resolveLayerMs.mockReturnValue(600_000)
+      const fetcher = vi.fn(async () => 'refreshed')
+
+      await reader.runApplyFreshReadPolicies(
+        'key:empty',
+        {
+          found: true,
+          value: null,
+          stored: envelope,
+          state: 'fresh',
+          layerIndex: 0,
+          layerName: 'L0'
+        },
+        undefined,
+        fetcher
+      )
+
+      expect(options.scheduleBackgroundRefreshDispatch).toHaveBeenCalledWith('key:empty', fetcher, undefined, {
+        key: 'key:empty',
+        currentValue: undefined,
         state: 'fresh',
         layer: 'L0'
       } satisfies CacheFetcherContext<string>)

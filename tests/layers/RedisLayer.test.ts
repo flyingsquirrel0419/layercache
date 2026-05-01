@@ -27,6 +27,16 @@ class ErrorTransform extends Transform {
   }
 }
 
+class StringTransform extends Transform {
+  override _transform(
+    _chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null, data?: string) => void
+  ) {
+    callback(null, 'payload')
+  }
+}
+
 describe('RedisLayer', () => {
   it('round-trips json values', async () => {
     const client = new Redis()
@@ -48,6 +58,40 @@ describe('RedisLayer', () => {
     await layer.set('a', 1)
     await layer.set('b', 2)
     await expect(layer.size()).resolves.toBe(await client.dbsize())
+    await expect(layer.keys()).resolves.toEqual(expect.arrayContaining(['a', 'b']))
+  })
+
+  it('treats a null pipeline result as misses in bulk reads', async () => {
+    const pipeline = {
+      getBuffer: vi.fn(),
+      exec: vi.fn(async () => null)
+    }
+    const client = {
+      pipeline: vi.fn(() => pipeline)
+    } as unknown as Redis
+    const layer = new RedisLayer({ client })
+
+    await expect(layer.getMany(['a', 'b'])).resolves.toEqual([null, null])
+    expect(pipeline.getBuffer).toHaveBeenCalledTimes(2)
+  })
+
+  it('handles extra pipeline payloads without a matching input key', async () => {
+    const json = new JsonSerializer()
+    const pipeline = {
+      getBuffer: vi.fn(),
+      exec: vi.fn(async () => [
+        [null, json.serialize('a')],
+        [null, json.serialize('extra')]
+      ])
+    }
+    const client = {
+      pipeline: vi.fn(() => pipeline),
+      pttl: vi.fn(async () => -1),
+      set: vi.fn(async () => 'OK')
+    } as unknown as Redis
+    const layer = new RedisLayer({ client, serializer: [new MsgpackSerializer(), json] })
+
+    await expect(layer.getMany(['a'])).resolves.toEqual(['a', 'extra'])
   })
 
   it('supports alternate serializers', async () => {
@@ -82,6 +126,13 @@ describe('RedisLayer', () => {
       visited.push(key)
     })
     expect(visited.sort()).toEqual(['a', 'b'])
+
+    const unprefixed = new RedisLayer({ client })
+    const unprefixedVisited: string[] = []
+    await unprefixed.forEachKey(async (key) => {
+      unprefixedVisited.push(key)
+    })
+    expect(unprefixedVisited).toEqual(expect.arrayContaining(['cache:a', 'cache:b']))
   })
 
   it('treats deserialization failures as cache misses and removes the corrupted key', async () => {
@@ -130,6 +181,16 @@ describe('RedisLayer', () => {
     await expect(otherLayer.get('user:1')).resolves.toEqual({ id: 2 })
   })
 
+  it('deletes a single Redis key through the prefixed command path', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client, prefix: 'single:' })
+
+    await layer.set('user:1', { id: 1 })
+    await layer.delete('user:1')
+
+    await expect(layer.get('user:1')).resolves.toBeNull()
+  })
+
   it('counts prefixed keys without materializing the full key list', async () => {
     const client = new Redis()
     const prefixedLayer = new RedisLayer({ client, prefix: 'cache:' })
@@ -156,6 +217,13 @@ describe('RedisLayer', () => {
     const raw = await client.getBuffer('legacy')
     expect(raw).not.toBeNull()
     expect(() => msgpack.deserialize(raw as Buffer)).not.toThrow()
+
+    const rewriteFailureClient = new Redis()
+    const rewriteFailureLayer = new RedisLayer({ client: rewriteFailureClient, serializer: [msgpack, json] })
+    await rewriteFailureClient.set('legacy-failure', json.serialize({ legacy: 'kept' }) as string)
+    vi.spyOn(rewriteFailureClient, 'pttl').mockRejectedValueOnce(new Error('ttl unavailable'))
+
+    await expect(rewriteFailureLayer.get('legacy-failure')).resolves.toEqual({ legacy: 'kept' })
   })
 
   it('treats oversized decompressed payloads as cache misses and removes the key', async () => {
@@ -303,6 +371,51 @@ describe('RedisLayer', () => {
     warnSpy.mockRestore()
   })
 
+  it('covers positive-ttl rewrites, long corrupted-key warnings, and fast timeout cleanup', async () => {
+    const client = new Redis()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const layer = new RedisLayer({ client, commandTimeoutMs: 1_000 })
+
+    const ttlSpy = vi.spyOn(client, 'pttl').mockResolvedValueOnce(123)
+    const setSpy = vi.spyOn(client, 'set')
+    await (
+      layer as {
+        rewriteWithPrimarySerializer: (key: string, value: unknown) => Promise<void>
+      }
+    ).rewriteWithPrimarySerializer('rewrite-positive-ttl', { ok: true })
+    expect(ttlSpy).toHaveBeenCalled()
+    expect(setSpy).toHaveBeenCalledWith('rewrite-positive-ttl', expect.anything(), 'PX', 123)
+
+    vi.spyOn(client, 'del').mockRejectedValueOnce(new Error('delete failed'))
+    await (
+      layer as {
+        deleteCorruptedKey: (key: string) => Promise<void>
+      }
+    ).deleteCorruptedKey('x'.repeat(80))
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('...'), expect.any(Error))
+
+    await expect(
+      (
+        layer as {
+          runCommand: <T>(operation: string, command: () => Promise<T>) => Promise<T>
+        }
+      ).runCommand('fast()', async () => 'ok')
+    ).resolves.toBe('ok')
+
+    warnSpy.mockRestore()
+  })
+
+  it('continues clear scans when a cursor page has no keys', async () => {
+    const client = {
+      scan: vi.fn(async () => ['0', []]),
+      del: vi.fn()
+    } as unknown as Redis
+    const layer = new RedisLayer({ client, prefix: 'cache:' })
+
+    await expect(layer.clear()).resolves.toBeUndefined()
+    expect(client.del).not.toHaveBeenCalled()
+  })
+
   it('handles decompressor end and error events in the limit helper', async () => {
     const client = new Redis()
     const layer = new RedisLayer({
@@ -325,6 +438,14 @@ describe('RedisLayer', () => {
         }
       ).decompressWithLimit(new ErrorTransform(), Buffer.from('payload'))
     ).rejects.toThrow('boom')
+
+    await expect(
+      (
+        layer as unknown as {
+          decompressWithLimit: (decompressor: Transform, payload: Buffer) => Promise<Buffer>
+        }
+      ).decompressWithLimit(new StringTransform(), Buffer.from('payload'))
+    ).resolves.toEqual(Buffer.from('payload'))
   })
 
   describe('key validation', () => {
@@ -351,6 +472,12 @@ describe('RedisLayer', () => {
       const layer = new RedisLayer({ client })
       await expect(layer.get('bad\x00key')).rejects.toThrow(/control characters/)
       await expect(layer.set('bad\x01key', 'x')).rejects.toThrow(/control characters/)
+    })
+
+    it('rejects keys with surrogate code points', async () => {
+      const client = new Redis()
+      const layer = new RedisLayer({ client })
+      await expect(layer.get('\uD800')).rejects.toThrow(/surrogate/)
     })
 
     it('rejects empty keys in getMany', async () => {

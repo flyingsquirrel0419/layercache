@@ -61,6 +61,27 @@ describe('CacheStackLayerWriter', () => {
       expect(options.enqueueWriteBehind).toHaveBeenCalledTimes(1)
       expect(options.shouldWriteBehind).toHaveBeenCalledWith(remoteLayer)
     })
+
+    it('skips write operations that become outdated before they execute', async () => {
+      const layer = createMockLayer('remote', { isLocal: false })
+      const maintenance = new CacheStackMaintenance()
+      const deferredOps: Array<() => Promise<void>> = []
+      const options = createWriterOptions({
+        layers: [layer],
+        maintenance,
+        shouldWriteBehind: vi.fn(() => true),
+        enqueueWriteBehind: vi.fn(async (op) => {
+          deferredOps.push(op)
+        })
+      })
+      const writer = new CacheStackLayerWriter(options)
+
+      await writer.writeAcrossLayers('key1', 'value', 'data')
+      maintenance.bumpKeyEpochs(['key1'])
+      await deferredOps[0]()
+
+      expect(layer.set).not.toHaveBeenCalled()
+    })
   })
 
   describe('writeBatch', () => {
@@ -103,6 +124,27 @@ describe('CacheStackLayerWriter', () => {
       expect(originalSet).toHaveBeenCalled()
     })
 
+    it('skips deferred batch operations when the clear epoch changed before execution', async () => {
+      const layer = createMockLayer('deferred-clear')
+      const maintenance = new CacheStackMaintenance()
+      const deferredOps: Array<() => Promise<void>> = []
+      const options = createWriterOptions({
+        layers: [layer],
+        maintenance,
+        shouldWriteBehind: vi.fn(() => true),
+        enqueueWriteBehind: vi.fn(async (op) => {
+          deferredOps.push(op)
+        })
+      })
+      const writer = new CacheStackLayerWriter(options)
+
+      await writer.writeBatch([{ key: 'a', value: 1 }])
+      maintenance.beginClearEpoch()
+      await deferredOps[0]()
+
+      expect(layer.set).not.toHaveBeenCalled()
+    })
+
     it('skips operation when key epoch changes making activeEntries empty (line 115)', async () => {
       const layer = createMockLayer('epoch-layer')
       const maintenance = new CacheStackMaintenance()
@@ -133,6 +175,25 @@ describe('CacheStackLayerWriter', () => {
       expect(layer.set).not.toHaveBeenCalled()
     })
 
+    it('treats missing captured entry epochs as zero while filtering active batch entries', async () => {
+      const layer = createMockLayer('missing-epoch')
+      const deferredOps: Array<() => Promise<void>> = []
+      const options = createWriterOptions({
+        layers: [layer],
+        shouldWriteBehind: vi.fn(() => true),
+        enqueueWriteBehind: vi.fn(async (op) => {
+          deferredOps.push(op)
+        })
+      })
+      const writer = new CacheStackLayerWriter(options)
+
+      const result = await writer.writeBatch([{ key: 'a', value: 1 }])
+      result.entryEpochs.delete('a')
+      await deferredOps[0]()
+
+      expect(layer.set).toHaveBeenCalledWith('a', expect.objectContaining({ value: 1 }), 60)
+    })
+
     it('defers to write-behind queue for non-local layers (line 130)', async () => {
       const localLayer = createMockLayer('local-layer', { isLocal: true })
       const remoteLayer = createMockLayer('remote-layer', { isLocal: false })
@@ -157,9 +218,36 @@ describe('CacheStackLayerWriter', () => {
       await writeBehindOps[0]()
       expect(remoteLayer.set).toHaveBeenCalledTimes(1)
     })
+
+    it('skips layers marked unavailable while building a batch', async () => {
+      const skipped = createMockLayer('skipped')
+      const active = createMockLayer('active')
+      const options = createWriterOptions({
+        layers: [skipped, active],
+        shouldSkipLayer: vi.fn((layer) => layer.name === 'skipped')
+      })
+      const writer = new CacheStackLayerWriter(options)
+
+      await writer.writeBatch([{ key: 'a', value: 1 }])
+
+      expect(skipped.set).not.toHaveBeenCalled()
+      expect(active.set).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('executeLayerOperations - best-effort mode', () => {
+    it('returns quietly when all best-effort operations succeed', async () => {
+      const layer = createMockLayer('ok-layer')
+      const options = createWriterOptions({
+        layers: [layer],
+        writePolicy: 'best-effort'
+      })
+      const writer = new CacheStackLayerWriter(options)
+
+      await expect(writer.writeAcrossLayers('key1', 'value', 'data')).resolves.toBeUndefined()
+      expect(options.onWriteFailures).not.toHaveBeenCalled()
+    })
+
     it('handles partial failure with onWriteFailures called and no throw', async () => {
       const failLayer = createMockLayer('fail-layer', {
         set: vi.fn(async () => {

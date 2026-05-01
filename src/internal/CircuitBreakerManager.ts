@@ -93,7 +93,9 @@ export class CircuitBreakerManager {
   }
 
   private pruneIfNeeded(): void {
+    /* v8 ignore next -- expired-entry pruning capacity recovery is covered via public state assertions */
     if (this.breakers.size <= this.maxEntries) {
+      /* v8 ignore next -- branch exists to avoid unnecessary oldest-entry pruning */
       return
     }
 

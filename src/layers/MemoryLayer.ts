@@ -215,6 +215,7 @@ export class MemoryLayer implements CacheLayer {
       if (oldestKey !== undefined) {
         const entry = this.entries.get(oldestKey)
         this.entries.delete(oldestKey)
+        /* v8 ignore next -- oldestKey comes from entries.keys(), so get(oldestKey) exists */
         if (entry) {
           this.onEvict?.(oldestKey, unwrapStoredValue(entry.value))
         }
@@ -236,6 +237,7 @@ export class MemoryLayer implements CacheLayer {
     if (victimKey !== undefined) {
       const victim = this.entries.get(victimKey)
       this.entries.delete(victimKey)
+      /* v8 ignore next -- victimKey is selected from entries.entries(), so get(victimKey) exists */
       if (victim) {
         this.onEvict?.(victimKey, unwrapStoredValue(victim.value))
       }

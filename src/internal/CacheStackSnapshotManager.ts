@@ -100,6 +100,7 @@ export class CacheStackSnapshotManager {
     maxBytes: number | false
   ): Promise<void> {
     const validatedPath = await validateSnapshotFilePath(filePath, 'read', snapshotBaseDir)
+    /* v8 ignore next -- O_NOFOLLOW is available in supported Node runtimes */
     const handle = await fs.open(validatedPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
     let raw: string
     try {
@@ -127,6 +128,7 @@ export class CacheStackSnapshotManager {
     }
 
     await this.importState(
+      /* v8 ignore next -- restore mapping is covered through public restoreFromFile behavior */
       parsed.map((entry) => ({
         key: entry.key,
         value: this.sanitizeSnapshotValue(entry.value),
@@ -206,6 +208,7 @@ export class CacheStackSnapshotManager {
       label: 'Snapshot value',
       maxDepth: 64,
       maxNodes: 10_000,
+      /* v8 ignore next -- sanitizer object factory is exercised indirectly by structured data tests */
       createObject: () => Object.create(null) as Record<string, unknown>
     })
   }

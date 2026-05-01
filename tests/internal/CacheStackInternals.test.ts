@@ -1,3 +1,7 @@
+import * as fs from 'node:fs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import { generationPrefix, stripGenerationPrefix } from '../../src/internal/CacheStackGeneration'
@@ -993,5 +997,303 @@ describe('CacheStack internals', () => {
     ).scheduleBackgroundRefresh('key1', async () => 'val', { ttl: 30_000 })
 
     expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30_000 }, undefined)
+  })
+
+  it('covers remaining public CacheStack branches for skipped layers, mget reuse, and empty invalidations', async () => {
+    const skipped = makeLayer('skipped', {
+      has: vi.fn(async () => true)
+    })
+    const cache = new CacheStack([skipped], { gracefulDegradation: { retryAfterMs: 1_000 } })
+    ;(cache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set('skipped', Date.now() + 1_000)
+
+    await expect(cache.has('user:1')).resolves.toBe(false)
+
+    const fetched = vi.fn(async () => 'same-value')
+    await expect(
+      cache.mget([
+        { key: 'same', fetch: fetched },
+        { key: 'same', fetch: fetched }
+      ])
+    ).resolves.toEqual(['same-value', 'same-value'])
+    expect(fetched).toHaveBeenCalledTimes(1)
+
+    await expect(cache.invalidateByTags([])).resolves.toBeUndefined()
+    await expect(cache.expireByTags([])).resolves.toBeUndefined()
+
+    await cache.set('expire-any-a', 'a', { tags: ['expire:any:a'] })
+    await cache.set('expire-any-b', 'b', { tags: ['expire:any:b'] })
+    await expect(cache.expireByTags(['expire:any:a', 'expire:any:b'])).resolves.toBeUndefined()
+
+    await cache.set('metrics', 'value')
+    expect(cache.getMetrics().sets).toBeGreaterThan(0)
+    cache.resetMetrics()
+    expect(cache.getMetrics().sets).toBe(0)
+  })
+
+  it('covers mget fallback reads and stale metrics without layer getMany', async () => {
+    const stale = createStoredValueEnvelope({
+      kind: 'value',
+      value: 'stale',
+      freshTtlMs: 1_000,
+      staleWhileRevalidateMs: 60_000,
+      now: Date.now() - 2_000
+    })
+    const layer = makeLayer('fallback', {
+      get: vi.fn(async (key: string) => (key === 'a' ? stale : null))
+    })
+    const cache = new CacheStack([layer])
+
+    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual(['stale', null])
+    expect(cache.getMetrics().staleHits).toBe(1)
+  })
+
+  it('stops mget layer scanning once all pending keys are resolved', async () => {
+    const first = makeLayer('first', {
+      getMany: vi.fn(async () => [
+        createStoredValueEnvelope({ kind: 'value', value: 'a', freshTtlMs: 60_000 }),
+        createStoredValueEnvelope({ kind: 'value', value: 'b', freshTtlMs: 60_000 })
+      ])
+    })
+    const second = makeLayer('second', {
+      getMany: vi.fn(async () => [])
+    })
+    const cache = new CacheStack([first, second])
+
+    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual(['a', 'b'])
+    expect(second.getMany).not.toHaveBeenCalled()
+  })
+
+  it('returns early from warm workers when an undefined entry is supplied', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await expect(cache.warm([undefined as never])).resolves.toBeUndefined()
+  })
+
+  it('covers inspect skipped and expired branches', async () => {
+    const skipped = makeLayer('skipped')
+    const expired = createStoredValueEnvelope({
+      kind: 'value',
+      value: 'expired',
+      freshTtlMs: 1,
+      staleWhileRevalidateMs: 1,
+      staleIfErrorMs: 1,
+      now: Date.now() - 10_000
+    })
+    const expiring = makeLayer('expiring', {
+      getEntry: vi.fn(async () => expired)
+    })
+    const cache = new CacheStack([skipped, expiring], { gracefulDegradation: { retryAfterMs: 1_000 } })
+    ;(cache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set('skipped', Date.now() + 1_000)
+
+    await expect(cache.inspect('user:1')).resolves.toBeNull()
+  })
+
+  it('routes snapshot export read failures through the CacheStack failure callback', async () => {
+    const errors: unknown[] = []
+    const layer = makeLayer('snapshot-layer', {
+      keys: vi.fn(async () => ['user:1']),
+      get: vi.fn(async () => {
+        throw new Error('snapshot read failed')
+      })
+    })
+    const cache = new CacheStack([layer], { gracefulDegradation: { retryAfterMs: 1_000 } })
+    cache.on('error', (event) => errors.push(event))
+
+    await expect(cache.exportState()).resolves.toEqual([])
+    expect(errors).toContainEqual(expect.objectContaining({ operation: 'read', layer: 'snapshot-layer' }))
+  })
+
+  it('covers snapshot import failures, sparse key scans, persist cleanup, and invalid JSON restores', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-internals-'))
+    const snapshotPath = join(dir, 'snapshot.json')
+    const failingLayer = makeLayer('failing-import', {
+      set: vi.fn(async () => {
+        throw new Error('set failed')
+      })
+    })
+    const cache = new CacheStack([failingLayer], {
+      gracefulDegradation: { retryAfterMs: 1_000 },
+      snapshotBaseDir: dir
+    })
+    const errors: unknown[] = []
+    cache.on('error', (event) => errors.push(event))
+
+    try {
+      await expect(cache.importState([{ key: 'user:1', value: { id: 1 } }])).resolves.toBeUndefined()
+      expect(errors).toContainEqual(expect.objectContaining({ operation: 'write', layer: 'failing-import' }))
+
+      const skippedLayer = makeLayer('skipped-import', {
+        set: vi.fn(async () => undefined)
+      })
+      const skippedCache = new CacheStack([skippedLayer], { gracefulDegradation: { retryAfterMs: 1_000 } })
+      ;(skippedCache as { layerDegradedUntil: Map<string, number> }).layerDegradedUntil.set(
+        'skipped-import',
+        Date.now() + 1_000
+      )
+      await expect(skippedCache.importState([{ key: 'skipped', value: 1 }])).resolves.toBeUndefined()
+      expect(skippedLayer.set).not.toHaveBeenCalled()
+
+      const sparseKeysLayer = makeLayer('sparse-keys', {
+        keys: vi.fn(async () => undefined as unknown as string[])
+      })
+      const sparseCache = new CacheStack([sparseKeysLayer])
+      await expect(sparseCache.exportState()).resolves.toEqual([])
+
+      const persisting = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+        snapshotBaseDir: dir,
+        snapshotMaxEntries: 1
+      })
+      await persisting.set('too-many', 'value')
+      await persisting.set('still-too-many', 'value')
+      await expect(persisting.persistToFile(snapshotPath)).rejects.toThrow(/snapshotMaxEntries/i)
+      const remaining = await readFile(snapshotPath, 'utf8').catch(() => '')
+      expect(remaining).toBe('')
+
+      await writeFile(snapshotPath, '{not-json', 'utf8')
+      await expect(cache.restoreFromFile(snapshotPath)).rejects.toThrow(/could not parse JSON/i)
+      await writeFile(snapshotPath, '[42]', 'utf8')
+      await expect(cache.restoreFromFile(snapshotPath)).rejects.toThrow(/expected an array/i)
+      await writeFile(snapshotPath, '[{"key":"bad-ttl","value":1,"ttl":null}]', 'utf8')
+      await expect(cache.restoreFromFile(snapshotPath)).rejects.toThrow(/expected an array/i)
+
+      await writeFile(snapshotPath, '[{"key":"restored","value":1}]', 'utf8')
+      const unlimitedRestore = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+        snapshotBaseDir: dir,
+        snapshotMaxBytes: false
+      })
+      await expect(unlimitedRestore.restoreFromFile(snapshotPath)).resolves.toBeUndefined()
+      await expect(unlimitedRestore.get('restored')).resolves.toBe(1)
+
+      const multiEntry = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
+      await multiEntry.set('one', 1)
+      await multiEntry.set('two', 2)
+      await expect(multiEntry.persistToFile(snapshotPath)).resolves.toBeUndefined()
+      await expect(readFile(snapshotPath, 'utf8')).resolves.toContain(',\n')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('cleans up snapshot temp handles even when close and unlink fail after a write error', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-cleanup-failure-'))
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { snapshotBaseDir: dir })
+    await cache.set('user:1', { id: 1 })
+    const close = vi.fn(async () => {
+      throw new Error('close failed')
+    })
+    const openSpy = vi.spyOn(fs.promises, 'open').mockResolvedValueOnce({
+      writeFile: vi.fn(async () => {
+        throw new Error('write failed')
+      }),
+      close
+    } as never)
+    const unlinkSpy = vi.spyOn(fs.promises, 'unlink').mockRejectedValueOnce(new Error('unlink failed'))
+
+    try {
+      await expect(cache.persistToFile(join(dir, 'snapshot.json'))).rejects.toThrow('write failed')
+      expect(close).toHaveBeenCalled()
+      expect(unlinkSpy).toHaveBeenCalled()
+    } finally {
+      openSpy.mockRestore()
+      unlinkSpy.mockRestore()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('covers private timeout, expiration, invalidation, and circuit-breaker branches', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const withTimeout = (
+      cache as unknown as {
+        withTimeout: <T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error) => Promise<T>
+      }
+    ).withTimeout.bind(cache)
+
+    await expect(withTimeout(Promise.resolve('direct'), 0, () => new Error('timeout'))).resolves.toBe('direct')
+    await expect(
+      withTimeout(Promise.reject(new Error('wrapped-error')), 100, () => new Error('timeout'))
+    ).rejects.toThrow('wrapped-error')
+    await expect(
+      (
+        cache as unknown as {
+          expireKeys: (keys: string[]) => Promise<void>
+        }
+      ).expireKeys([])
+    ).resolves.toBeUndefined()
+
+    await expect(
+      (
+        cache as unknown as {
+          handleInvalidationMessage: (message: {
+            sourceId: string
+            scope: 'keys'
+            operation: 'invalidate'
+          }) => Promise<void>
+        }
+      ).handleInvalidationMessage({
+        sourceId: 'other-instance',
+        scope: 'keys',
+        operation: 'invalidate'
+      })
+    ).resolves.toBeUndefined()
+
+    await expect(
+      cache.get(
+        'breaker-key',
+        async () => {
+          throw new Error('fetch failed')
+        },
+        { circuitBreaker: { failureThreshold: 1, cooldownMs: 1_000 } }
+      )
+    ).rejects.toThrow('fetch failed')
+    expect(cache.getMetrics().circuitBreakerTrips).toBe(1)
+  })
+
+  it('skips post-write bookkeeping when writes are invalidated during layer operations', async () => {
+    const cacheRef: { current?: CacheStack } = {}
+    const invalidatingLayer = makeLayer('invalidating', {
+      set: vi.fn(async () => {
+        ;(cacheRef.current as unknown as { maintenance: { beginClearEpoch: () => void } }).maintenance.beginClearEpoch()
+      }),
+      setMany: vi.fn(async (entries) => {
+        const keys = entries.map((entry) => entry.key)
+        ;(
+          cacheRef.current as unknown as { maintenance: { bumpKeyEpochs: (keys: string[]) => void } }
+        ).maintenance.bumpKeyEpochs(keys)
+      })
+    })
+    const cache = new CacheStack([invalidatingLayer])
+    cacheRef.current = cache
+
+    await cache.set('outdated-set', 'value', { tags: ['tagged'] })
+    expect(cache.getMetrics().sets).toBe(0)
+    await expect(
+      (cache as unknown as { tagIndex: { keysForTag: (tag: string) => Promise<string[]> } }).tagIndex.keysForTag(
+        'tagged'
+      )
+    ).resolves.toEqual([])
+
+    await cache.mset([
+      { key: 'batch-a', value: 'a', options: { tags: ['batch'] } },
+      { key: 'batch-b', value: 'b', options: { tags: ['batch'] } }
+    ])
+    expect(cache.getMetrics().sets).toBe(0)
+    await expect(
+      (cache as unknown as { tagIndex: { keysForTag: (tag: string) => Promise<string[]> } }).tagIndex.keysForTag(
+        'batch'
+      )
+    ).resolves.toEqual([])
+
+    const clearCacheRef: { current?: CacheStack } = {}
+    const clearingLayer = makeLayer('clearing-batch', {
+      setMany: vi.fn(async () => {
+        ;(
+          clearCacheRef.current as unknown as { maintenance: { beginClearEpoch: () => void } }
+        ).maintenance.beginClearEpoch()
+      })
+    })
+    const clearCache = new CacheStack([clearingLayer])
+    clearCacheRef.current = clearCache
+    await clearCache.mset([{ key: 'clear-batch', value: 1, options: { tags: ['clear-batch'] } }])
+    expect(clearCache.getMetrics().sets).toBe(0)
   })
 })

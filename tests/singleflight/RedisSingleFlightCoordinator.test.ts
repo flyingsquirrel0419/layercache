@@ -41,4 +41,24 @@ describe('RedisSingleFlightCoordinator', () => {
       )
     ).rejects.toThrow(/timed out after 10ms/i)
   })
+
+  it('clears command timeout timers when Redis commands resolve quickly', async () => {
+    const client = {
+      set: vi.fn(async () => 'OK'),
+      eval: vi.fn(async () => 1)
+    } as unknown as Redis
+    const coordinator = new RedisSingleFlightCoordinator({
+      client,
+      commandTimeoutMs: 1_000
+    })
+
+    await expect(
+      coordinator.execute(
+        'user:1',
+        { leaseMs: 1_000, waitTimeoutMs: 100, pollIntervalMs: 10, renewIntervalMs: 0 },
+        async () => 'worker',
+        async () => 'waiter'
+      )
+    ).resolves.toBe('worker')
+  })
 })

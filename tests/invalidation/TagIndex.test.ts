@@ -104,4 +104,56 @@ describe('TagIndex', () => {
     await index.remove('missing')
     await expect(index.keysForPrefix('missing:')).resolves.toEqual([])
   })
+
+  it('covers pattern recursion guards and trie cleanup edge cases', async () => {
+    const index = new TagIndex()
+    await index.touch('user:1')
+
+    const matches = new Set<string>()
+    const root = (index as unknown as { root: unknown }).root
+    ;(
+      index as unknown as {
+        collectPatternMatches: (
+          node: unknown,
+          prefix: string,
+          pattern: string,
+          patternIndex: number,
+          matches: Set<string>,
+          visited: Set<string>,
+          depth: number
+        ) => void
+      }
+    ).collectPatternMatches(root, '', 'user:*', 0, matches, new Set<string>(), 501)
+    expect(matches.size).toBe(0)
+
+    const visited = new Set<string>(['1:0'])
+    ;(
+      index as unknown as {
+        collectPatternMatches: (
+          node: unknown,
+          prefix: string,
+          pattern: string,
+          patternIndex: number,
+          matches: Set<string>,
+          visited: Set<string>,
+          depth: number
+        ) => void
+      }
+    ).collectPatternMatches(root, '', 'user:*', 0, matches, visited, 0)
+    expect(matches.size).toBe(0)
+    ;(index as unknown as { keyToTags: Map<string, Set<string>> }).keyToTags.set('orphan', new Set(['missing-tag']))
+    await index.touch('orphan')
+    await index.remove('orphan')
+    await expect(index.keysForPrefix('orphan')).resolves.toEqual([])
+  })
+
+  it('keeps trie cleanup stable when an internal path is already missing', async () => {
+    const index = new TagIndex()
+    await index.touch('abc')
+    ;(index as unknown as { root: { children: Map<string, unknown> } }).root.children.clear()
+
+    await index.remove('abc')
+
+    await expect(index.keysForPrefix('a')).resolves.toEqual([])
+  })
 })

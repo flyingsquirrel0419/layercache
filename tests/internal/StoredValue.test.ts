@@ -243,6 +243,21 @@ describe('StoredValue', () => {
     expect(remainingStoredTtlMs('plain')).toBeUndefined()
   })
 
+  it('unwraps value envelopes without values as null', () => {
+    const now = Date.now()
+    const envelope = {
+      __layercache: 1,
+      kind: 'value',
+      value: undefined,
+      freshUntil: now + 1_000,
+      staleUntil: null,
+      errorUntil: null
+    }
+
+    expect(isStoredValueEnvelope(envelope)).toBe(true)
+    expect(unwrapStoredValue(envelope)).toBeNull()
+  })
+
   it('returns undefined ttl helpers for envelopes without expiry metadata', () => {
     const now = Date.now()
     const empty = createStoredValueEnvelope({
@@ -318,5 +333,20 @@ describe('StoredValue', () => {
     expect((expired as { staleUntil: number }).staleUntil).toBe(now + 15_000)
     expect((expired as { errorUntil: number }).errorUntil).toBe(now + 30_000)
     expect(expireStoredEnvelope('plain')).toBe('plain')
+  })
+
+  it('expires envelopes with no stale or error deadlines at the current time', () => {
+    const now = Date.now()
+    const envelope = createStoredValueEnvelope({
+      kind: 'value',
+      value: 'fresh-only',
+      freshTtlMs: 60_000,
+      now
+    })
+
+    const expired = expireStoredEnvelope(envelope, now + 1_000)
+
+    expect((expired as { freshUntil: number }).freshUntil).toBe(now + 1_000)
+    expect(resolveStoredValue(expired, now + 1_001).state).toBe('expired')
   })
 })

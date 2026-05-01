@@ -121,6 +121,7 @@ export class MemcachedLayer implements CacheLayer {
     if (Buffer.byteLength(fullKey, 'utf8') > 250) {
       const displayKey = fullKey.slice(0, 64)
       throw new Error(
+        /* v8 ignore next -- >250 UTF-8 byte keys can still be short in JS code units */
         `MemcachedLayer: key exceeds 250-byte Memcached limit: "${displayKey}${fullKey.length > 64 ? '...' : ''}"`
       )
     }

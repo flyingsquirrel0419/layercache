@@ -325,6 +325,92 @@ describe('DiskLayer', () => {
     await expect(fs.stat(filePath)).rejects.toThrow()
   })
 
+  it('cleans up temporary files when an atomic write fails', async () => {
+    const renameSpy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'))
+
+    try {
+      await expect(layer.set('write-fails', 'value')).rejects.toThrow('rename failed')
+      await Promise.resolve()
+      await layer.set('after-failure', 'value')
+      await expect(layer.get('after-failure')).resolves.toBe('value')
+      const entries = await fs.readdir(dir)
+      expect(entries.every((entry) => entry.endsWith('.lc'))).toBe(true)
+    } finally {
+      renameSpy.mockRestore()
+    }
+  })
+
+  it('returns null ttl for corrupted and expired disk entries', async () => {
+    await fs.mkdir(dir, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const corruptedHash = createHash('sha256').update('ttl-corrupt').digest('hex')
+    const corruptedFile = join(dir, `${corruptedHash}.lc`)
+    await fs.writeFile(corruptedFile, 'not-json!!!')
+
+    await expect(layer.ttl('ttl-corrupt')).resolves.toBeNull()
+    await expect(fs.stat(corruptedFile)).rejects.toThrow()
+
+    const expiredLayer = new DiskLayer({ directory: dir, ttl: 1 })
+    await expiredLayer.set('ttl-expired', 'value')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    await expect(expiredLayer.ttl('ttl-expired')).resolves.toBeNull()
+
+    await layer.set('ttl-permanent', 'value', 0)
+    await expect(layer.ttl('ttl-permanent')).resolves.toBeNull()
+  })
+
+  it('clears missing directories and disables max file enforcement when maxFiles is Infinity', async () => {
+    const missing = new DiskLayer({ directory: join(dir, 'missing') })
+    await expect(missing.clear()).resolves.toBeUndefined()
+
+    const unlimited = new DiskLayer({ directory: dir, maxFiles: Number.POSITIVE_INFINITY })
+    expect((unlimited as unknown as { maxFiles: number | undefined }).maxFiles).toBeUndefined()
+    await unlimited.set('no-limit', 'value')
+    await expect(
+      (unlimited as unknown as { enforceMaxFiles: () => Promise<void> }).enforceMaxFiles()
+    ).resolves.toBeUndefined()
+    await expect(layer.ping()).resolves.toBe(true)
+  })
+
+  it('rejects reads that exceed maxEntryBytes while streaming', async () => {
+    const limited = new DiskLayer({ directory: dir, maxEntryBytes: 2 })
+    const handle = {
+      stat: vi.fn(async () => ({ size: 2 })),
+      read: vi.fn(async (buffer: Buffer) => {
+        buffer.write('abc')
+        return { bytesRead: 3 }
+      })
+    }
+
+    await expect(
+      (
+        limited as unknown as {
+          readHandleWithLimit: (handle: typeof handle) => Promise<Buffer>
+        }
+      ).readHandleWithLimit(handle)
+    ).rejects.toThrow(/maxEntryBytes/i)
+  })
+
+  it('treats files with failing handle close as misses', async () => {
+    const close = vi.fn(async () => {
+      throw new Error('close failed')
+    })
+    const openSpy = vi.spyOn(fs, 'open').mockResolvedValueOnce({
+      readFile: vi.fn(async () => Buffer.from('not-json')),
+      stat: vi.fn(),
+      read: vi.fn(),
+      close
+    } as never)
+
+    try {
+      await expect(layer.get('close-fails')).resolves.toBeNull()
+      expect(close).toHaveBeenCalled()
+    } finally {
+      openSpy.mockRestore()
+    }
+  })
+
   describe('encryption (encryptionKey)', () => {
     it('round-trips values with AES-256-GCM encryption', async () => {
       const encrypted = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'test-secret-key' })

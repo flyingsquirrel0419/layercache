@@ -174,6 +174,33 @@ describe('createFastifyLayercachePlugin', () => {
     expect(result).toEqual({ error: 'Forbidden' })
   })
 
+  it('denies fastify stats access when no public flag or authorizer is configured', async () => {
+    const cache = makeCache()
+    const plugin = createFastifyLayercachePlugin(cache, {
+      exposeStatsRoute: true
+    })
+
+    let routeHandler:
+      | ((
+          request: unknown,
+          reply: { header?: (name: string, value: string) => unknown; statusCode?: number }
+        ) => unknown | Promise<unknown>)
+      | undefined
+
+    await plugin({
+      decorate: vi.fn(),
+      get: (_path, handler) => {
+        routeHandler = handler
+      }
+    })
+
+    const reply = { header: vi.fn(), statusCode: 0 }
+    const result = await routeHandler?.({}, reply)
+
+    expect(reply.statusCode).toBe(403)
+    expect(result).toEqual({ error: 'Forbidden' })
+  })
+
   it('returns stats bodies directly when reply.send is unavailable', async () => {
     const cache = makeCache()
     const plugin = createFastifyLayercachePlugin(cache, {
@@ -442,6 +469,15 @@ describe('createTrpcCacheMiddleware', () => {
     await middleware(ctx)
 
     expect(calls).toBe(1)
+  })
+
+  it('uses default procedure and null input when implicit tRPC cache context is sparse', async () => {
+    const cache = makeCache()
+    const middleware = createTrpcCacheMiddleware(cache, 'proc', { allowImplicitContextCaching: true })
+    const next = vi.fn(async () => ({ ok: true, data: 'defaulted' }))
+
+    await expect(middleware({ next })).resolves.toEqual({ ok: true, data: 'defaulted' })
+    await expect(cache.get('proc:procedure:null')).resolves.toEqual({ ok: true, data: 'defaulted' })
   })
 
   it('falls back to next() when cache returns null without invoking the fetch wrapper', async () => {

@@ -50,4 +50,20 @@ describe('MetricsCollector', () => {
       vi.useRealTimers()
     }
   })
+
+  it('reports zero per-layer hit rate when a layer has no counted hits or misses', () => {
+    const collector = new MetricsCollector()
+    ;(
+      collector as unknown as {
+        data: { hitsByLayer: Record<string, number | undefined>; missesByLayer: Record<string, number | undefined> }
+      }
+    ).data.hitsByLayer.empty = undefined
+    ;(
+      collector as unknown as {
+        data: { hitsByLayer: Record<string, number | undefined>; missesByLayer: Record<string, number | undefined> }
+      }
+    ).data.missesByLayer.empty = undefined
+
+    expect(collector.hitRate().byLayer.empty).toBe(0)
+  })
 })

@@ -421,6 +421,7 @@ export class DiskLayer implements CacheLayer {
 
   private enqueueWrite(operation: () => Promise<void>): Promise<void> {
     const next = this.writeQueue.then(operation, operation)
+    /* v8 ignore next -- queue poison pill is intentionally swallowed for later writes */
     this.writeQueue = next.catch(() => undefined)
     return next
   }

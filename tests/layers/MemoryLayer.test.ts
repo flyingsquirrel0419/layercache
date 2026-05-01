@@ -217,4 +217,18 @@ describe('MemoryLayer', () => {
     expect(lfuEvictions).toHaveLength(1)
     expect(lfuEvictions[0].key).toBe('i')
   })
+
+  it('tolerates entries disappearing while eviction callbacks are being prepared', async () => {
+    const lru = new MemoryLayer({ maxSize: 1, onEvict: vi.fn() })
+    await lru.set('a', 1)
+    ;(lru as unknown as { entries: Map<string, unknown> }).entries.delete('a')
+    ;(lru as unknown as { evict: () => void }).evict()
+    expect((lru as unknown as { onEvict: ReturnType<typeof vi.fn> }).onEvict).not.toHaveBeenCalled()
+
+    const lfu = new MemoryLayer({ maxSize: 1, evictionPolicy: 'lfu', onEvict: vi.fn() })
+    await lfu.set('b', 2)
+    ;(lfu as unknown as { entries: Map<string, unknown> }).entries.delete('b')
+    ;(lfu as unknown as { evict: () => void }).evict()
+    expect((lfu as unknown as { onEvict: ReturnType<typeof vi.fn> }).onEvict).not.toHaveBeenCalled()
+  })
 })

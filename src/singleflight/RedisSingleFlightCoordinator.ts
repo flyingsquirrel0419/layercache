@@ -110,6 +110,7 @@ export class RedisSingleFlightCoordinator implements CacheSingleFlightCoordinato
         timer.unref?.()
       })
     ]).finally(() => {
+      /* v8 ignore next -- timer is assigned synchronously when commandTimeoutMs is set */
       if (timer) {
         clearTimeout(timer)
       }
