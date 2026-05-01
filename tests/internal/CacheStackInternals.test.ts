@@ -694,13 +694,13 @@ describe('CacheStack internals', () => {
         stored: createStoredValueEnvelope({
           kind: 'value',
           value: 'value',
-          freshTtlMs: 1
+          freshTtlMs: 60_000
         }),
         state: 'fresh',
         layerIndex: 0,
         layerName: 'policy'
       },
-      { refreshAhead: 5_000, slidingTtl: true },
+      { refreshAhead: 120_000, slidingTtl: true },
       async () => 'fresh'
     )
     expect(scheduleSpy).toHaveBeenCalled()
