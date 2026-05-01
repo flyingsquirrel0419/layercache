@@ -736,6 +736,32 @@ describe('operational features', () => {
     ).rejects.toThrow(/contextOptions\(\) failed for key "broken:resolver"/i)
   })
 
+  it('rejects non-object context-aware resolver results clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get('broken:primitive', async () => ({ ok: true }), {
+        contextOptions: () => 123 as never
+      })
+    ).rejects.toThrow(/must return a plain object or undefined/i)
+
+    await expect(
+      cache.get('broken:array', async () => ({ ok: true }), {
+        contextOptions: () => ['bad'] as never
+      })
+    ).rejects.toThrow(/must return a plain object or undefined/i)
+  })
+
+  it('rejects async context-aware resolvers clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get('broken:async', async () => ({ ok: true }), {
+        contextOptions: (async () => ({ ttl: 1 })) as never
+      })
+    ).rejects.toThrow(/async resolvers are not supported/i)
+  })
+
   it('does not negative-cache null fetch results unless explicitly enabled', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     const fetcher = vi.fn(async () => null)

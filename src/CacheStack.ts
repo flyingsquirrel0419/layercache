@@ -997,6 +997,11 @@ export class CacheStack extends EventEmitter {
     if (!overrides) {
       return baseOptions
     }
+    if (!this.isPlainObject(overrides)) {
+      throw new Error(
+        `options.contextOptions() must return a plain object or undefined for key "${key}". Async resolvers are not supported.`
+      )
+    }
 
     try {
       validateContextEntryOptions('options.contextOptions()', overrides)
@@ -1009,6 +1014,15 @@ export class CacheStack extends EventEmitter {
       ...baseOptions,
       ...overrides
     }
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false
+    }
+
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
   }
 
   private async deleteKeys(keys: string[]): Promise<void> {
