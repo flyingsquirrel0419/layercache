@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## 비교
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
-| 스탬피드 방지 | -- | -- | -- | **Yes** |
-| 태그 무효화 | -- | Yes | Yes | **Yes** |
-| TypeScript 퍼스트 | 부분 | Yes | Yes | **Yes** |
-| 이벤트 훅 | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | 부분 | **Yes** |
+| 스탬피드 방지 | -- | -- | -- | 부분 | **Yes** |
+| 태그 무효화 | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript 퍼스트 | 부분 | Yes | Yes | Yes | **Yes** |
+| 이벤트 훅 | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>전체 비교 (19개 기능, 클릭하여 펼치기)</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | **Yes** |
-| 스탬피드 방지 | -- | -- | -- | **Yes** |
-| 분산 싱글플라이트 | -- | -- | -- | **Yes** |
-| 태그 무효화 | -- | Yes | Yes | **Yes** |
-| 분산 태그 | -- | -- | -- | **Yes** |
-| 크로스 서버 L1 무효화 | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| 서킷 브레이커 | -- | -- | -- | **Yes** |
-| 장애 복구 | -- | -- | -- | **Yes** |
-| 슬라이딩 / 적응형 TTL | -- | -- | -- | **Yes** |
-| 캐시 워밍 | -- | -- | -- | **Yes** |
-| 스냅샷 영속성 | -- | -- | -- | **Yes** |
-| 압축 | -- | -- | Yes | **Yes** |
-| 관리 CLI | -- | -- | -- | **Yes** |
-| TypeScript 퍼스트 | 부분 | Yes | Yes | **Yes** |
-| Wrap / 데코레이터 API | Yes | -- | -- | **Yes** |
-| 네임스페이스 | -- | Yes | Yes | **Yes** |
-| 이벤트 훅 | Yes | Yes | Yes | **Yes** |
-| 커스텀 레이어 | 부분 | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 자동 백필 멀티레이어 | 부분 | 플러그인 | -- | 부분 | **Yes** |
+| 스탬피드 방지 | -- | -- | -- | 부분 | **Yes** |
+| 분산 싱글플라이트 | -- | -- | -- | -- | **Yes** |
+| 태그 무효화 | -- | Yes | Yes | Yes | **Yes** |
+| 분산 태그 | -- | -- | -- | -- | **Yes** |
+| 크로스 서버 L1 무효화 | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| 서킷 브레이커 | -- | -- | -- | Yes | **Yes** |
+| 장애 복구 | -- | -- | -- | Yes | **Yes** |
+| 슬라이딩 / 적응형 TTL | -- | -- | -- | -- | **Yes** |
+| 캐시 워밍 | -- | -- | -- | -- | **Yes** |
+| 스냅샷 영속성 | -- | -- | -- | -- | **Yes** |
+| 압축 | -- | -- | Yes | -- | **Yes** |
+| 관리 CLI | -- | -- | -- | -- | **Yes** |
+| TypeScript 퍼스트 | 부분 | Yes | Yes | Yes | **Yes** |
+| Wrap / 데코레이터 API | Yes | -- | -- | 부분 | **Yes** |
+| 네임스페이스 | -- | Yes | Yes | Yes | **Yes** |
+| 이벤트 훅 | Yes | Yes | Yes | Yes | **Yes** |
+| 커스텀 레이어 | 부분 | -- | -- | Yes | **Yes** |
 
 </details>
 
