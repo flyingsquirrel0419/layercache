@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.0] — 2026-05-02
+## [2.0.0] — 2026-05-02
 
 ### Breaking
 
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Version bumped from `1.3.4` to `1.4.0`.
+- Version bumped from `1.3.4` to `2.0.0`.
 - **Documentation examples now use millisecond TTLs** across README, localized READMEs, root docs, docs-web content, examples, middleware snippets, and migration guides.
 - **npm package contents are now limited to runtime build artifacts** by publishing only `dist/` plus npm's always-included metadata.
 - **Validation now runs broader CI coverage** with Node.js 20/22, Biome GitHub annotations, real Redis integration tests on Node.js 20, and a validation summary.
