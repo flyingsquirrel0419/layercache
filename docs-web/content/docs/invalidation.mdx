@@ -1,0 +1,482 @@
+---
+title: "Cache Invalidation"
+description: "Strategies for invalidating cached data"
+---
+
+# Cache Invalidation
+
+Cache invalidation is one of the hardest problems in distributed systems. layercache provides multiple strategies to invalidate cached data efficiently.
+
+## Table of Contents
+
+- [Tag-Based Invalidation](#tag-based-invalidation)
+- [Batch Tag Invalidation](#batch-tag-invalidation)
+- [Pattern Invalidation](#pattern-invalidation)
+- [Prefix Invalidation](#prefix-invalidation)
+- [Generation-Based Versioning](#generation-based-versioning)
+- [Distributed Invalidation](#distributed-invalidation)
+
+---
+
+## Tag-Based Invalidation
+
+Tag keys when writing, then invalidate all keys with a given tag when data changes.
+
+### Basic Usage
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis, ttl: 300 })
+])
+
+// Tag related data together
+await cache.set('user:123',         user,    { tags: ['user:123'] })
+await cache.set('user:123:posts',   posts,   { tags: ['user:123', 'posts'] })
+await cache.set('user:123:profile', profile, { tags: ['user:123'] })
+
+// Invalidate all data for user 123
+await cache.invalidateByTag('user:123')
+```
+
+### Multi-Tag Keys
+
+A single key can have multiple tags:
+
+```ts
+await cache.set('post:456', post, {
+  tags: ['post:456', 'author:123', 'category:tech']
+})
+
+// Invalidate by any tag
+await cache.invalidateByTag('author:123')  // Removes post:456
+await cache.invalidateByTag('category:tech')  // Removes post:456
+```
+
+### Hierarchical Tagging
+
+Use tag hierarchies for flexible invalidation:
+
+```ts
+// Product data with hierarchical tags
+await cache.set('product:123', product, {
+  tags: [
+    'product:123',           // Individual product
+    'category:electronics',  // Category
+    'brand:sony',            // Brand
+    'in-stock:true'          // Stock status
+  ]
+})
+
+// Invalidate all Sony products
+await cache.invalidateByTag('brand:sony')
+
+// Invalidate all electronics
+await cache.invalidateByTag('category:electronics')
+```
+
+---
+
+## Batch Tag Invalidation
+
+Invalidate keys matching multiple tags with `any` or `all` semantics.
+
+### Any Mode
+
+Delete keys tagged with **any** of the specified tags:
+
+```ts
+// Invalidate keys tagged with 'users' OR 'posts'
+await cache.invalidateByTags(['users', 'posts'], 'any')
+```
+
+Use case: Clear multiple related caches at once.
+
+```ts
+// Clear all user and post caches after database migration
+await cache.invalidateByTags(['users', 'posts', 'comments'], 'any')
+```
+
+### All Mode
+
+Delete keys tagged with **all** of the specified tags:
+
+```ts
+// Invalidate keys tagged with BOTH 'tenant:a' AND 'admin'
+await cache.invalidateByTags(['tenant:a', 'admin'], 'all')
+```
+
+Use case: Invalidate specific cross-cutting concerns.
+
+```ts
+// Invalidate all admin data for tenant A
+await cache.set('user:a:1', data, { tags: ['tenant:a', 'admin', 'user'] })
+await cache.set('user:a:2', data, { tags: ['tenant:a', 'admin', 'user'] })
+await cache.set('user:b:1', data, { tags: ['tenant:b', 'admin', 'user'] })
+
+await cache.invalidateByTags(['tenant:a', 'admin'], 'all')
+// Only user:a:1 and user:a:2 are deleted
+// user:b:1 remains (different tenant)
+```
+
+---
+
+## Pattern Invalidation
+
+Use glob-style patterns to match and delete keys.
+
+### Supported Patterns
+
+- `*` - Match any sequence of characters
+- `?` - Match exactly one character
+
+```ts
+// Delete all user keys
+await cache.invalidateByPattern('user:*')
+
+// Delete all keys matching a pattern
+await cache.invalidateByPattern('session:*')
+
+// Delete keys with specific format
+await cache.invalidateByPattern('report:2024-04-*')
+```
+
+### Pattern Validation
+
+Patterns must be:
+- Non-empty
+- At most 1024 characters
+- Free of control characters (except `*` and `?`)
+
+```ts
+// Valid patterns
+await cache.invalidateByPattern('user:*')
+await cache.invalidateByPattern('temp:?')
+await cache.invalidateByPattern('cache:v1:*.data')
+
+// Invalid patterns (throw)
+await cache.invalidateByPattern('')      // Empty
+await cache.invalidateByPattern('a\nb')  // Contains newline
+```
+
+### Performance Considerations
+
+Pattern invalidation requires scanning all known keys. For better performance:
+
+1. **Use prefix invalidation** when possible (faster)
+2. **Use tag-based invalidation** for complex queries (more flexible)
+3. **Avoid overly broad patterns** like `*` alone
+
+```ts
+// SLOWER: Scans all keys
+await cache.invalidateByPattern('*')
+
+// FASTER: Uses trie-based prefix search
+await cache.invalidateByPrefix('')
+
+// BEST: Uses tag index
+await cache.invalidateByTag('all')
+```
+
+---
+
+## Prefix Invalidation
+
+Hierarchical prefix-based invalidation using efficient trie structures. Prefer this over pattern invalidation for hierarchical keys.
+
+### Basic Usage
+
+```ts
+// Set up hierarchical keys
+await cache.set('user:123:profile', profileData)
+await cache.set('user:123:posts', postsData)
+await cache.set('user:123:settings', settingsData)
+await cache.set('user:456:profile', otherProfile)
+
+// Invalidate all data for user 123
+await cache.invalidateByPrefix('user:123:')
+// Deletes: user:123:profile, user:123:posts, user:123:settings
+// Keeps: user:456:profile
+```
+
+### Namespace Hierarchy
+
+Combine with namespaces for clean organization:
+
+```ts
+const tenantCache = cache.namespace('tenant:acme')
+
+await tenantCache.set('users:1', userData)
+await tenantCache.set('users:2', userData)
+await tenantCache.set('posts:1', postData)
+
+// Clear all tenant data
+await tenantCache.invalidateByPrefix('')
+```
+
+### Trie-Based Performance
+
+Prefix invalidation uses a trie data structure for O(k) lookup where k is prefix length:
+
+```ts
+// Fast: O(7) operations for 'user:123:'
+await cache.invalidateByPrefix('user:123:')
+
+// Slower: O(n) pattern matching for 'user:123:*'
+await cache.invalidateByPattern('user:123:*')
+```
+
+---
+
+## Generation-Based Versioning
+
+Add a generation prefix to every key and rotate it for instant bulk invalidation without scanning.
+
+### Basic Usage
+
+```ts
+// Create cache with generation
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis, ttl: 300 })
+], {
+  generation: 1  // Start at generation 1
+})
+
+// All keys are prefixed: "g1:user:123"
+await cache.set('user:123', userData)
+
+// Bump generation to invalidate everything
+cache.bumpGeneration()  // Now generation 2
+
+// Old keys are automatically ignored
+// New writes use "g2:user:123"
+await cache.set('user:123', newUserData)
+```
+
+### Auto-Cleanup Old Generations
+
+Automatically delete keys from previous generations:
+
+```ts
+const cache = new CacheStack([...], {
+  generation: 1,
+  generationCleanup: {
+    batchSize: 500  // Delete 500 keys per batch
+  }
+})
+
+cache.bumpGeneration()  // Cleans up g1 keys in batches
+```
+
+### Use Cases
+
+#### Deployment Invalidation
+
+```ts
+// Deploy with new generation
+const generation = process.env.DEPLOYMENT_ID ?? '1'
+
+const cache = new CacheStack([...], {
+  generation: Number.parseInt(generation)
+})
+
+// Every deployment starts with a fresh cache namespace
+```
+
+#### Feature Flag Rollout
+
+```ts
+// Rotate cache when enabling feature
+let cacheGeneration = 1
+
+async function enableNewFeature() {
+  cacheGeneration += 1
+  cache.bumpGeneration()
+
+  // All cached data is invalidated
+  // Next requests use fresh data with new feature enabled
+}
+```
+
+#### Schema Migration
+
+```ts
+// Bump generation after schema change
+async function migrateSchema() {
+  await db.migrate()
+
+  // Invalidate all cached data that uses old schema
+  cache.bumpGeneration()
+}
+```
+
+---
+
+## Distributed Invalidation
+
+For multi-instance deployments, use distributed invalidation to keep memory caches in sync across servers.
+
+### Redis Tag Index
+
+Share tag state across all servers using Redis:
+
+```ts
+import { RedisTagIndex } from 'layercache'
+
+const tagIndex = new RedisTagIndex({
+  client: redis,
+  prefix: 'myapp:tag-index',
+  scanCount: 100,
+  knownKeysShards: 8  // Distribute known keys across 8 shards
+})
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis, ttl: 300 })
+], {
+  tagIndex  // All servers share the same tag index
+})
+
+// Any server can invalidate by tag
+await cache.invalidateByTag('user:123')
+// All servers' memory layers are notified
+```
+
+### Redis Invalidation Bus
+
+Pub/sub-based L1 invalidation for real-time memory cache consistency:
+
+```ts
+import { RedisInvalidationBus } from 'layercache'
+
+const bus = new RedisInvalidationBus({
+  publisher: redis,           // Use existing Redis connection
+  subscriber: new Redis()     // Separate connection for subscriptions
+})
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis, ttl: 300 })
+], {
+  invalidationBus: bus,
+  broadcastL1Invalidation: true  // Publish writes to peer memory layers
+})
+
+// When Server A writes to cache:
+await cache.set('user:123', userData)
+// -> Publishes invalidation message to Redis
+
+// Server B's memory layer receives message:
+// -> Deletes 'user:123' from local memory
+// -> Next read fetches fresh data from Redis
+```
+
+### Full Distributed Setup
+
+Combine all distributed features for multi-instance consistency:
+
+```ts
+import {
+  CacheStack, MemoryLayer, RedisLayer,
+  RedisInvalidationBus, RedisTagIndex, RedisSingleFlightCoordinator
+} from 'layercache'
+
+const redis = new Redis()
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis()
+})
+const tagIndex = new RedisTagIndex({
+  client: redis,
+  prefix: 'myapp:tags',
+  knownKeysShards: 8
+})
+const coordinator = new RedisSingleFlightCoordinator({
+  client: redis
+})
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60, maxSize: 10_000 }),
+  new RedisLayer({ client: redis, ttl: 3600, prefix: 'myapp:cache:' })
+], {
+  invalidationBus: bus,
+  tagIndex: tagIndex,
+  singleFlightCoordinator: coordinator,
+  gracefulDegradation: { retryAfterMs: 10_000 }
+})
+```
+
+### Invalidation Flow
+
+```
+Server A                        Redis                          Server B
+  |                               |                               |
+  | cache.set('user:123', data)   |                               |
+  |------------------------------->|                               |
+  |                               | SET user:123                   |
+  |                               |                               |
+  |                               | PUBLISH invalidate user:123    |
+  |                               |------------------------------->|
+  |                               |                               | delete user:123
+  |                               |                               | (from memory)
+  |                               |                               |
+```
+
+---
+
+## Best Practices
+
+### 1. Use Tags for Related Data
+
+```ts
+// GOOD: Tag related data
+await cache.set('user:123', user, { tags: ['user:123'] })
+await cache.set('user:123:posts', posts, { tags: ['user:123'] })
+await cache.set('user:123:profile', profile, { tags: ['user:123'] })
+
+await cache.invalidateByTag('user:123')  // Invalidates all 3 keys
+```
+
+### 2. Use Prefixes for Hierarchical Data
+
+```ts
+// GOOD: Hierarchical keys with prefix invalidation
+await cache.set('tenant:acme:users:1', data)
+await cache.set('tenant:acme:posts:1', data)
+
+await cache.invalidateByPrefix('tenant:acme:')  // Fast trie lookup
+```
+
+### 3. Use Generations for Bulk Invalidation
+
+```ts
+// GOOD: Generation for instant bulk invalidation
+cache.bumpGeneration()  // Invalidates everything immediately
+```
+
+### 4. Avoid Overly Broad Patterns
+
+```ts
+// BAD: Too broad
+await cache.invalidateByPattern('*')
+
+// GOOD: Specific pattern
+await cache.invalidateByPattern('temp:*')
+
+// BETTER: Prefix
+await cache.invalidateByPrefix('temp:')
+```
+
+### 5. Clean Up Tags on Delete
+
+Tags are automatically removed when keys are deleted:
+
+```ts
+await cache.set('user:123', data, { tags: ['user:123'] })
+await cache.delete('user:123')  // Tags automatically cleaned up
+
+await cache.invalidateByTag('user:123')  // No keys found
+```

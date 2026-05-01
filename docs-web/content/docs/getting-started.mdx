@@ -1,0 +1,159 @@
+---
+title: "Getting Started"
+description: "Install and configure your first multi-layer cache stack"
+---
+
+## Installation
+
+```bash
+npm install layercache
+```
+
+## Basic Setup
+
+The simplest cache stack uses a single memory layer:
+
+```ts
+import { CacheStack, MemoryLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 })
+])
+```
+
+### Reading Through the Cache
+
+Use the read-through pattern to fetch data with automatic caching:
+
+```ts
+const user = await cache.get('user:123', () =>
+  db.findUser(123)
+)
+
+// On first call: fetcher runs, result is cached
+// On subsequent calls: serves from memory, no fetcher execution
+```
+
+## Multi-Layer Setup
+
+For production, add Redis for cross-process sharing:
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: in-process
+  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: shared
+])
+```
+
+### How Layered Reads Work
+
+When you call `cache.get()`:
+
+1. **L1 Memory** is checked first (~0.01ms)
+2. If missing, **L2 Redis** is checked (~0.5ms)
+3. If also missing, your **fetcher** runs (~20ms+)
+4. On any partial hit, upper layers are **backfilled** automatically
+
+## Three-Layer Setup with Disk Persistence
+
+Add disk persistence for fault tolerance:
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60, maxSize: 5_000 }),
+  new RedisLayer({
+    client: new Redis(),
+    ttl: 3600,
+    compression: 'gzip'
+  }),
+  new DiskLayer({
+    directory: './var/cache',
+    maxFiles: 10_000
+  }),
+])
+```
+
+## Key Configuration Options
+
+### MemoryLayer
+
+```ts
+new MemoryLayer({
+  ttl: 60,           // Time-to-live in seconds
+  maxSize: 1000,     // Max number of entries (LRU eviction)
+})
+```
+
+### RedisLayer
+
+```ts
+new RedisLayer({
+  client: new Redis(),           // ioredis client
+  ttl: 3600,                     // Time-to-live in seconds
+  compression: 'gzip',           // 'gzip' | 'brotli' | false
+  compressionThreshold: 1024,    // Min bytes to compress
+})
+```
+
+### DiskLayer
+
+```ts
+new DiskLayer({
+  directory: './var/cache',      // Storage directory
+  maxFiles: 10_000,              // Max files (LRU eviction)
+})
+```
+
+## Common Patterns
+
+### Function Wrapping
+
+Transparently cache any function with `wrap()`:
+
+```ts
+const cachedFetch = cache.wrap('users', async (id: string) => {
+  return db.findUser(id)
+})
+
+const user = await cachedFetch('123')
+// Uses key "users:123" automatically
+```
+
+### Namespacing
+
+Create scoped cache views with prefixes:
+
+```ts
+const userCache = cache.namespace('user')
+const productCache = cache.namespace('product')
+
+await userCache.set('123', data)
+await productCache.set('456', data)
+// Stored as "user:123" and "product:456"
+```
+
+### Bulk Operations
+
+Set and get multiple keys efficiently:
+
+```ts
+await cache.setMany([
+  { key: 'user:1', value: { name: 'Alice' } },
+  { key: 'user:2', value: { name: 'Bob' } },
+])
+
+const users = await cache.getMany(['user:1', 'user:2'], (keys) =>
+  db.findUsers(keys)
+)
+```
+
+## Next Steps
+
+- **[Tutorial](/docs/tutorial)** — Learn stampede prevention, tag invalidation, and more
+- **[API Reference](/docs/api)** — Complete method documentation
+- **[Integrations](/docs/integrations)** — Use with Express, Fastify, NestJS, and more

@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## Comparación
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| Multicapa con autorrelleno | Parcial | Plugin | -- | **Yes** |
-| Prevención de estampidas | -- | -- | -- | **Yes** |
-| Invalidación por tags | -- | Yes | Yes | **Yes** |
-| TypeScript-first | Parcial | Yes | Yes | **Yes** |
-| Hooks de eventos | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Multicapa con autorrelleno | Parcial | Plugin | -- | Parcial | **Yes** |
+| Prevención de estampidas | -- | -- | -- | Parcial | **Yes** |
+| Invalidación por tags | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript-first | Parcial | Yes | Yes | Yes | **Yes** |
+| Hooks de eventos | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>Comparación completa (19 características, clic para expandir)</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| Multicapa con autorrelleno | Parcial | Plugin | -- | **Yes** |
-| Prevención de avalanchas | -- | -- | -- | **Yes** |
-| Single-flight distribuido | -- | -- | -- | **Yes** |
-| Invalidación por tags | -- | Yes | Yes | **Yes** |
-| Tags distribuidos | -- | -- | -- | **Yes** |
-| Flush L1 entre servidores | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| Circuit breaker | -- | -- | -- | **Yes** |
-| Degradación elegante | -- | -- | -- | **Yes** |
-| TTL deslizante / adaptativo | -- | -- | -- | **Yes** |
-| Calentamiento de caché | -- | -- | -- | **Yes** |
-| Persistencia / snapshots | -- | -- | -- | **Yes** |
-| Compresión | -- | -- | Yes | **Yes** |
-| CLI de administración | -- | -- | -- | **Yes** |
-| TypeScript-first | Parcial | Yes | Yes | **Yes** |
-| API Wrap / decorador | Yes | -- | -- | **Yes** |
-| Namespaces | -- | Yes | Yes | **Yes** |
-| Hooks de eventos | Yes | Yes | Yes | **Yes** |
-| Capas personalizadas | Parcial | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Multicapa con autorrelleno | Parcial | Plugin | -- | Parcial | **Yes** |
+| Prevención de avalanchas | -- | -- | -- | Parcial | **Yes** |
+| Single-flight distribuido | -- | -- | -- | -- | **Yes** |
+| Invalidación por tags | -- | Yes | Yes | Yes | **Yes** |
+| Tags distribuidos | -- | -- | -- | -- | **Yes** |
+| Flush L1 entre servidores | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| Circuit breaker | -- | -- | -- | Yes | **Yes** |
+| Degradación elegante | -- | -- | -- | Yes | **Yes** |
+| TTL deslizante / adaptativo | -- | -- | -- | -- | **Yes** |
+| Calentamiento de caché | -- | -- | -- | -- | **Yes** |
+| Persistencia / snapshots | -- | -- | -- | -- | **Yes** |
+| Compresión | -- | -- | Yes | -- | **Yes** |
+| CLI de administración | -- | -- | -- | -- | **Yes** |
+| TypeScript-first | Parcial | Yes | Yes | Yes | **Yes** |
+| API Wrap / decorador | Yes | -- | -- | Parcial | **Yes** |
+| Namespaces | -- | Yes | Yes | Yes | **Yes** |
+| Hooks de eventos | Yes | Yes | Yes | Yes | **Yes** |
+| Capas personalizadas | Parcial | -- | -- | Yes | **Yes** |
 
 </details>
 

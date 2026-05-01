@@ -194,38 +194,38 @@ const cache = new CacheStack([
 
 ## 比較
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
-| スタンピード防止 | -- | -- | -- | **Yes** |
-| タグ無効化 | -- | Yes | Yes | **Yes** |
-| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
-| イベントフック | Yes | Yes | Yes | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | 部分 | **Yes** |
+| スタンピード防止 | -- | -- | -- | 部分 | **Yes** |
+| タグ無効化 | -- | Yes | Yes | Yes | **Yes** |
+| TypeScript ファースト | 部分 | Yes | Yes | Yes | **Yes** |
+| イベントフック | Yes | Yes | Yes | Yes | **Yes** |
 
 <details>
 <summary>全機能比較（19 項目、クリックで展開）</summary>
 
-|  | node-cache-manager | keyv | cacheable | **layercache** |
-|---|:---:|:---:|:---:|:---:|
-| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | **Yes** |
-| スタンピード防止 | -- | -- | -- | **Yes** |
-| 分散シングルフライト | -- | -- | -- | **Yes** |
-| タグ無効化 | -- | Yes | Yes | **Yes** |
-| 分散タグ | -- | -- | -- | **Yes** |
-| クロスサーバー L1 フラッシュ | -- | -- | -- | **Yes** |
-| Stale-while-revalidate | -- | -- | -- | **Yes** |
-| サーキットブレーカー | -- | -- | -- | **Yes** |
-| グレースフルデグラデーション | -- | -- | -- | **Yes** |
-| スライディング / アダプティブ TTL | -- | -- | -- | **Yes** |
-| キャッシュウォーミング | -- | -- | -- | **Yes** |
-| スナップショット永続性 | -- | -- | -- | **Yes** |
-| 圧縮 | -- | -- | Yes | **Yes** |
-| 管理 CLI | -- | -- | -- | **Yes** |
-| TypeScript ファースト | 部分 | Yes | Yes | **Yes** |
-| Wrap / デコレーター API | Yes | -- | -- | **Yes** |
-| ネームスペース | -- | Yes | Yes | **Yes** |
-| イベントフック | Yes | Yes | Yes | **Yes** |
-| カスタムレイヤー | 部分 | -- | -- | **Yes** |
+|  | node-cache-manager | keyv | cacheable | BentoCache | **layercache** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 自動バックフィル付きマルチレイヤー | 部分 | プラグイン | -- | 部分 | **Yes** |
+| スタンピード防止 | -- | -- | -- | 部分 | **Yes** |
+| 分散シングルフライト | -- | -- | -- | -- | **Yes** |
+| タグ無効化 | -- | Yes | Yes | Yes | **Yes** |
+| 分散タグ | -- | -- | -- | -- | **Yes** |
+| クロスサーバー L1 フラッシュ | -- | -- | -- | Yes | **Yes** |
+| Stale-while-revalidate | -- | -- | -- | Yes | **Yes** |
+| サーキットブレーカー | -- | -- | -- | Yes | **Yes** |
+| グレースフルデグラデーション | -- | -- | -- | Yes | **Yes** |
+| スライディング / アダプティブ TTL | -- | -- | -- | -- | **Yes** |
+| キャッシュウォーミング | -- | -- | -- | -- | **Yes** |
+| スナップショット永続性 | -- | -- | -- | -- | **Yes** |
+| 圧縮 | -- | -- | Yes | -- | **Yes** |
+| 管理 CLI | -- | -- | -- | -- | **Yes** |
+| TypeScript ファースト | 部分 | Yes | Yes | Yes | **Yes** |
+| Wrap / デコレーター API | Yes | -- | -- | 部分 | **Yes** |
+| ネームスペース | -- | Yes | Yes | Yes | **Yes** |
+| イベントフック | Yes | Yes | Yes | Yes | **Yes** |
+| カスタムレイヤー | 部分 | -- | -- | Yes | **Yes** |
 
 </details>
 
