@@ -10,20 +10,22 @@ export function createRedisClient(): Redis {
   return new Redis(REDIS_URL, { lazyConnect: true })
 }
 
-export let redisAvailable = false
-
-beforeAll(async () => {
+async function probeRedisAvailability(): Promise<boolean> {
   const probe = createRedisClient()
   try {
     await probe.connect()
     await probe.ping()
-    redisAvailable = true
+    return true
   } catch {
-    redisAvailable = false
+    return false
   } finally {
     await probe.disconnect()
   }
+}
 
+export const redisAvailable = await probeRedisAvailability()
+
+beforeAll(async () => {
   if (redisAvailable) {
     cleanupClient = createRedisClient()
     await cleanupClient.connect()

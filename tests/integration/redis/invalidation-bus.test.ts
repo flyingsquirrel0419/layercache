@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { RedisInvalidationBus } from '../../../src/invalidation/RedisInvalidationBus'
 import { TEST_PREFIX, createRedisClient, redisAvailable } from '../../integration-setup'
 
-const describe_integration = describe.skipIf(() => !redisAvailable)
+const describe_integration = describe.skipIf(!redisAvailable)
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {

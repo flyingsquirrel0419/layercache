@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { RedisSingleFlightCoordinator } from '../../../src/singleflight/RedisSingleFlightCoordinator'
 import { TEST_PREFIX, createRedisClient, redisAvailable } from '../../integration-setup'
 
-const describe_integration = describe.skipIf(() => !redisAvailable)
+const describe_integration = describe.skipIf(!redisAvailable)
 
 describe_integration('RedisSingleFlightCoordinator (real Redis)', () => {
   let client: Redis

@@ -8,7 +8,7 @@ import { RedisLayer } from '../../../src/layers/RedisLayer'
 import { RedisSingleFlightCoordinator } from '../../../src/singleflight/RedisSingleFlightCoordinator'
 import { TEST_PREFIX, createRedisClient, redisAvailable } from '../../integration-setup'
 
-const describe_integration = describe.skipIf(() => !redisAvailable)
+const describe_integration = describe.skipIf(!redisAvailable)
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
@@ -22,7 +22,7 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
   let cacheB: CacheStack
   let busA: RedisInvalidationBus
   let busB: RedisInvalidationBus
-  const cachePrefix = `${TEST_PREFIX}multi:`
+  const cachePrefix = `${TEST_PREFIX}multi:shared:`
 
   beforeAll(async () => {
     redis = createRedisClient()
@@ -44,7 +44,7 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
     cacheA = new CacheStack(
       [
         new MemoryLayer({ ttl: 60, maxSize: 1_000 }),
-        new RedisLayer({ client: redis, prefix: `${cachePrefix}a:`, ttl: 300 })
+        new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300 })
       ],
       {
         invalidationBus: busA,
@@ -56,7 +56,7 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
     cacheB = new CacheStack(
       [
         new MemoryLayer({ ttl: 60, maxSize: 1_000 }),
-        new RedisLayer({ client: redis, prefix: `${cachePrefix}b:`, ttl: 300 })
+        new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300 })
       ],
       {
         invalidationBus: busB,

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { RedisTagIndex } from '../../../src/invalidation/RedisTagIndex'
 import { TEST_PREFIX, createRedisClient, redisAvailable } from '../../integration-setup'
 
-const describe_integration = describe.skipIf(() => !redisAvailable)
+const describe_integration = describe.skipIf(!redisAvailable)
 
 describe_integration('RedisTagIndex (real Redis)', () => {
   let client: Redis
