@@ -4,6 +4,7 @@ import { generationPrefix, stripGenerationPrefix } from '../../src/internal/Cach
 import { createStoredValueEnvelope } from '../../src/internal/StoredValue'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import type { CacheLayer } from '../../src/types'
+import type { CacheFetcher, CacheFetcherContext } from '../../src/types'
 
 function makeLayer(name: string, overrides: Partial<CacheLayer> = {}): CacheLayer {
   return {
@@ -658,7 +659,14 @@ describe('CacheStack internals', () => {
     const policyCache = new CacheStack([makeLayer('policy', { set: vi.fn(async () => undefined) })])
     const scheduleSpy = vi
       .spyOn(
-        policyCache as object as { scheduleBackgroundRefresh: (key: string, fetcher: () => Promise<string>) => void },
+        policyCache as object as {
+          scheduleBackgroundRefresh: (
+            key: string,
+            fetcher: CacheFetcher<string>,
+            options?: unknown,
+            fetcherContext?: CacheFetcherContext<string>
+          ) => void
+        },
         'scheduleBackgroundRefresh'
       )
       .mockImplementation(() => undefined)
@@ -675,7 +683,7 @@ describe('CacheStack internals', () => {
             layerName: string
           },
           options: { refreshAhead?: number; slidingTtl?: boolean },
-          fetcher?: () => Promise<string>
+          fetcher?: CacheFetcher<string>
         ) => Promise<void>
       }
     ).applyFreshReadPolicies(
@@ -741,7 +749,7 @@ describe('CacheStack internals', () => {
             layerName: string
           },
           options: { refreshAhead?: number; slidingTtl?: boolean },
-          fetcher?: () => Promise<string>
+          fetcher?: CacheFetcher<string>
         ) => Promise<void>
       }
     ).applyFreshReadPolicies(
@@ -975,10 +983,15 @@ describe('CacheStack internals', () => {
     ).reader.runScheduleBackgroundRefresh = scheduleSpy
     ;(
       cache as unknown as {
-        scheduleBackgroundRefresh: (key: string, fetcher: () => Promise<string>, options?: unknown) => void
+        scheduleBackgroundRefresh: (
+          key: string,
+          fetcher: CacheFetcher<string>,
+          options?: unknown,
+          fetcherContext?: CacheFetcherContext<string>
+        ) => void
       }
     ).scheduleBackgroundRefresh('key1', async () => 'val', { ttl: 30 })
 
-    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30 })
+    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30 }, undefined)
   })
 })

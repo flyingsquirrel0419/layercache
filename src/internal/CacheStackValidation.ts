@@ -1,6 +1,7 @@
 import type {
   CacheAdaptiveTtlOptions,
   CacheCircuitBreakerOptions,
+  CacheEntryWriteOptions,
   CacheRateLimitOptions,
   CacheTtlPolicy,
   LayerTtlMap
@@ -161,4 +162,19 @@ export function validateCircuitBreakerOptions(options: CacheCircuitBreakerOption
 
   validatePositiveNumber('circuitBreaker.failureThreshold', options.failureThreshold)
   validatePositiveNumber('circuitBreaker.cooldownMs', options.cooldownMs)
+}
+
+export function validateContextEntryOptions(name: string, options: CacheEntryWriteOptions | undefined): void {
+  if (!options) {
+    return
+  }
+
+  validateLayerNumberOption(`${name}.ttl`, options.ttl)
+  validateLayerNumberOption(`${name}.negativeTtl`, options.negativeTtl)
+  validateLayerNumberOption(`${name}.staleWhileRevalidate`, options.staleWhileRevalidate)
+  validateLayerNumberOption(`${name}.staleIfError`, options.staleIfError)
+  validateLayerNumberOption(`${name}.ttlJitter`, options.ttlJitter)
+  validateTtlPolicy(`${name}.ttlPolicy`, options.ttlPolicy)
+  validateAdaptiveTtlOptions(options.adaptiveTtl)
+  validateTags(options.tags)
 }

@@ -265,6 +265,7 @@ const cache = new CacheStack([
 | **Adaptive TTL** | Auto-ramp TTL for hot keys up to a ceiling |
 | **Refresh-ahead** | Proactively refresh before expiry |
 | **TTL policies** | Align expirations to calendar boundaries (`until-midnight`, `next-hour`, custom) |
+| **Context-aware entry options** | Derive TTLs and tags from the cached value right before storage |
 
 ### Resilience & Operations
 
