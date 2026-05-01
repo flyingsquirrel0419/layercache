@@ -26,7 +26,7 @@ function run(command, args, options = {}) {
 
 async function waitForRedis(timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs
-  const url = new URL(REDIS_URL)
+  const url = REDIS_URL.includes('://') ? new URL(REDIS_URL) : new URL(`redis://${REDIS_URL}`)
   const host = url.hostname || '127.0.0.1'
   const port = Number(url.port || 6379)
 
@@ -57,7 +57,12 @@ try {
     exitCode = upCode
   } else {
     await waitForRedis()
-    exitCode = await run(npmBin, ['exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts'])
+    exitCode = await run(npmBin, ['exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
+      env: {
+        ...process.env,
+        REDIS_AVAILABLE: '1'
+      }
+    })
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))

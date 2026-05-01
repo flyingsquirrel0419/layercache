@@ -1,29 +1,15 @@
-import Redis from 'ioredis'
 import { afterAll, beforeAll } from 'vitest'
+import Redis from 'ioredis'
 
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 export const TEST_PREFIX = `layercache:test:${process.pid}:${Date.now()}:`
+export const redisAvailable = process.env.REDIS_AVAILABLE === '1'
 
 let cleanupClient: Redis | null = null
 
 export function createRedisClient(): Redis {
   return new Redis(REDIS_URL, { lazyConnect: true })
 }
-
-async function probeRedisAvailability(): Promise<boolean> {
-  const probe = createRedisClient()
-  try {
-    await probe.connect()
-    await probe.ping()
-    return true
-  } catch {
-    return false
-  } finally {
-    await probe.disconnect()
-  }
-}
-
-export const redisAvailable = await probeRedisAvailability()
 
 beforeAll(async () => {
   if (redisAvailable) {
