@@ -54,6 +54,7 @@ jobs:
         run: npm run test:integration
         env:
           REDIS_URL: redis://localhost:6379
+          REDIS_AVAILABLE: '1'
         if: matrix.node-version == '20'
 
       - name: Upload coverage to Coveralls

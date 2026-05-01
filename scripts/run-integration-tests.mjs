@@ -4,6 +4,7 @@ import net from 'node:net'
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 const dockerBin = process.platform === 'win32' ? 'docker.exe' : 'docker'
 const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const useExistingRedis = process.env.REDIS_AVAILABLE === '1'
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -52,10 +53,7 @@ async function waitForRedis(timeoutMs = 15_000) {
 let exitCode = 0
 
 try {
-  const upCode = await run(dockerBin, ['compose', 'up', '-d', 'redis'])
-  if (upCode !== 0) {
-    exitCode = upCode
-  } else {
+  if (useExistingRedis) {
     await waitForRedis()
     exitCode = await run(npmBin, ['exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
       env: {
@@ -63,17 +61,32 @@ try {
         REDIS_AVAILABLE: '1'
       }
     })
+  } else {
+    const upCode = await run(dockerBin, ['compose', 'up', '-d', 'redis'])
+    if (upCode !== 0) {
+      exitCode = upCode
+    } else {
+      await waitForRedis()
+      exitCode = await run(npmBin, ['exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
+        env: {
+          ...process.env,
+          REDIS_AVAILABLE: '1'
+        }
+      })
+    }
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))
   exitCode = 1
 } finally {
-  const downCode = await run(dockerBin, ['compose', 'down']).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error))
-    return 1
-  })
-  if (exitCode === 0 && downCode !== 0) {
-    exitCode = downCode
+  if (!useExistingRedis) {
+    const downCode = await run(dockerBin, ['compose', 'down']).catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error))
+      return 1
+    })
+    if (exitCode === 0 && downCode !== 0) {
+      exitCode = downCode
+    }
   }
 }
 
