@@ -8,69 +8,27 @@ How does layercache compare to other popular Node.js caching libraries?
 
 ## Overview
 
-| Capability | layercache | BentoCache | node-cache-manager | keyv | cacheable |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Multi-layer with auto backfill | **Yes** | Yes | Partial | Plugin | -- |
-| Stampede prevention | **Yes** | Yes | -- | -- | -- |
-| Distributed single-flight | **Yes** | Per-instance lock | -- | -- | -- |
-| Tag invalidation | **Yes** | Yes | -- | -- | Yes |
-| Expire without deleting stale values | **Yes** | Timestamp-based tags | -- | -- | -- |
-| Distributed tags | **Yes** | Yes | -- | -- | -- |
-| Cross-server L1 flush | **Yes** | Yes | -- | -- | -- |
-| Stale-while-revalidate | **Yes** | Yes | -- | -- | -- |
-| Stale-if-error / grace period | **Yes** | Yes | -- | -- | -- |
-| Circuit breaker | **Yes** | -- | -- | -- | -- |
-| Graceful degradation | **Yes** | Yes | -- | -- | -- |
-| Factory timeout controls | **Yes** | Yes | -- | -- | -- |
-| Sliding / adaptive TTL | **Yes** | Refresh threshold | -- | -- | -- |
-| Cache warming | **Yes** | -- | -- | -- | -- |
-| Persistence / snapshots | **Yes** | Driver-dependent | -- | -- | -- |
-| Compression | **Yes** | Driver-dependent | -- | -- | Yes |
-| Admin CLI | **Yes** | -- | -- | -- | -- |
-| TypeScript-first | **Yes** | Yes | Partial | Yes | Yes |
-| Wrap / decorator API | **Yes** | getOrSet API | Yes | -- | -- |
-| Namespaces | **Yes** | Yes | -- | Yes | Yes |
-| Event hooks | **Yes** | Yes | Yes | Yes | Yes |
-| OpenTelemetry integration | **Yes** | Yes | -- | -- | -- |
-| Custom layers | **Yes** | Yes | Partial | -- | -- |
-
----
-
-## layercache vs. BentoCache
-
-**BentoCache** is the closest comparison in this list. It is a full-featured Node.js caching library with L1/L2 stores, local-cache synchronization over a bus, stampede protection, grace periods, soft/hard factory timeouts, namespaces, tags, events, logging, OpenTelemetry, and many official drivers.
-
-**Where layercache is similar:**
-
-- **Multi-layer caching** - both libraries combine fast local memory with a shared/distributed cache and can synchronize local caches between instances.
-- **Stale serving** - both can serve stale data while refreshing in the background.
-- **Stampede protection** - both avoid running the same expensive factory many times concurrently within an instance.
-- **Tag and namespace workflows** - both support grouping keys and invalidating groups rather than deleting one key at a time.
-- **Observability** - both expose events and OpenTelemetry-friendly instrumentation paths.
-
-**Where layercache goes further or chooses a different tradeoff:**
-
-- **Explicit layer stack** - layercache exposes a direct `CacheStack([new MemoryLayer(), new RedisLayer(), ...])` model. BentoCache uses named stores and drivers, which is flexible but more framework-like.
-- **Direct key discovery invalidation** - layercache supports tag, tag-set, glob pattern, prefix, and generation-based invalidation. BentoCache's documented tag model avoids scanning by storing tag invalidation timestamps and checking them on read.
-- **Expire without deletion** - layercache has `expireByTag()`, `expireByTags()`, `expireByPattern()`, and `expireByPrefix()` for marking entries stale while keeping stale values available for SWR. BentoCache's tag invalidation is timestamp-based, so entries can be considered stale without eagerly deleting the backing values, but its public API is centered on `deleteByTag()`.
-- **Operational controls** - layercache includes an admin CLI, snapshot import/export, Prometheus exporter, health checks, Redis-backed distributed single-flight coordination, circuit breakers, fetcher rate limiting, refresh-ahead, sliding TTL, adaptive TTL, and generation rotation as first-class APIs.
-- **Built-in layer implementations** - layercache focuses on memory, Redis, disk, and Memcached layers with consistent envelope semantics. BentoCache currently has broader official driver coverage, including Redis-compatible providers, filesystem, DynamoDB, SQL drivers, and ORM-backed drivers.
-
-**Where BentoCache may be a better fit:**
-
-- You want a larger official driver catalog out of the box, especially database, DynamoDB, Upstash/Vercel KV, or ORM-backed stores.
-- You prefer backend-agnostic tag invalidation based on tag timestamps rather than maintaining key-to-tag indexes.
-- You want friendly TTL strings and cache size strings as part of the public API.
-- You like its store/driver abstraction and named-cache style for a larger application.
-
-**When layercache is likely a better fit:**
-
-- You want direct control over the exact layer stack and per-layer TTL behavior.
-- You need explicit prefix, pattern, tag-set, generation, or expire-without-delete operations.
-- You want cache operations to integrate tightly with built-in metrics, admin CLI workflows, snapshots, circuit breakers, and Redis single-flight coordination.
-- You prefer a smaller built-in set of production layers with consistent stale envelope semantics across them.
-
-References: [BentoCache introduction](https://bentocache.dev/docs/introduction), [BentoCache tagging](https://bentocache.dev/docs/tagging), [BentoCache drivers](https://bentocache.dev/docs/cache-drivers), [BentoCache timeouts](https://bentocache.dev/docs/timeouts), [BentoCache stampede protection](https://bentocache.dev/docs/stampede-protection).
+| Capability | layercache | node-cache-manager | keyv | cacheable |
+|---|:---:|:---:|:---:|:---:|
+| Multi-layer with auto backfill | **Yes** | Partial | Plugin | -- |
+| Stampede prevention | **Yes** | -- | -- | -- |
+| Distributed single-flight | **Yes** | -- | -- | -- |
+| Tag invalidation | **Yes** | -- | -- | Yes |
+| Distributed tags | **Yes** | -- | -- | -- |
+| Cross-server L1 flush | **Yes** | -- | -- | -- |
+| Stale-while-revalidate | **Yes** | -- | -- | -- |
+| Circuit breaker | **Yes** | -- | -- | -- |
+| Graceful degradation | **Yes** | -- | -- | -- |
+| Sliding / adaptive TTL | **Yes** | -- | -- | -- |
+| Cache warming | **Yes** | -- | -- | -- |
+| Persistence / snapshots | **Yes** | -- | -- | -- |
+| Compression | **Yes** | -- | -- | Yes |
+| Admin CLI | **Yes** | -- | -- | -- |
+| TypeScript-first | **Yes** | Partial | Yes | Yes |
+| Wrap / decorator API | **Yes** | Yes | -- | -- |
+| Namespaces | **Yes** | -- | Yes | Yes |
+| Event hooks | **Yes** | Yes | Yes | Yes |
+| Custom layers | **Yes** | Partial | -- | -- |
 
 ---
 
