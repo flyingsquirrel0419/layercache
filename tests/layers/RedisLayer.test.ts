@@ -275,7 +275,7 @@ describe('RedisLayer', () => {
       ).decodePayload(Buffer.from('not-compressed'))
     ).resolves.toEqual(Buffer.from('not-compressed'))
 
-    const ttlSpy = vi.spyOn(client, 'ttl').mockResolvedValueOnce(-1)
+    const ttlSpy = vi.spyOn(client, 'pttl').mockResolvedValueOnce(-1)
     const setSpy = vi.spyOn(client, 'set')
     await (
       layer as {
