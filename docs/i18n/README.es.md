@@ -258,6 +258,7 @@ const cache = new CacheStack([
 | **Invalidación por tags** | Un tag, y se borran todas las claves asociadas en todas las capas |
 | **Invalidación batch de tags** | Varios tags de una vez con semántica `any` / `all` |
 | **Comodines y prefijos** | `user:*` y listo, borra todo lo que coincida |
+| **Expirar sin borrar** | Marca valores como stale sin eliminarlos para que SWR pueda seguir sirviéndolos |
 | **Rotación por generaciones** | Cambia toda una generación de namespace sin escanear nada |
 | **Stale-while-revalidate** | Devuelve lo cacheado y refresca de fondo |
 | **Stale-if-error** | Si el origen falla, sigue sirviendo lo expirado sin pestañear |
@@ -286,7 +287,7 @@ const cache = new CacheStack([
 | **Métricas** | Hits, misses, fetches, stale hits, trips del circuit breaker y más |
 | **Latencia por capa** | Promedio, máximo y muestras con el algoritmo de Welford |
 | **Health checks** | Endpoint de salud asíncrono por capa, con medición de latencia |
-| **Hooks de eventos** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
+| **Hooks de eventos** | `hit`, `miss`, `set`, `delete`, `expire`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
 | **OpenTelemetry** | Trazado distribuido vía hooks, sin tocar el código fuente |
 | **Exportador Prometheus** | Métricas listas para scrape, incluyendo gauges de latencia |
 | **Handler HTTP de stats** | Endpoint JSON para dashboards |

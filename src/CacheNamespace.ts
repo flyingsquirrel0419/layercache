@@ -98,9 +98,22 @@ export class CacheNamespace {
     await this.trackMetrics(() => this.cache.invalidateByTag(this.qualifyTag(tag)))
   }
 
+  async expireByTag(tag: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByTag(this.qualifyTag(tag)))
+  }
+
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.trackMetrics(() =>
       this.cache.invalidateByTags(
+        tags.map((tag) => this.qualifyTag(tag)),
+        mode
+      )
+    )
+  }
+
+  async expireByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
+    await this.trackMetrics(() =>
+      this.cache.expireByTags(
         tags.map((tag) => this.qualifyTag(tag)),
         mode
       )
@@ -111,8 +124,16 @@ export class CacheNamespace {
     await this.trackMetrics(() => this.cache.invalidateByPattern(this.qualify(pattern)))
   }
 
+  async expireByPattern(pattern: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByPattern(this.qualify(pattern)))
+  }
+
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByPrefix(this.qualify(prefix)))
+  }
+
+  async expireByPrefix(prefix: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByPrefix(this.qualify(prefix)))
   }
 
   /**

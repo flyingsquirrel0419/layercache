@@ -210,6 +210,45 @@ Hierarchical prefix-based invalidation. Prefer this over glob when keys are hier
 await cache.invalidateByPrefix('user:123:') // deletes user:123:profile, user:123:posts, ...
 ```
 
+#### `cache.expireByTag(tag): Promise<void>`
+
+Marks every key stored with this tag as no longer fresh while keeping the cached value available for stale-while-revalidate / stale-if-error windows.
+
+```ts
+await cache.set('user:123', user, {
+  ttl: 60,
+  staleWhileRevalidate: 30,
+  tags: ['user:123']
+})
+
+await cache.expireByTag('user:123') // value remains, next read can serve stale and refresh
+```
+
+#### `cache.expireByTags(tags, mode?): Promise<void>`
+
+Expire keys matching any or all of a set of tags without deleting the stored values.
+
+```ts
+await cache.expireByTags(['tenant:a', 'users'], 'all')
+await cache.expireByTags(['users', 'posts'], 'any')
+```
+
+#### `cache.expireByPattern(pattern): Promise<void>`
+
+Glob-style expiration. Matching envelope-backed entries keep their stale windows; plain layer values that do not carry layercache freshness metadata are left unchanged.
+
+```ts
+await cache.expireByPattern('user:*')
+```
+
+#### `cache.expireByPrefix(prefix): Promise<void>`
+
+Hierarchical prefix-based expiration. Prefer this over glob when keys are hierarchical.
+
+```ts
+await cache.expireByPrefix('user:123:')
+```
+
 ---
 
 ### Wrapping & Namespaces
@@ -541,6 +580,17 @@ await cache.invalidateByPattern('user:*')
 
 ```ts
 await cache.invalidateByPrefix('user:123:')
+```
+
+### Expiration Without Deletion
+
+Use the `expireBy*` counterparts when stale serving is preferable to removing values immediately.
+
+```ts
+await cache.expireByTag('user:123')
+await cache.expireByTags(['tenant:a', 'users'], 'all')
+await cache.expireByPattern('user:*')
+await cache.expireByPrefix('user:123:')
 ```
 
 ### Generation-Based Invalidation
