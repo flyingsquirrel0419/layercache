@@ -37,8 +37,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 100 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 ```
 
@@ -47,17 +47,17 @@ const cache = new CacheStack([
 | node-cache-manager | layercache | Notes |
 |---|---|---|
 | `cache.wrap(key, fn)` | `cache.get(key, fn)` | Read-through fetch |
-| `cache.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in seconds (not ms) |
+| `cache.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in milliseconds |
 | `cache.get(key)` | `cache.get(key)` | Same API |
 | `cache.del(key)` | `cache.delete(key)` | Renamed |
 | `cache.reset()` | `cache.clear()` | Renamed |
-| Per-store TTL | `ttl: { memory: 60, redis: 300 }` | Per-layer TTL map |
+| Per-store TTL | `ttl: { memory: 60_000, redis: 300_000 }` | Per-layer TTL map |
 | - | `cache.invalidateByTag(tag)` | New: tag invalidation |
 | - | `cache.wrap(prefix, fn)` | New: transparent function caching |
 
 ### Key differences
 
-- **TTL is in seconds**, not milliseconds
+- **TTL is in milliseconds**
 - **Auto backfill** is built in - no manual L1 warming needed
 - **Stampede prevention** is on by default
 - **Tag invalidation** replaces manual key tracking for group deletion
@@ -86,11 +86,11 @@ const user = await keyv.get('user:123')
 import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
-await cache.set('user:123', user, { ttl: 60 })
+await cache.set('user:123', user, { ttl: 60_000 })
 const user = await cache.get('user:123')
 ```
 
@@ -98,7 +98,7 @@ const user = await cache.get('user:123')
 
 | keyv | layercache | Notes |
 |---|---|---|
-| `keyv.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in seconds |
+| `keyv.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in milliseconds |
 | `keyv.get(key)` | `cache.get(key)` | Same |
 | `keyv.delete(key)` | `cache.delete(key)` | Same |
 | `keyv.clear()` | `cache.clear()` | Same |
@@ -110,7 +110,7 @@ const user = await cache.get('user:123')
 
 - **Multi-layer is native** - not a plugin. Reads cascade through layers with auto backfill.
 - **Read-through fetch** - pass a fetcher to `get()` and the cache handles misses automatically.
-- **TTL is in seconds**, not milliseconds.
+- **TTL is in milliseconds.**
 - **Namespaces** work the same way conceptually but return a full-featured `CacheNamespace`.
 
 ---
@@ -134,14 +134,14 @@ await cache.set('key', value)
 import { CacheStack, MemoryLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 3600 })
+  new MemoryLayer({ ttl: 3_600_000 })
 ])
 await cache.set('key', value)
 ```
 
 ### Key differences
 
-- **TTL is numeric seconds** instead of string durations
+- **TTL is numeric milliseconds** instead of string durations
 - **Multi-layer orchestration** with auto backfill across any number of layers
 - **Distributed consistency** via Redis pub/sub invalidation bus and shared tag index
 - **Stampede prevention** built in

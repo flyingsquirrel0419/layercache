@@ -9,7 +9,7 @@ import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 function makeCache() {
-  return new CacheStack([new MemoryLayer({ ttl: 60 })])
+  return new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +380,7 @@ describe('createTrpcCacheMiddleware', () => {
   it('caches procedure results', async () => {
     const cache = makeCache()
     const middleware = createTrpcCacheMiddleware(cache, 'proc', {
-      ttl: 60,
+      ttl: 60_000,
       keyResolver: (input: { id: number }) => String(input.id)
     })
 
@@ -461,7 +461,7 @@ describe('createTrpcCacheMiddleware', () => {
 // ---------------------------------------------------------------------------
 describe('createExpressCacheMiddleware', () => {
   it('passes cache errors to next(error)', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     await cache.disconnect()
 
     const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
@@ -690,7 +690,7 @@ describe('createExpressCacheMiddleware', () => {
 
 describe('createHonoCacheMiddleware', () => {
   it('surfaces cache errors to the framework as a rejected middleware promise', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     await cache.disconnect()
 
     const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })

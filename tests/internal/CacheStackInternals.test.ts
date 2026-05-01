@@ -22,7 +22,7 @@ describe('CacheStack internals', () => {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
 
     try {
-      const enabled = new CacheStack([new MemoryLayer({ ttl: 60 })], { logger: true })
+      const enabled = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { logger: true })
       ;(enabled as { logger: { info: (message: string, context?: Record<string, unknown>) => void } }).logger.info(
         'hello',
         { ok: true }
@@ -31,7 +31,7 @@ describe('CacheStack internals', () => {
         'plain'
       )
 
-      const disabled = new CacheStack([new MemoryLayer({ ttl: 60 })], { logger: false })
+      const disabled = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { logger: false })
       ;(disabled as { logger: { info: (message: string, context?: Record<string, unknown>) => void } }).logger.info(
         'quiet',
         { ignored: true }
@@ -70,7 +70,7 @@ describe('CacheStack internals', () => {
   })
 
   it('sorts warm entries by priority and can either continue or stop on error', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const order: string[] = []
     const progress: Array<{ key: string; success: boolean }> = []
 
@@ -131,14 +131,14 @@ describe('CacheStack internals', () => {
   })
 
   it('handles generation prefixes and invalidation key limits through internal helpers', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { generation: 2, invalidationMaxKeys: false })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { generation: 2, invalidationMaxKeys: false })
 
     expect(generationPrefix(2)).toBe('v2:')
     expect(stripGenerationPrefix('v2:user:1', 2)).toBe('user:1')
     expect(stripGenerationPrefix('user:1', 2)).toBe('user:1')
     expect((cache as { invalidationMaxKeys: () => number | false }).invalidationMaxKeys()).toBe(false)
 
-    const limited = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    const limited = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationMaxKeys: 1 })
     expect(() =>
       (
         limited as {
@@ -150,7 +150,7 @@ describe('CacheStack internals', () => {
 
   it('routes recoverable failures through degraded and non-degraded paths', async () => {
     const degradedErrors: unknown[] = []
-    const degraded = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const degraded = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       gracefulDegradation: { retryAfterMs: 50 }
     })
     degraded.on('error', (event) => degradedErrors.push(event))
@@ -165,7 +165,7 @@ describe('CacheStack internals', () => {
     expect(degradedErrors).toEqual([expect.objectContaining({ operation: 'read', degraded: true })])
 
     const plainWarnings: unknown[] = []
-    const plain = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const plain = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       logger: { warn: (...args: unknown[]) => plainWarnings.push(args) }
     })
     plain.on('error', (event) => degradedErrors.push(event))
@@ -229,12 +229,12 @@ describe('CacheStack internals', () => {
   })
 
   it('uses snapshot and invalidation defaults unless explicitly disabled', () => {
-    const defaults = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const defaults = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     expect((defaults as { snapshotMaxBytes: () => number | false }).snapshotMaxBytes()).toBe(16 * 1_024 * 1_024)
     expect((defaults as { snapshotMaxEntries: () => number | false }).snapshotMaxEntries()).toBe(10_000)
     expect((defaults as { invalidationMaxKeys: () => number | false }).invalidationMaxKeys()).toBe(10_000)
 
-    const disabled = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const disabled = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       snapshotMaxBytes: false,
       snapshotMaxEntries: false,
       invalidationMaxKeys: false
@@ -249,7 +249,7 @@ describe('CacheStack internals', () => {
 
     expect(
       () =>
-        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+        new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
           broadcastL1Invalidation: true,
           publishSetInvalidation: false
         })
@@ -257,7 +257,7 @@ describe('CacheStack internals', () => {
 
     expect(
       () =>
-        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+        new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
           stampedePrevention: false,
           singleFlightCoordinator: { execute: vi.fn() } as never
         })
@@ -332,9 +332,9 @@ describe('CacheStack internals', () => {
     const staleEnvelope = createStoredValueEnvelope({
       kind: 'value',
       value: { id: 1 },
-      freshTtlSeconds: 1,
-      staleWhileRevalidateSeconds: 10,
-      staleIfErrorSeconds: 15,
+      freshTtlMs: 1_000,
+      staleWhileRevalidateMs: 10_000,
+      staleIfErrorMs: 15_000,
       now: Date.now() - 2_000
     })
     const inspectCache = new CacheStack([makeLayer('inspect-layer')])
@@ -367,7 +367,7 @@ describe('CacheStack internals', () => {
         createStoredValueEnvelope({
           kind: 'value',
           value: 'expired',
-          freshTtlSeconds: 1,
+          freshTtlMs: 1_000,
           now: Date.now() - 5_000
         }),
         null
@@ -440,8 +440,8 @@ describe('CacheStack internals', () => {
         return createStoredValueEnvelope({
           kind: 'value',
           value: { id: 1 },
-          freshTtlSeconds: 60,
-          staleWhileRevalidateSeconds: 30
+          freshTtlMs: 60_000,
+          staleWhileRevalidateMs: 30_000
         })
       }),
       set
@@ -469,8 +469,8 @@ describe('CacheStack internals', () => {
       'fresh',
       expect.objectContaining({
         __layercache: 1,
-        freshTtlSeconds: 60,
-        staleWhileRevalidateSeconds: 30
+        freshTtlMs: 60_000,
+        staleWhileRevalidateMs: 30_000
       }),
       expect.any(Number)
     )
@@ -527,7 +527,7 @@ describe('CacheStack internals', () => {
   })
 
   it('covers background refresh, invalidation-message, write-behind, and timeout branches', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       writeStrategy: 'write-behind',
       writeBehind: { batchSize: 2, maxQueueSize: 3 }
     })
@@ -604,7 +604,7 @@ describe('CacheStack internals', () => {
     })
     expect(tagIndex.remove).toHaveBeenCalledTimes(0)
 
-    const writeBehind = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const writeBehind = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       writeStrategy: 'write-behind',
       writeBehind: { batchSize: 2, maxQueueSize: 3 },
       logger: true
@@ -622,7 +622,7 @@ describe('CacheStack internals', () => {
     )
     expect(executed).toEqual(['first', 'second'])
 
-    const failingWriteBehind = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const failingWriteBehind = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       writeStrategy: 'write-behind',
       writeBehind: { batchSize: 1 }
     })
@@ -637,7 +637,7 @@ describe('CacheStack internals', () => {
   })
 
   it('covers generation cleanup, key intersection, layer deletion, and fresh-read policy branches', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       generationCleanup: { batchSize: 2 }
     })
 
@@ -694,13 +694,13 @@ describe('CacheStack internals', () => {
         stored: createStoredValueEnvelope({
           kind: 'value',
           value: 'value',
-          freshTtlSeconds: 1
+          freshTtlMs: 60_000
         }),
         state: 'fresh',
         layerIndex: 0,
         layerName: 'policy'
       },
-      { refreshAhead: 5, slidingTtl: true },
+      { refreshAhead: 120_000, slidingTtl: true },
       async () => 'fresh'
     )
     expect(scheduleSpy).toHaveBeenCalled()
@@ -760,7 +760,7 @@ describe('CacheStack internals', () => {
         stored: createStoredValueEnvelope({
           kind: 'value',
           value: 'value',
-          freshTtlSeconds: 30
+          freshTtlMs: 30_000
         }),
         state: 'fresh',
         layerIndex: 0,
@@ -779,7 +779,7 @@ describe('CacheStack internals', () => {
   })
 
   it('covers circuit recording, error emission, snapshot validation, tag fallback, and export-key branches', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       circuitBreaker: { failureThreshold: 1, cooldownMs: 50 }
     })
     ;(
@@ -945,7 +945,7 @@ describe('CacheStack internals', () => {
       subscribe: vi.fn(async () => vi.fn()),
       publish: vi.fn(async () => {})
     }
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       invalidationBus: bus,
       broadcastL1Invalidation: true
     })
@@ -962,7 +962,7 @@ describe('CacheStack internals', () => {
   })
 
   it('withTimeout returns raw value when result is not wrapped in {kind, value}', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const withTimeout = (
       cache as unknown as {
         withTimeout: <T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error) => Promise<T>
@@ -974,7 +974,7 @@ describe('CacheStack internals', () => {
   })
 
   it('scheduleBackgroundRefresh delegates to reader', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const scheduleSpy = vi.fn()
     ;(
       cache as unknown as {
@@ -990,8 +990,8 @@ describe('CacheStack internals', () => {
           fetcherContext?: CacheFetcherContext<string>
         ) => void
       }
-    ).scheduleBackgroundRefresh('key1', async () => 'val', { ttl: 30 })
+    ).scheduleBackgroundRefresh('key1', async () => 'val', { ttl: 30_000 })
 
-    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30 }, undefined)
+    expect(scheduleSpy).toHaveBeenCalledWith('key1', expect.any(Function), { ttl: 30_000 }, undefined)
   })
 })

@@ -36,7 +36,7 @@ describe('MemcachedLayer', () => {
 
   beforeEach(() => {
     client = new MockMemcachedClient()
-    layer = new MemcachedLayer({ client, ttl: 60 })
+    layer = new MemcachedLayer({ client, ttl: 60_000 })
   })
 
   it('should set and get a value', async () => {
@@ -89,7 +89,7 @@ describe('MemcachedLayer', () => {
   })
 
   it('should use keyPrefix', async () => {
-    const prefixed = new MemcachedLayer({ client, keyPrefix: 'app:', ttl: 60 })
+    const prefixed = new MemcachedLayer({ client, keyPrefix: 'app:', ttl: 60_000 })
     await prefixed.set('key1', 'value1')
     // Original client has the prefixed key
     const raw = await client.get('app:key1')
@@ -102,7 +102,7 @@ describe('MemcachedLayer', () => {
     const msgpackLayer = new MemcachedLayer({
       client,
       serializer: new MsgpackSerializer(),
-      ttl: 60
+      ttl: 60_000
     })
     await msgpackLayer.set('key1', { foo: 'bar' })
     const result = await msgpackLayer.get<{ foo: string }>('key1')

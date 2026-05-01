@@ -30,8 +30,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 100 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 ```
 
@@ -60,7 +60,7 @@ await cache.set('user:123', user, 60000)  // TTL in milliseconds
 **After:**
 
 ```tsx
-await cache.set('user:123', user, { ttl: 60 })  // TTL in seconds
+await cache.set('user:123', user, { ttl: 60_000 })  // TTL in milliseconds
 ```
 
 ### Delete
@@ -96,17 +96,17 @@ await cache.clear()
 | node-cache-manager | layercache | Notes |
 |--------------------|------------|-------|
 | `cache.wrap(key, fn)` | `cache.get(key, fn)` | Read-through fetch |
-| `cache.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in seconds (not ms) |
+| `cache.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in milliseconds |
 | `cache.get(key)` | `cache.get(key)` | Same API |
 | `cache.del(key)` | `cache.delete(key)` | Renamed |
 | `cache.reset()` | `cache.clear()` | Renamed |
-| Per-store TTL | `ttl: { memory: 60, redis: 300 }` | Per-layer TTL map |
+| Per-store TTL | `ttl: { memory: 60_000, redis: 300_000 }` | Per-layer TTL map |
 | - | `cache.invalidateByTag(tag)` | New: tag invalidation |
 | - | `cache.wrap(prefix, fn)` | New: transparent function caching |
 
 ### Key Differences
 
-#### TTL is in Seconds
+#### TTL is in Milliseconds
 
 **node-cache-manager uses milliseconds:**
 
@@ -114,10 +114,10 @@ await cache.clear()
 await cache.set('key', value, 60000)  // 60 seconds
 ```
 
-**Layercache uses seconds:**
+**Layercache uses milliseconds:**
 
 ```tsx
-await cache.set('key', value, { ttl: 60 })  // 60 seconds
+await cache.set('key', value, { ttl: 60_000 })  // 60 seconds
 ```
 
 #### Auto Backfill
@@ -196,11 +196,11 @@ const user = await keyv.get('user:123')
 import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
-await cache.set('user:123', user, { ttl: 60 })
+await cache.set('user:123', user, { ttl: 60_000 })
 const user = await cache.get('user:123')
 ```
 
@@ -228,7 +228,7 @@ const user = await cache.get('user:123', () => fetchUser(123))
 
 | keyv | layercache | Notes |
 |------|------------|-------|
-| `keyv.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in seconds |
+| `keyv.set(key, val, ttl)` | `cache.set(key, val, { ttl })` | TTL in milliseconds |
 | `keyv.get(key)` | `cache.get(key)` | Same |
 | `keyv.delete(key)` | `cache.delete(key)` | Same |
 | `keyv.clear()` | `cache.clear()` | Same |
@@ -251,8 +251,8 @@ const user = await cache.get('user:123', () => fetchUser(123))
 
 ```tsx
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ])
 // Reads cascade through layers with auto backfill
 ```
@@ -314,7 +314,7 @@ await cache.set('key', value)
 import { CacheStack, MemoryLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 3600 })
+  new MemoryLayer({ ttl: 3_600_000 })
 ])
 await cache.set('key', value)
 ```
@@ -323,7 +323,7 @@ await cache.set('key', value)
 
 | cacheable | layercache | Notes |
 |-----------|------------|-------|
-| `new Cacheable({ ttl: '1h' })` | `new CacheStack([{ ttl: 3600 }])` | TTL in seconds |
+| `new Cacheable({ ttl: '1h' })` | `new CacheStack([{ ttl: 3_600_000 }])` | TTL in milliseconds |
 | `cache.set(key, val)` | `cache.set(key, val)` | Same |
 | `cache.get(key)` | `cache.get(key)` | Same |
 | `cache.delete(key)` | `cache.delete(key)` | Same |
@@ -339,10 +339,10 @@ await cache.set('key', value)
 const cache = new Cacheable({ ttl: '1h' })
 ```
 
-**Layercache uses numeric seconds:**
+**Layercache uses numeric milliseconds:**
 
 ```tsx
-const cache = new CacheStack([new MemoryLayer({ ttl: 3600 })])
+const cache = new CacheStack([new MemoryLayer({ ttl: 3_600_000 })])
 ```
 
 #### Multi-Layer Orchestration
@@ -358,9 +358,9 @@ const cache = new CacheStack([new MemoryLayer({ ttl: 3600 })])
 
 ```tsx
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 }),
-  new DiskLayer({ ttl: 3600 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 }),
+  new DiskLayer({ ttl: 3_600_000 })
 ])
 // Automatic cascading reads and writes
 ```
@@ -571,7 +571,7 @@ const value = await cache.get(key, fetcher)
 
 - [ ] Install Layercache: `npm install layercache`
 - [ ] Create CacheStack with equivalent layers
-- [ ] Update TTL values from milliseconds to seconds
+- [ ] Keep TTL values in milliseconds
 - [ ] Configure distributed features (if needed)
 
 ### Phase 2: Code Changes
@@ -579,7 +579,7 @@ const value = await cache.get(key, fetcher)
 - [ ] Replace `cache.wrap()` with `cache.get(key, fetcher)`
 - [ ] Replace `cache.del()` with `cache.delete()`
 - [ ] Replace `cache.reset()` with `cache.clear()`
-- [ ] Update set operations to use options object: `{ ttl: 60 }`
+- [ ] Update set operations to use options object: `{ ttl: 60_000 }`
 - [ ] Add tags for group invalidation
 
 ### Phase 3: Testing
@@ -602,16 +602,16 @@ const value = await cache.get(key, fetcher)
 
 ### TTL Confusion
 
-**Issue:** Setting TTL in milliseconds instead of seconds.
+**Issue:** Keeping old second-based TTL values after migrating.
 
 **Solution:**
 
 ```tsx
 // Wrong
-await cache.set('key', value, { ttl: 60000 })  // 60,000 seconds = 16 hours
+await cache.set('key', value, { ttl: 60 })  // 60 milliseconds
 
 // Correct
-await cache.set('key', value, { ttl: 60 })  // 60 seconds
+await cache.set('key', value, { ttl: 60_000 })  // 60 seconds
 ```
 
 ### Missing Tags

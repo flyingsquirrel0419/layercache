@@ -31,10 +31,10 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 5_000 }),
+  new MemoryLayer({ ttl: 60_000, maxSize: 5_000 }),
   new RedisLayer({
     client: new Redis(),
-    ttl: 300,
+    ttl: 300_000,
     prefix: 'myapp:cache:',
     compression: 'gzip'
   })
@@ -101,7 +101,7 @@ Turn any async function into a cached function with automatic key derivation:
 
 ```ts
 const getUser = cache.wrap('user', (id: number) => db.findUser(id), {
-  ttl: 60,
+  ttl: 60_000,
   tags: ['users']
 })
 
@@ -115,7 +115,7 @@ With a custom key resolver:
 const searchProducts = cache.wrap(
   'search',
   (query: string, page: number) => db.search(query, page),
-  { keyResolver: (query, page) => `${query}:p${page}`, ttl: 30 }
+  { keyResolver: (query, page) => `${query}:p${page}`, ttl: 30_000 }
 )
 ```
 
@@ -179,9 +179,9 @@ Keep serving cached data even after expiry while refreshing in the background:
 
 ```ts
 const config = await cache.get('app:config', fetchConfig, {
-  ttl: 60,
-  staleWhileRevalidate: 30,  // serve stale for 30s while refreshing
-  staleIfError: 300           // serve stale for 5min if refresh fails
+  ttl: 60_000,
+  staleWhileRevalidate: 30_000,  // serve stale for 30s while refreshing
+  staleIfError: 300_000           // serve stale for 5min if refresh fails
 })
 ```
 
@@ -189,8 +189,8 @@ Combined with **refresh-ahead** to proactively refresh before expiry:
 
 ```ts
 const leaderboard = await cache.get('leaderboard', fetchLeaderboard, {
-  ttl: 120,
-  refreshAhead: 30    // start refreshing when <= 30s remain
+  ttl: 120_000,
+  refreshAhead: 30_000    // start refreshing when <= 30s remain
 })
 ```
 

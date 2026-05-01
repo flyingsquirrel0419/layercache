@@ -113,7 +113,7 @@ layercache inspect --redis redis://localhost:6379 --key "user:123"
 {
   "key": "user:123",
   "exists": true,
-  "ttlSeconds": 245,
+  "ttlMs": 245,
   "sizeBytes": 1024,
   "isEnvelope": true,
   "state": "fresh",
@@ -137,7 +137,7 @@ layercache inspect --redis redis://localhost:6379 --key "user:123"
 {
   "key": "user:999",
   "exists": false,
-  "ttlSeconds": null,
+  "ttlMs": null,
   "sizeBytes": 0,
   "isEnvelope": false,
   "state": null,
@@ -148,7 +148,7 @@ layercache inspect --redis redis://localhost:6379 --key "user:123"
 #### Field Descriptions
 
 - **exists** - Whether the key exists in Redis
-- **ttlSeconds** - Remaining TTL (-1 if no expiry, -2 if key doesn't exist)
+- **ttlMs** - Remaining TTL in milliseconds (-1 if no expiry, -2 if key does not exist)
 - **sizeBytes** - Size of the stored value in bytes
 - **isEnvelope** - Whether the value is a Layercache envelope (vs raw)
 - **state** - Cache state: `fresh`, `stale`, or `error`
@@ -435,7 +435,7 @@ $ layercache inspect --redis redis://localhost:6379 --key "missing"
 {
   "key": "missing",
   "exists": false,
-  "ttlSeconds": null,
+  "ttlMs": null,
   "sizeBytes": 0,
   "isEnvelope": false,
   "state": null,

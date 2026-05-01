@@ -20,7 +20,7 @@ import { planFreshReadPolicies, shouldStartBackgroundRefresh } from './CacheStac
 import type { CircuitBreakerManager } from './CircuitBreakerManager'
 import type { FetchRateLimiter } from './FetchRateLimiter'
 import type { MetricsCollector } from './MetricsCollector'
-import { isStoredValueEnvelope, remainingStoredTtlSeconds, resolveStoredValue } from './StoredValue'
+import { isStoredValueEnvelope, remainingStoredTtlMs, resolveStoredValue } from './StoredValue'
 import type { TtlResolver } from './TtlResolver'
 
 const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
@@ -61,7 +61,7 @@ interface CacheStackReaderOptions {
   formatError: (error: unknown) => string
   storeEntry: (key: string, kind: CacheWriteKind, value: unknown, options?: CacheWriteOptions) => Promise<void>
   recordCircuitFailure: (key: string, options: CacheCircuitBreakerOptions | undefined, error: unknown) => void
-  resolveLayerSeconds: (
+  resolveLayerMs: (
     layerName: string,
     override: number | LayerTtlMap | undefined,
     globalDefault?: number | LayerTtlMap,
@@ -198,8 +198,8 @@ export class CacheStackReader {
       }
 
       const ttl =
-        remainingStoredTtlSeconds(stored) ??
-        this.options.resolveLayerSeconds(layer.name, options?.ttl, undefined, layer.defaultTtl)
+        remainingStoredTtlMs(stored) ??
+        this.options.resolveLayerMs(layer.name, options?.ttl, undefined, layer.defaultTtl)
       try {
         await layer.set(key, stored, ttl)
       } catch (error) {
@@ -560,8 +560,8 @@ export class CacheStackReader {
       stored: hit.stored,
       hasFetcher: Boolean(fetcher),
       slidingTtl: options?.slidingTtl ?? false,
-      refreshAheadSeconds:
-        this.options.resolveLayerSeconds(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
+      refreshAheadMs:
+        this.options.resolveLayerMs(hit.layerName, options?.refreshAhead, this.options.refreshAhead, 0) ?? 0
     })
 
     if (plan.refreshedStored) {

@@ -132,7 +132,7 @@ export class RedisLayer implements CacheLayer {
       const payload = await this.encodePayload(serialized)
       const normalizedKey = this.withPrefix(entry.key)
       if (entry.ttl && entry.ttl > 0) {
-        pipeline.set(normalizedKey, payload as never, 'EX', entry.ttl)
+        pipeline.set(normalizedKey, payload as never, 'PX', entry.ttl)
       } else {
         pipeline.set(normalizedKey, payload as never)
       }
@@ -149,7 +149,7 @@ export class RedisLayer implements CacheLayer {
 
     if (ttl && ttl > 0) {
       await this.runCommand(`set(${this.displayKey(key)})`, () =>
-        this.client.set(normalizedKey, payload as never, 'EX', ttl)
+        this.client.set(normalizedKey, payload as never, 'PX', ttl)
       )
       return
     }
@@ -182,7 +182,9 @@ export class RedisLayer implements CacheLayer {
 
   async ttl(key: string): Promise<number | null> {
     this.validateKey(key)
-    const remaining = await this.runCommand(`ttl(${this.displayKey(key)})`, () => this.client.ttl(this.withPrefix(key)))
+    const remaining = await this.runCommand(`ttl(${this.displayKey(key)})`, () =>
+      this.client.pttl(this.withPrefix(key))
+    )
     // -2 = key does not exist, -1 = key exists but no TTL
     if (remaining < 0) {
       return null
@@ -362,11 +364,11 @@ export class RedisLayer implements CacheLayer {
     const serialized = this.primarySerializer().serialize(value)
     const payload = await this.encodePayload(serialized)
     const ttl = await this.runCommand(`rewrite-ttl(${this.displayKey(key)})`, () =>
-      this.client.ttl(this.withPrefix(key))
+      this.client.pttl(this.withPrefix(key))
     )
     if (ttl > 0) {
       await this.runCommand(`rewrite-set(${this.displayKey(key)})`, () =>
-        this.client.set(this.withPrefix(key), payload as never, 'EX', ttl)
+        this.client.set(this.withPrefix(key), payload as never, 'PX', ttl)
       )
       return
     }

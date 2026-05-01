@@ -4,8 +4,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from '../../src'
 
 const redis = new Redis(process.env.REDIS_URL)
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 30, maxSize: 5_000 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 30_000, maxSize: 5_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ])
 
 const app = express()

@@ -4,7 +4,7 @@ import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { CacheMissError } from '../src/types'
 
 function makeCache() {
-  return new CacheStack([new MemoryLayer({ ttl: 60 })])
+  return new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 }
 
 describe('CacheNamespace', () => {
@@ -52,12 +52,12 @@ describe('CacheNamespace', () => {
     expect(await ns.has('y')).toBe(false)
   })
 
-  it('ttl() returns remaining seconds', async () => {
+  it('ttl() returns remaining milliseconds', async () => {
     const ns = makeCache().namespace('items')
-    await ns.set('k', 1, { ttl: 30 })
+    await ns.set('k', 1, { ttl: 30_000 })
     const remaining = await ns.ttl('k')
     expect(remaining).toBeGreaterThan(0)
-    expect(remaining).toBeLessThanOrEqual(30)
+    expect(remaining).toBeLessThanOrEqual(30_000)
   })
 
   it('clear() only removes keys in this namespace', async () => {
@@ -137,16 +137,16 @@ describe('CacheNamespace', () => {
     const tenantA = cache.namespace('tenant-a')
     const tenantB = cache.namespace('tenant-b')
 
-    await tenantA.set('user:1', { id: 1 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['user'] })
-    await tenantB.set('user:1', { id: 2 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['user'] })
+    await tenantA.set('user:1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['user'] })
+    await tenantB.set('user:1', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['user'] })
 
     await tenantA.expireByTag('user')
 
     await expect(tenantA.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
     await expect(tenantB.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: false }))
 
-    await tenantA.set('posts:1', { id: 1 }, { ttl: 60, staleWhileRevalidate: 30 })
-    await tenantA.set('posts:2', { id: 2 }, { ttl: 60, staleWhileRevalidate: 30 })
+    await tenantA.set('posts:1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000 })
+    await tenantA.set('posts:2', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000 })
     await tenantA.expireByPrefix('posts:')
 
     await expect(tenantA.inspect('posts:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
@@ -240,8 +240,8 @@ describe('CacheNamespace', () => {
     const tenant = cache.namespace('tenant')
     const posts = tenant.namespace('posts')
 
-    await posts.set('1', { id: 1 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['published', 'feed'] })
-    await posts.set('2', { id: 2 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['draft'] })
+    await posts.set('1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['published', 'feed'] })
+    await posts.set('2', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['draft'] })
 
     await posts.expireByTags(['published', 'feed'], 'all')
     await expect(posts.inspect('1')).resolves.toEqual(expect.objectContaining({ isStale: true }))

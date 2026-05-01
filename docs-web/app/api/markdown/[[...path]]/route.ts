@@ -39,8 +39,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),
-  new RedisLayer({ client: new Redis(), ttl: 3600, commandTimeoutMs: 50 }),
+  new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),
+  new RedisLayer({ client: new Redis(), ttl: 3_600_000, commandTimeoutMs: 50 }),
 ])
 
 const user = await cache.get('user:123', () => db.findUser(123))

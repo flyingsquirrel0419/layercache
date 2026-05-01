@@ -4,7 +4,7 @@ import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 describe('MemoryLayer', () => {
   it('stores and retrieves values', async () => {
-    const layer = new MemoryLayer({ ttl: 60 })
+    const layer = new MemoryLayer({ ttl: 60_000 })
     await layer.set('user:1', { id: 1 })
 
     await expect(layer.get('user:1')).resolves.toEqual({ id: 1 })
@@ -12,7 +12,7 @@ describe('MemoryLayer', () => {
 
   it('expires values by ttl', async () => {
     vi.useFakeTimers()
-    const layer = new MemoryLayer({ ttl: 1 })
+    const layer = new MemoryLayer({ ttl: 1_000 })
 
     await layer.set('ephemeral', 'value')
     vi.advanceTimersByTime(1_001)
@@ -34,8 +34,8 @@ describe('MemoryLayer', () => {
   })
 
   it('returns raw stored entries from getMany for CacheStack fast paths', async () => {
-    const layer = new MemoryLayer({ ttl: 60 })
-    const envelope = createStoredValueEnvelope({ kind: 'value', value: { id: 1 }, freshTtlSeconds: 60 })
+    const layer = new MemoryLayer({ ttl: 60_000 })
+    const envelope = createStoredValueEnvelope({ kind: 'value', value: { id: 1 }, freshTtlMs: 60 })
 
     await layer.set('user:1', envelope)
 
@@ -45,7 +45,7 @@ describe('MemoryLayer', () => {
 
   it('supports interval cleanup and dispose', async () => {
     vi.useFakeTimers()
-    const layer = new MemoryLayer({ ttl: 1, cleanupIntervalMs: 250 })
+    const layer = new MemoryLayer({ ttl: 1_000, cleanupIntervalMs: 250 })
 
     await layer.set('ephemeral', 'value')
     vi.advanceTimersByTime(1_500)
@@ -88,12 +88,12 @@ describe('MemoryLayer', () => {
 
   it('supports has ttl delete deleteMany keys forEachKey and ping', async () => {
     vi.useFakeTimers()
-    const layer = new MemoryLayer({ ttl: 2 })
+    const layer = new MemoryLayer({ ttl: 2_000 })
     await layer.set('a', 1)
     await layer.set('b', 2, 1)
 
     await expect(layer.has('a')).resolves.toBe(true)
-    await expect(layer.ttl('a')).resolves.toBe(2)
+    await expect(layer.ttl('a')).resolves.toBe(2_000)
     await expect(layer.ping()).resolves.toBe(true)
 
     const visited: string[] = []
@@ -125,7 +125,7 @@ describe('MemoryLayer', () => {
     await layer.set('permanent', 'value', 0)
     await expect(layer.ttl('permanent')).resolves.toBeNull()
 
-    const expiring = new MemoryLayer({ ttl: 1 })
+    const expiring = new MemoryLayer({ ttl: 1_000 })
     await expiring.set('soon', 'value')
     vi.advanceTimersByTime(1_001)
 

@@ -41,10 +41,10 @@ interface ExpressCacheMiddlewareOptions extends CacheGetOptions {
  * import express from 'express'
  * import { CacheStack, MemoryLayer, createExpressCacheMiddleware } from 'layercache'
  *
- * const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+ * const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
  * const app = express()
  *
- * app.get('/api/data', createExpressCacheMiddleware(cache, { ttl: 30 }), (req, res) => {
+ * app.get('/api/data', createExpressCacheMiddleware(cache, { ttl: 30_000 }), (req, res) => {
  *   res.json({ fresh: true })
  * })
  * ```

@@ -46,14 +46,14 @@ JSON serialization is used by default:
 import { MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
 
 // All use JsonSerializer by default
-const memory = new MemoryLayer({ ttl: 60 })
-const redis = new RedisLayer({ client: redis, ttl: 300 })
+const memory = new MemoryLayer({ ttl: 60_000 })
+const redis = new RedisLayer({ client: redis, ttl: 300_000 })
 const disk = new DiskLayer({ directory: './cache' })
 
 // Explicitly specify JSON serializer
 const redisJson = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   serializer: new JsonSerializer()
 })
 ```
@@ -124,7 +124,7 @@ import { RedisLayer, DiskLayer } from 'layercache'
 
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   serializer: new MsgpackSerializer()
 })
 
@@ -202,7 +202,7 @@ class CborSerializer implements CacheSerializer {
 // Usage
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   serializer: new CborSerializer()
 })
 ```
@@ -226,7 +226,7 @@ class Base64JsonSerializer implements CacheSerializer {
 // Usage
 const memcached = new MemcachedLayer({
   client: memcached,
-  ttl: 300,
+  ttl: 300_000,
   serializer: new Base64JsonSerializer()
 })
 ```
@@ -347,7 +347,7 @@ import { RedisLayer } from 'layercache'
 
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   compression: 'gzip',
   compressionThreshold: 1_024  // Only compress values >1KB
 })
@@ -370,7 +370,7 @@ const data = await cache.get('large-data')
 ```ts
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   compression: 'brotli',
   compressionThreshold: 512  // Compress values >512 bytes
 })
@@ -383,7 +383,7 @@ Skip compression for small values (overhead isn't worth it):
 ```ts
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   compression: 'gzip',
   compressionThreshold: 1_024  // 1KB threshold
 })
@@ -406,7 +406,7 @@ Prevent decompression bomb attacks:
 ```ts
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   compression: 'gzip',
   compressionThreshold: 1_024,
   decompressionMaxBytes: 64 * 1_024 * 1_024  // 64MiB limit
@@ -484,7 +484,7 @@ import { RedisLayer, JsonSerializer, MsgpackSerializer } from 'layercache'
 
 const redis = new RedisLayer({
   client: redis,
-  ttl: 300,
+  ttl: 300_000,
   serializer: [
     new MsgpackSerializer(),  // Try MessagePack first
     new JsonSerializer()      // Fall back to JSON

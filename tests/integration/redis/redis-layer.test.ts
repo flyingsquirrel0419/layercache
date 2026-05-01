@@ -13,7 +13,7 @@ describe_integration('RedisLayer (real Redis)', () => {
   beforeAll(async () => {
     client = createRedisClient()
     await client.connect()
-    layer = new RedisLayer({ client, prefix, ttl: 60 })
+    layer = new RedisLayer({ client, prefix, ttl: 60_000 })
   })
 
   afterAll(async () => {
@@ -79,7 +79,7 @@ describe_integration('RedisLayer (real Redis)', () => {
 
   it('handles setMany + getMany bulk operations', async () => {
     await layer.setMany([
-      { key: 'bulk:a', value: 1, ttl: 60 },
+      { key: 'bulk:a', value: 1, ttl: 60_000 },
       { key: 'bulk:b', value: 2 }
     ])
 

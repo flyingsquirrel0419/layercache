@@ -1,5 +1,5 @@
 import type { CacheLayer, CacheTagIndex } from '../types'
-import { expireStoredEnvelope, remainingStoredTtlSeconds } from './StoredValue'
+import { expireStoredEnvelope, remainingStoredTtlMs } from './StoredValue'
 
 interface CacheStackInvalidationSupportOptions {
   tagIndex: CacheTagIndex
@@ -91,7 +91,7 @@ export class CacheStackInvalidationSupport {
                 return
               }
 
-              await layer.set(key, expired, remainingStoredTtlSeconds(expired))
+              await layer.set(key, expired, remainingStoredTtlMs(expired))
             } catch (error) {
               await this.options.handleLayerFailure(layer, 'expire', error)
             }

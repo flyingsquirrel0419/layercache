@@ -11,6 +11,7 @@ vi.mock('ioredis', () => {
       del: async () => 2,
       getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
       ttl: async () => 42,
+      pttl: async () => 42,
       disconnect: () => undefined,
       smembers: async () => [],
       pipeline: () => ({ exec: async () => [] })
@@ -109,7 +110,7 @@ describe('CLI — main()', () => {
     await main(['inspect', '--redis', 'redis://localhost:6379', '--key', 'user:1'])
     const output = stdoutOutput.join('')
     expect(output).toContain('"key": "user:1"')
-    expect(output).toContain('"ttlSeconds": 42')
+    expect(output).toContain('"ttlMs": 42')
   })
 
   it('masks Redis credentials in connection failures', async () => {

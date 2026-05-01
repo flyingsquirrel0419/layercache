@@ -71,7 +71,7 @@ export interface CacheWriteOptions extends CacheEntryWriteOptions {
    *
    * @example
    * cache.get('oauth:token', fetchToken, {
-   *   ttl: 300,
+   *   ttl: 300_000,
    *   contextOptions: ({ value }) => ({
    *     ttl: Math.max(1, Math.floor(((value as { refreshExpiresIn: number }).refreshExpiresIn ?? 0) / 1_000))
    *   })
@@ -131,7 +131,7 @@ export interface CacheLayer {
    */
   has?(key: string): Promise<boolean>
   /**
-   * Returns the remaining TTL in seconds for the key, or null if the key
+   * Returns the remaining TTL in milliseconds for the key, or null if the key
    * does not exist, has no TTL, or has already expired.
    * Implementations may omit this.
    */
@@ -392,12 +392,12 @@ export interface CacheInspectResult {
   key: string
   /** Layers in which the key is currently stored (not expired). */
   foundInLayers: string[]
-  /** Remaining fresh TTL in seconds, or null if no expiry or not an envelope. */
-  freshTtlSeconds: number | null
-  /** Remaining stale-while-revalidate window in seconds, or null. */
-  staleTtlSeconds: number | null
-  /** Remaining stale-if-error window in seconds, or null. */
-  errorTtlSeconds: number | null
+  /** Remaining fresh TTL in milliseconds, or null if no expiry or not an envelope. */
+  freshTtlMs: number | null
+  /** Remaining stale-while-revalidate window in milliseconds, or null. */
+  staleTtlMs: number | null
+  /** Remaining stale-if-error window in milliseconds, or null. */
+  errorTtlMs: number | null
   /** Whether the key is currently serving stale-while-revalidate. */
   isStale: boolean
   /** Tags associated with this key (from the TagIndex). */

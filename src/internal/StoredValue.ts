@@ -5,9 +5,9 @@ export interface StoredValueEnvelope {
   freshUntil: number | null
   staleUntil: number | null
   errorUntil: number | null
-  freshTtlSeconds?: number | null
-  staleWhileRevalidateSeconds?: number | null
-  staleIfErrorSeconds?: number | null
+  freshTtlMs?: number | null
+  staleWhileRevalidateMs?: number | null
+  staleIfErrorMs?: number | null
 }
 
 export type StoredValueState = 'fresh' | 'stale-while-revalidate' | 'stale-if-error' | 'expired'
@@ -70,18 +70,18 @@ export function isStoredValueEnvelope(value: unknown): value is StoredValueEnvel
     return false
   }
 
-  const maxTtlSeconds = 10 * 365 * 24 * 60 * 60
-  if (!isValidEnvelopeTtlSeconds(v.freshTtlSeconds, maxTtlSeconds)) {
+  const maxTtlMs = 10 * 365 * 24 * 60 * 60 * 1_000
+  if (!isValidEnvelopeTtlMs(v.freshTtlMs, maxTtlMs)) {
     return false
   }
-  if (!isValidEnvelopeTtlSeconds(v.staleWhileRevalidateSeconds, maxTtlSeconds)) {
+  if (!isValidEnvelopeTtlMs(v.staleWhileRevalidateMs, maxTtlMs)) {
     return false
   }
-  if (!isValidEnvelopeTtlSeconds(v.staleIfErrorSeconds, maxTtlSeconds)) {
+  if (!isValidEnvelopeTtlMs(v.staleIfErrorMs, maxTtlMs)) {
     return false
   }
 
-  if (v.freshTtlSeconds == null && (v.staleWhileRevalidateSeconds != null || v.staleIfErrorSeconds != null)) {
+  if (v.freshTtlMs == null && (v.staleWhileRevalidateMs != null || v.staleIfErrorMs != null)) {
     return false
   }
 
@@ -91,19 +91,19 @@ export function isStoredValueEnvelope(value: unknown): value is StoredValueEnvel
 export function createStoredValueEnvelope(options: {
   kind: 'value' | 'empty'
   value?: unknown
-  freshTtlSeconds?: number
-  staleWhileRevalidateSeconds?: number
-  staleIfErrorSeconds?: number
+  freshTtlMs?: number
+  staleWhileRevalidateMs?: number
+  staleIfErrorMs?: number
   now?: number
 }): StoredValueEnvelope {
   const now = options.now ?? Date.now()
-  const freshTtlSeconds = normalizePositiveSeconds(options.freshTtlSeconds)
-  const staleWhileRevalidateSeconds = normalizePositiveSeconds(options.staleWhileRevalidateSeconds)
-  const staleIfErrorSeconds = normalizePositiveSeconds(options.staleIfErrorSeconds)
+  const freshTtlMs = normalizePositiveMs(options.freshTtlMs)
+  const staleWhileRevalidateMs = normalizePositiveMs(options.staleWhileRevalidateMs)
+  const staleIfErrorMs = normalizePositiveMs(options.staleIfErrorMs)
 
-  const freshUntil = freshTtlSeconds ? now + freshTtlSeconds * 1_000 : null
-  const staleUntil = freshUntil && staleWhileRevalidateSeconds ? freshUntil + staleWhileRevalidateSeconds * 1_000 : null
-  const errorUntil = freshUntil && staleIfErrorSeconds ? freshUntil + staleIfErrorSeconds * 1_000 : null
+  const freshUntil = freshTtlMs ? now + freshTtlMs : null
+  const staleUntil = freshUntil && staleWhileRevalidateMs ? freshUntil + staleWhileRevalidateMs : null
+  const errorUntil = freshUntil && staleIfErrorMs ? freshUntil + staleIfErrorMs : null
 
   return {
     __layercache: 1,
@@ -112,9 +112,9 @@ export function createStoredValueEnvelope(options: {
     freshUntil,
     staleUntil,
     errorUntil,
-    freshTtlSeconds: freshTtlSeconds ?? null,
-    staleWhileRevalidateSeconds: staleWhileRevalidateSeconds ?? null,
-    staleIfErrorSeconds: staleIfErrorSeconds ?? null
+    freshTtlMs: freshTtlMs ?? null,
+    staleWhileRevalidateMs: staleWhileRevalidateMs ?? null,
+    staleIfErrorMs: staleIfErrorMs ?? null
   }
 }
 
@@ -150,7 +150,7 @@ export function unwrapStoredValue<T>(stored: unknown): T | null {
   return (stored.value ?? null) as T | null
 }
 
-export function remainingStoredTtlSeconds(stored: unknown, now = Date.now()): number | undefined {
+export function remainingStoredTtlMs(stored: unknown, now = Date.now()): number | undefined {
   if (!isStoredValueEnvelope(stored)) {
     return undefined
   }
@@ -165,10 +165,10 @@ export function remainingStoredTtlSeconds(stored: unknown, now = Date.now()): nu
     return 1
   }
 
-  return Math.max(1, Math.ceil(remainingMs / 1_000))
+  return Math.max(1, Math.ceil(remainingMs))
 }
 
-export function remainingFreshTtlSeconds(stored: unknown, now = Date.now()): number | undefined {
+export function remainingFreshTtlMs(stored: unknown, now = Date.now()): number | undefined {
   if (!isStoredValueEnvelope(stored) || stored.freshUntil === null) {
     return undefined
   }
@@ -178,7 +178,7 @@ export function remainingFreshTtlSeconds(stored: unknown, now = Date.now()): num
     return 0
   }
 
-  return Math.max(1, Math.ceil(remainingMs / 1_000))
+  return Math.max(1, Math.ceil(remainingMs))
 }
 
 export function refreshStoredEnvelope(stored: unknown, now = Date.now()): unknown {
@@ -189,9 +189,9 @@ export function refreshStoredEnvelope(stored: unknown, now = Date.now()): unknow
   return createStoredValueEnvelope({
     kind: stored.kind,
     value: stored.value,
-    freshTtlSeconds: stored.freshTtlSeconds ?? undefined,
-    staleWhileRevalidateSeconds: stored.staleWhileRevalidateSeconds ?? undefined,
-    staleIfErrorSeconds: stored.staleIfErrorSeconds ?? undefined,
+    freshTtlMs: stored.freshTtlMs ?? undefined,
+    staleWhileRevalidateMs: stored.staleWhileRevalidateMs ?? undefined,
+    staleIfErrorMs: stored.staleIfErrorMs ?? undefined,
     now
   })
 }
@@ -222,7 +222,7 @@ function maxExpiry(stored: StoredValueEnvelope): number | null {
   return Math.max(...values)
 }
 
-function normalizePositiveSeconds(value: number | undefined): number | undefined {
+function normalizePositiveMs(value: number | undefined): number | undefined {
   if (!value || value <= 0) {
     return undefined
   }
@@ -230,10 +230,10 @@ function normalizePositiveSeconds(value: number | undefined): number | undefined
   return value
 }
 
-function isValidEnvelopeTtlSeconds(value: unknown, maxTtlSeconds: number): boolean {
+function isValidEnvelopeTtlMs(value: unknown, maxTtlMs: number): boolean {
   if (value == null) {
     return true
   }
 
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= maxTtlSeconds
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= maxTtlMs
 }

@@ -20,9 +20,9 @@ export class MockCacheLayer {
     return entry.value;
   }
 
-  async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+  async set(key: string, value: unknown, ttlMs: number): Promise<void> {
     await this.simulateLatency();
-    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
   }
 
   async delete(key: string): Promise<boolean> {
@@ -62,7 +62,7 @@ export class MockCacheStack {
     this.onLog = options?.onLog;
   }
 
-  async get<T>(key: string, fetcher?: () => Promise<T>, ttlSeconds = 60): Promise<T | undefined> {
+  async get<T>(key: string, fetcher?: () => Promise<T>, ttlMs = 60_000): Promise<T | undefined> {
     // Try each layer
     for (const layer of this.layers) {
       const value = await layer.get(key);
@@ -89,7 +89,7 @@ export class MockCacheStack {
         try {
           const value = await fetcher();
           if (value !== undefined) {
-            await this.set(key, value, ttlSeconds);
+            await this.set(key, value, ttlMs);
             this.stats.backfills++;
             this.log(`[BACKFILL] Stored "${key}" in all layers`);
           }
@@ -106,10 +106,10 @@ export class MockCacheStack {
     return undefined;
   }
 
-  async set<T>(key: string, value: T, ttlSeconds = 60): Promise<void> {
+  async set<T>(key: string, value: T, ttlMs = 60_000): Promise<void> {
     this.stats.sets++;
     for (const layer of this.layers) {
-      await layer.set(key, value, ttlSeconds);
+      await layer.set(key, value, ttlMs);
     }
     this.log(`[SET] Stored "${key}" in ${this.layers.length} layers`);
   }
@@ -151,9 +151,9 @@ export class MockCacheStack {
     this.log(`[TAG] Tagged "${key}" with: ${tags.join(", ")}`);
   }
 
-  async warm(entries: Array<{ key: string; value: unknown; ttlSeconds?: number }>): Promise<void> {
+  async warm(entries: Array<{ key: string; value: unknown; ttlMs?: number }>): Promise<void> {
     for (const entry of entries) {
-      await this.set(entry.key, entry.value, entry.ttlSeconds ?? 60);
+      await this.set(entry.key, entry.value, entry.ttlMs ?? 60_000);
     }
     this.log(`[WARM] Warmed ${entries.length} keys`);
   }

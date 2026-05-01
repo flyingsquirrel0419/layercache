@@ -12,7 +12,7 @@ interface TtlResolverOptions {
 
 type CacheWriteKind = 'value' | 'empty'
 
-const DEFAULT_NEGATIVE_TTL_SECONDS = 60
+const DEFAULT_NEGATIVE_TTL_MS = 60_000
 
 export const secureRandom = {
   value(): number {
@@ -57,21 +57,20 @@ export class TtlResolver {
     const policyTtl = kind === 'value' ? this.resolvePolicyTtl(key, value, options?.ttlPolicy) : undefined
     const baseTtl =
       kind === 'empty'
-        ? this.resolveLayerSeconds(
+        ? this.resolveLayerMs(
             layerName,
             options?.negativeTtl,
             globalNegativeTtl,
-            this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, policyTtl ?? fallbackTtl) ??
-              DEFAULT_NEGATIVE_TTL_SECONDS
+            this.resolveLayerMs(layerName, options?.ttl, globalTtl, policyTtl ?? fallbackTtl) ?? DEFAULT_NEGATIVE_TTL_MS
           )
-        : this.resolveLayerSeconds(layerName, options?.ttl, globalTtl, policyTtl ?? fallbackTtl)
+        : this.resolveLayerMs(layerName, options?.ttl, globalTtl, policyTtl ?? fallbackTtl)
 
     const adaptiveTtl = this.applyAdaptiveTtl(key, layerName, baseTtl, options?.adaptiveTtl)
-    const jitter = this.resolveLayerSeconds(layerName, options?.ttlJitter, undefined)
+    const jitter = this.resolveLayerMs(layerName, options?.ttlJitter, undefined)
     return this.applyJitter(adaptiveTtl, jitter)
   }
 
-  resolveLayerSeconds(
+  resolveLayerMs(
     layerName: string,
     override: number | LayerTtlMap | undefined,
     globalDefault?: number | LayerTtlMap,
@@ -109,8 +108,8 @@ export class TtlResolver {
       return ttl
     }
 
-    const step = this.resolveLayerSeconds(layerName, config.step, undefined, Math.max(1, Math.round(ttl / 2))) ?? 0
-    const maxTtl = this.resolveLayerSeconds(layerName, config.maxTtl, undefined, ttl + step * 4) ?? ttl
+    const step = this.resolveLayerMs(layerName, config.step, undefined, Math.max(1, Math.round(ttl / 2))) ?? 0
+    const maxTtl = this.resolveLayerMs(layerName, config.maxTtl, undefined, ttl + step * 4) ?? ttl
     const multiplier = Math.floor(profile.hits / hotAfter)
     return Math.min(maxTtl, ttl + step * multiplier)
   }
@@ -137,19 +136,19 @@ export class TtlResolver {
     if (policy === 'until-midnight') {
       const nextMidnight = new Date(now)
       nextMidnight.setHours(24, 0, 0, 0)
-      return Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1_000))
+      return Math.max(1, Math.ceil(nextMidnight.getTime() - now.getTime()))
     }
 
     if (policy === 'next-hour') {
       const nextHour = new Date(now)
       nextHour.setMinutes(60, 0, 0)
-      return Math.max(1, Math.ceil((nextHour.getTime() - now.getTime()) / 1_000))
+      return Math.max(1, Math.ceil(nextHour.getTime() - now.getTime()))
     }
 
-    const alignToSeconds = policy.alignTo
-    const currentSeconds = Math.floor(Date.now() / 1_000)
-    const nextBoundary = Math.ceil((currentSeconds + 1) / alignToSeconds) * alignToSeconds
-    return Math.max(1, nextBoundary - currentSeconds)
+    const alignToMs = policy.alignTo
+    const currentMs = Date.now()
+    const nextBoundary = Math.ceil((currentMs + 1) / alignToMs) * alignToMs
+    return Math.max(1, nextBoundary - currentMs)
   }
 
   private readLayerNumber(layerName: string, value: number | LayerTtlMap): number | undefined {

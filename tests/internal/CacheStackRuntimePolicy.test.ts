@@ -5,7 +5,7 @@ import {
   shouldSkipLayer,
   shouldStartBackgroundRefresh
 } from '../../src/internal/CacheStackRuntimePolicy'
-import { createStoredValueEnvelope, remainingStoredTtlSeconds } from '../../src/internal/StoredValue'
+import { createStoredValueEnvelope, remainingStoredTtlMs } from '../../src/internal/StoredValue'
 
 describe('CacheStackRuntimePolicy', () => {
   it('skips degraded layers only while their retry window is still open', () => {
@@ -41,29 +41,29 @@ describe('CacheStackRuntimePolicy', () => {
     const stored = createStoredValueEnvelope({
       kind: 'value',
       value: { id: 1 },
-      freshTtlSeconds: 2,
-      staleWhileRevalidateSeconds: 10
+      freshTtlMs: 2_000,
+      staleWhileRevalidateMs: 10_000
     })
 
     const plan = planFreshReadPolicies({
       stored,
       hasFetcher: true,
       slidingTtl: true,
-      refreshAheadSeconds: 5
+      refreshAheadMs: 5_000
     })
 
     expect(plan.shouldScheduleBackgroundRefresh).toBe(true)
     expect(plan.refreshedStored).toBeDefined()
     expect(plan.refreshedStoredTtl).toBeDefined()
-    expect(plan.refreshedStoredTtl).toBeGreaterThanOrEqual(remainingStoredTtlSeconds(stored) ?? 0)
+    expect(plan.refreshedStoredTtl).toBeGreaterThanOrEqual(remainingStoredTtlMs(stored) ?? 0)
   })
 
   it('avoids refresh planning when the value is not refreshable or fresh enough', () => {
     const staleStored = createStoredValueEnvelope({
       kind: 'value',
       value: { id: 1 },
-      freshTtlSeconds: 1,
-      staleWhileRevalidateSeconds: 5,
+      freshTtlMs: 1_000,
+      staleWhileRevalidateMs: 5_000,
       now: Date.now() - 2_000
     })
 
@@ -72,7 +72,7 @@ describe('CacheStackRuntimePolicy', () => {
         stored: { plain: true },
         hasFetcher: true,
         slidingTtl: true,
-        refreshAheadSeconds: 5
+        refreshAheadMs: 5_000
       })
     ).toEqual({
       refreshedStored: undefined,
@@ -85,7 +85,7 @@ describe('CacheStackRuntimePolicy', () => {
         stored: staleStored,
         hasFetcher: true,
         slidingTtl: false,
-        refreshAheadSeconds: 5
+        refreshAheadMs: 5_000
       }).shouldScheduleBackgroundRefresh
     ).toBe(false)
 
@@ -94,11 +94,11 @@ describe('CacheStackRuntimePolicy', () => {
         stored: createStoredValueEnvelope({
           kind: 'value',
           value: { id: 2 },
-          freshTtlSeconds: 10
+          freshTtlMs: 10_000
         }),
         hasFetcher: false,
         slidingTtl: false,
-        refreshAheadSeconds: 5
+        refreshAheadMs: 5_000
       }).shouldScheduleBackgroundRefresh
     ).toBe(false)
 
@@ -110,7 +110,7 @@ describe('CacheStackRuntimePolicy', () => {
         }),
         hasFetcher: true,
         slidingTtl: true,
-        refreshAheadSeconds: 0
+        refreshAheadMs: 0
       }).refreshedStoredTtl
     ).toBeUndefined()
   })

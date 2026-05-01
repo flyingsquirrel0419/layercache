@@ -42,7 +42,10 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
     const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: `${TEST_PREFIX}sf:multi` })
 
     cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60, maxSize: 1_000 }), new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300 })],
+      [
+        new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),
+        new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300_000 })
+      ],
       {
         invalidationBus: busA,
         tagIndex,
@@ -51,7 +54,10 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
     )
 
     cacheB = new CacheStack(
-      [new MemoryLayer({ ttl: 60, maxSize: 1_000 }), new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300 })],
+      [
+        new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),
+        new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300_000 })
+      ],
       {
         invalidationBus: busB,
         tagIndex,

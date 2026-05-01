@@ -8,10 +8,10 @@ const CODE_SNIPPET = `import { CacheStack, MemoryLayer, RedisLayer } from 'layer
 import Redis from 'ioredis';
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 30, maxSize: 5_000 }),
+  new MemoryLayer({ ttl: 30_000, maxSize: 5_000 }),
   new RedisLayer({
     client: new Redis(),
-    ttl: 300,
+    ttl: 300_000,
     commandTimeoutMs: 50, // v1.3+ per-command Redis timeouts
   }),
 ]);

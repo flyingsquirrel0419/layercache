@@ -5,7 +5,7 @@ import { StampedeGuard } from '../../src/stampede/StampedeGuard'
 
 describe('Stampede prevention', () => {
   it('runs the fetcher once for concurrent requests', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     let executions = 0
 
     const results = await Promise.all(

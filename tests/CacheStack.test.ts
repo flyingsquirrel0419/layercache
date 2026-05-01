@@ -84,8 +84,8 @@ async function waitForCondition(
 describe('CacheStack', () => {
   it('backfills upper layers on lower-layer hits', async () => {
     const redis = new Redis()
-    const memoryLayer = new MemoryLayer({ ttl: 60 })
-    const redisLayer = new RedisLayer({ client: redis, ttl: 120 })
+    const memoryLayer = new MemoryLayer({ ttl: 60_000 })
+    const redisLayer = new RedisLayer({ client: redis, ttl: 120_000 })
     const cache = new CacheStack([memoryLayer, redisLayer])
 
     await redisLayer.set('user:1', { id: 1 })
@@ -106,7 +106,7 @@ describe('CacheStack', () => {
   })
 
   it('invalidates all keys for a tag', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.set('user:1', { id: 1 }, { tags: ['user', 'user:1'] })
     await cache.set('user:1:posts', [{ id: 9 }], { tags: ['user', 'user:1'] })
@@ -117,14 +117,14 @@ describe('CacheStack', () => {
   })
 
   it('expires tagged entries without deleting stale values', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
-    await cache.set('user:1', { version: 1 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['user:1'] })
+    await cache.set('user:1', { version: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['user:1'] })
     await cache.expireByTag('user:1')
 
     await expect(cache.inspect('user:1')).resolves.toEqual(
       expect.objectContaining({
-        freshTtlSeconds: 0,
+        freshTtlMs: 0,
         isStale: true
       })
     )
@@ -139,14 +139,14 @@ describe('CacheStack', () => {
   })
 
   it('rejects invalid tag input', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(cache.set('user:1', { id: 1 }, { tags: ['bad\u0000tag'] })).rejects.toThrow(/Cache tag/i)
     await expect(cache.invalidateByTag('bad\u0000tag')).rejects.toThrow(/Cache tag/i)
   })
 
   it('rejects tag invalidation when too many keys match', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationMaxKeys: 1 })
 
     await cache.set('user:1', { id: 1 }, { tags: ['users'] })
     await cache.set('user:2', { id: 2 }, { tags: ['users'] })
@@ -155,7 +155,7 @@ describe('CacheStack', () => {
   })
 
   it('rejects multi-tag invalidation when too many keys match', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationMaxKeys: 1 })
 
     await cache.set('user:1', { id: 1 }, { tags: ['users', 'tenant:a'] })
     await cache.set('user:2', { id: 2 }, { tags: ['users'] })
@@ -164,13 +164,17 @@ describe('CacheStack', () => {
   })
 
   it('expires by tags, pattern, and prefix using the existing match rules', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.mset([
-      { key: 'user:1', value: { id: 1 }, options: { ttl: 60, staleWhileRevalidate: 30, tags: ['users', 'tenant:a'] } },
-      { key: 'user:2', value: { id: 2 }, options: { ttl: 60, staleWhileRevalidate: 30, tags: ['users'] } },
-      { key: 'post:1', value: { id: 1 }, options: { ttl: 60, staleWhileRevalidate: 30 } },
-      { key: 'post:2', value: { id: 2 }, options: { ttl: 60, staleWhileRevalidate: 30 } }
+      {
+        key: 'user:1',
+        value: { id: 1 },
+        options: { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['users', 'tenant:a'] }
+      },
+      { key: 'user:2', value: { id: 2 }, options: { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['users'] } },
+      { key: 'post:1', value: { id: 1 }, options: { ttl: 60_000, staleWhileRevalidate: 30_000 } },
+      { key: 'post:2', value: { id: 2 }, options: { ttl: 60_000, staleWhileRevalidate: 30_000 } }
     ])
 
     await cache.expireByTags(['users', 'tenant:a'], 'all')
@@ -186,7 +190,7 @@ describe('CacheStack', () => {
   })
 
   it('invalidates by wildcard pattern', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.mset([
       { key: 'user:1', value: { id: 1 } },
@@ -201,7 +205,7 @@ describe('CacheStack', () => {
   })
 
   it('rejects wildcard invalidation when too many keys match', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationMaxKeys: 1 })
 
     await cache.mset([
       { key: 'user:1', value: { id: 1 } },
@@ -213,8 +217,8 @@ describe('CacheStack', () => {
 
   it('invalidates by wildcard pattern using actual layer keys after tag-index state is lost', async () => {
     const redis = new Redis()
-    const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:pattern:' })
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), redisLayer])
+    const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:pattern:' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer])
 
     await redisLayer.set('user:1', { id: 1 })
     await redisLayer.set('user:2', { id: 2 })
@@ -229,8 +233,8 @@ describe('CacheStack', () => {
 
   it('invalidates by prefix using actual layer keys after tag-index state is lost', async () => {
     const redis = new Redis()
-    const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:prefix:' })
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), redisLayer])
+    const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:prefix:' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer])
 
     await redisLayer.set('user:1:profile', { id: 1 })
     await redisLayer.set('user:1:posts', [{ id: 1 }])
@@ -244,7 +248,7 @@ describe('CacheStack', () => {
   })
 
   it('rejects prefix invalidation when too many keys match', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationMaxKeys: 1 })
 
     await cache.mset([
       { key: 'user:1:profile', value: { id: 1 } },
@@ -255,11 +259,11 @@ describe('CacheStack', () => {
   })
 
   it('rejects expiration when too many keys match without partially expiring entries', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationMaxKeys: 1 })
 
     await cache.mset([
-      { key: 'user:1:profile', value: { id: 1 }, options: { ttl: 60, staleWhileRevalidate: 30 } },
-      { key: 'user:1:posts', value: [{ id: 1 }], options: { ttl: 60, staleWhileRevalidate: 30 } }
+      { key: 'user:1:profile', value: { id: 1 }, options: { ttl: 60_000, staleWhileRevalidate: 30_000 } },
+      { key: 'user:1:posts', value: [{ id: 1 }], options: { ttl: 60_000, staleWhileRevalidate: 30_000 } }
     ])
 
     await expect(cache.expireByPrefix('user:1:')).rejects.toThrow(/too many keys/i)
@@ -268,7 +272,7 @@ describe('CacheStack', () => {
   })
 
   it('tracks cache metrics', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.get('miss')
     await cache.set('hit', 1)
@@ -282,7 +286,7 @@ describe('CacheStack', () => {
   })
 
   it('throws CacheMissError from getOrThrow when the key is missing', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(cache.getOrThrow('missing')).rejects.toBeInstanceOf(CacheMissError)
     await expect(cache.getOrThrow('missing')).rejects.toMatchObject({ key: 'missing' })
@@ -365,8 +369,8 @@ describe('CacheStack', () => {
 
   it('can clean up stale generations after a generation bump', async () => {
     const redis = new Redis()
-    const redisLayer = new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:generation:' })
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), redisLayer], {
+    const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:generation:' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer], {
       generation: 1,
       generationCleanup: { batchSize: 1 }
     })
@@ -467,7 +471,7 @@ describe('CacheStack', () => {
       createStoredValueEnvelope({
         kind: 'value',
         value: { id: 1 },
-        freshTtlSeconds: 2
+        freshTtlMs: 2_000
       }),
       2
     )
@@ -481,12 +485,12 @@ describe('CacheStack', () => {
   it('propagates invalidation to local layers across bridge instances', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
-    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })], {
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000 })], {
       invalidationBus: bus,
       broadcastL1Invalidation: true
     })
-    const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300 })], { invalidationBus: bus })
+    const memoryB = new MemoryLayer({ ttl: 60_000 })
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300_000 })], { invalidationBus: bus })
 
     await cacheA.set('user:1', { id: 1, version: 1 })
     await expect(cacheB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
@@ -503,11 +507,11 @@ describe('CacheStack', () => {
   it('does not broadcast write invalidations by default', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
-    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300 })], {
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000 })], {
       invalidationBus: bus
     })
-    const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300 })], { invalidationBus: bus })
+    const memoryB = new MemoryLayer({ ttl: 60_000 })
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300_000 })], { invalidationBus: bus })
 
     await cacheA.set('user:1', { id: 1, version: 1 })
     await expect(cacheB.get('user:1')).resolves.toEqual({ id: 1, version: 1 })
@@ -525,11 +529,11 @@ describe('CacheStack', () => {
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:test' })
     const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
+      [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:' })],
       { invalidationBus: bus, tagIndex: sharedTagIndex }
     )
-    const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })], {
+    const memoryB = new MemoryLayer({ ttl: 60_000 })
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:' })], {
       invalidationBus: bus,
       tagIndex: sharedTagIndex
     })
@@ -553,16 +557,16 @@ describe('CacheStack', () => {
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:expire' })
     const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:expire:' })],
+      [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:expire:' })],
       { invalidationBus: bus, tagIndex: sharedTagIndex }
     )
-    const memoryB = new MemoryLayer({ ttl: 60 })
-    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:expire:' })], {
+    const memoryB = new MemoryLayer({ ttl: 60_000 })
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:expire:' })], {
       invalidationBus: bus,
       tagIndex: sharedTagIndex
     })
 
-    await cacheA.set('user:1', { version: 1 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['user:1'] })
+    await cacheA.set('user:1', { version: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['user:1'] })
     await expect(cacheB.get('user:1')).resolves.toEqual({ version: 1 })
     await expect(memoryB.get('user:1')).resolves.toEqual({ version: 1 })
 
@@ -571,7 +575,7 @@ describe('CacheStack', () => {
     await expect(memoryB.get('user:1')).resolves.toEqual({ version: 1 })
     await expect(cacheB.inspect('user:1')).resolves.toEqual(
       expect.objectContaining({
-        freshTtlSeconds: 0,
+        freshTtlMs: 0,
         isStale: true
       })
     )
@@ -588,8 +592,8 @@ describe('CacheStack', () => {
 
   it('clears remote circuit-breaker state on distributed clear', async () => {
     const bus = new InMemoryInvalidationBus()
-    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
-    const cacheB = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationBus: bus })
+    const cacheB = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationBus: bus })
     const breaker = { failureThreshold: 1, cooldownMs: 60_000 }
 
     const failingFetcher = vi.fn(async () => {
@@ -614,8 +618,8 @@ describe('CacheStack', () => {
 
   it('clears remote circuit-breaker state on distributed key deletion', async () => {
     const bus = new InMemoryInvalidationBus()
-    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
-    const cacheB = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
+    const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationBus: bus })
+    const cacheB = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { invalidationBus: bus })
     const breaker = { failureThreshold: 1, cooldownMs: 60_000 }
 
     const failingFetcher = vi.fn(async () => {
@@ -659,7 +663,7 @@ describe('CacheStack', () => {
   })
 
   it('removes stale tag entries when a tagged key has expired from every layer', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 1 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 1_000 })])
 
     await cache.set('session:1', { id: 1 }, { tags: ['session'] })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
@@ -679,7 +683,7 @@ describe('CacheStack', () => {
       touch: vi.fn(async () => undefined),
       track: vi.fn(async () => undefined)
     }
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { tagIndex: tagIndex as never })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { tagIndex: tagIndex as never })
 
     await cache.expireByTag('session')
 
@@ -691,12 +695,12 @@ describe('CacheStack', () => {
   it('can skip write-triggered invalidation broadcasts', async () => {
     const redis = new Redis()
     const bus = new InMemoryInvalidationBus()
-    const memoryB = new MemoryLayer({ ttl: 60 })
+    const memoryB = new MemoryLayer({ ttl: 60_000 })
     const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })],
+      [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:' })],
       { invalidationBus: bus, publishSetInvalidation: false }
     )
-    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:' })], {
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:' })], {
       invalidationBus: bus
     })
 
@@ -710,7 +714,7 @@ describe('CacheStack', () => {
   })
 
   it('rejects operations after disconnect begins', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.disconnect()
 

@@ -27,7 +27,7 @@ function createWriterOptions(overrides: Partial<Parameters<typeof CacheStackLaye
       await op()
     }),
     resolveFreshTtl: vi.fn(() => 60),
-    resolveLayerSeconds: vi.fn(() => undefined),
+    resolveLayerMs: vi.fn(() => undefined),
     globalStaleWhileRevalidate: undefined as number | LayerTtlMap | undefined,
     globalStaleIfError: undefined as number | LayerTtlMap | undefined,
     writePolicy: undefined as 'strict' | 'best-effort' | undefined,

@@ -17,7 +17,7 @@ The simplest cache stack uses a single memory layer:
 import { CacheStack, MemoryLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 ```
 
@@ -43,8 +43,8 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 1_000 }),       // L1: in-process
-  new RedisLayer({ client: new Redis(), ttl: 3600 }),  // L2: shared
+  new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),       // L1: in-process
+  new RedisLayer({ client: new Redis(), ttl: 3_600_000 }),  // L2: shared
 ])
 ```
 
@@ -65,10 +65,10 @@ Add disk persistence for fault tolerance:
 import { CacheStack, MemoryLayer, RedisLayer, DiskLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 5_000 }),
+  new MemoryLayer({ ttl: 60_000, maxSize: 5_000 }),
   new RedisLayer({
     client: new Redis(),
-    ttl: 3600,
+    ttl: 3_600_000,
     compression: 'gzip'
   }),
   new DiskLayer({
@@ -84,7 +84,7 @@ const cache = new CacheStack([
 
 ```ts
 new MemoryLayer({
-  ttl: 60,           // Time-to-live in seconds
+  ttl: 60_000,           // Time-to-live in milliseconds
   maxSize: 1000,     // Max number of entries (LRU eviction)
 })
 ```
@@ -94,7 +94,7 @@ new MemoryLayer({
 ```ts
 new RedisLayer({
   client: new Redis(),           // ioredis client
-  ttl: 3600,                     // Time-to-live in seconds
+  ttl: 3_600_000,                     // Time-to-live in milliseconds
   compression: 'gzip',           // 'gzip' | 'brotli' | false
   compressionThreshold: 1024,    // Min bytes to compress
 })

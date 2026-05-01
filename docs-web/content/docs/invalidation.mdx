@@ -28,8 +28,8 @@ Tag keys when writing, then invalidate all keys with a given tag when data chang
 import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ])
 
 // Tag related data together
@@ -239,8 +239,8 @@ Add a generation prefix to every key and rotate it for instant bulk invalidation
 ```ts
 // Create cache with generation
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   generation: 1  // Start at generation 1
 })
@@ -334,8 +334,8 @@ const tagIndex = new RedisTagIndex({
 })
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   tagIndex  // All servers share the same tag index
 })
@@ -358,8 +358,8 @@ const bus = new RedisInvalidationBus({
 })
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   invalidationBus: bus,
   broadcastL1Invalidation: true  // Publish writes to peer memory layers
@@ -399,8 +399,8 @@ const coordinator = new RedisSingleFlightCoordinator({
 })
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60, maxSize: 10_000 }),
-  new RedisLayer({ client: redis, ttl: 3600, prefix: 'myapp:cache:' })
+  new MemoryLayer({ ttl: 60_000, maxSize: 10_000 }),
+  new RedisLayer({ client: redis, ttl: 3_600_000, prefix: 'myapp:cache:' })
 ], {
   invalidationBus: bus,
   tagIndex: tagIndex,

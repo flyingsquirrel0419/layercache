@@ -35,7 +35,7 @@ In-process cache with configurable eviction policies. Perfect for L1 caching wit
 import { MemoryLayer } from 'layercache'
 
 const memoryLayer = new MemoryLayer({
-  ttl: 60,                      // Default TTL in seconds
+  ttl: 60_000,                      // Default TTL in milliseconds
   maxSize: 5_000,               // Maximum number of entries
   name: 'memory',               // Layer name for metrics
   evictionPolicy: 'lru',        // 'lru' | 'lfu' | 'fifo'
@@ -98,7 +98,7 @@ MemoryLayer periodically scans for expired entries to free memory.
 
 ```ts
 new MemoryLayer({
-  ttl: 300,
+  ttl: 300_000,
   cleanupIntervalMs: 30_000  // Cleanup every 30 seconds
 })
 ```
@@ -128,7 +128,7 @@ import Redis from 'ioredis'
 
 const redisLayer = new RedisLayer({
   client: new Redis(),           // ioredis client instance
-  ttl: 300,                      // Default TTL in seconds
+  ttl: 300_000,                      // Default TTL in milliseconds
   prefix: 'myapp:cache:',        // Key prefix for namespacing
   compression: 'gzip',           // 'gzip' | 'brotli' | undefined
   compressionThreshold: 1_024,   // Min bytes to compress (default: 1024)
@@ -229,8 +229,8 @@ const values = await redisLayer.getMany(['key1', 'key2', 'key3'])
 
 // setMany() uses pipeline()
 await redisLayer.setMany([
-  { key: 'key1', value: data1, ttl: 60 },
-  { key: 'key2', value: data2, ttl: 60 }
+  { key: 'key1', value: data1, ttl: 60_000 },
+  { key: 'key2', value: data2, ttl: 60_000 }
 ])
 
 // deleteMany() uses pipeline()
@@ -260,7 +260,7 @@ import { resolve } from 'node:path'
 
 const diskLayer = new DiskLayer({
   directory: resolve('./var/cache/layercache'),  // Cache directory
-  ttl: 3600,                                     // Default TTL in seconds
+  ttl: 3_600_000,                                     // Default TTL in milliseconds
   name: 'disk',                                  // Layer name for metrics
   maxFiles: 50_000,                              // Maximum cache files (default: 50,000)
   maxEntryBytes: 16 * 1_024 * 1_024,             // Max 16MiB per entry
@@ -379,7 +379,7 @@ const memcached = Memjs.Client.create('localhost:11211')
 
 const memcachedLayer = new MemcachedLayer({
   client: memcached,          // Memcached client (memjs or memcache-client)
-  ttl: 300,                   // Default TTL in seconds
+  ttl: 300_000,                   // Default TTL in milliseconds
   name: 'memcached',          // Layer name for metrics
   keyPrefix: 'myapp:',        // Optional key prefix
   serializer: new JsonSerializer()  // Optional custom serializer

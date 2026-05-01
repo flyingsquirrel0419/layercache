@@ -4,8 +4,8 @@ import {
   expireStoredEnvelope,
   isStoredValueEnvelope,
   refreshStoredEnvelope,
-  remainingFreshTtlSeconds,
-  remainingStoredTtlSeconds,
+  remainingFreshTtlMs,
+  remainingStoredTtlMs,
   resolveStoredValue,
   unwrapStoredValue
 } from '../../src/internal/StoredValue'
@@ -71,7 +71,7 @@ describe('StoredValue', () => {
         freshUntil: now + 1_000,
         staleUntil: now + 2_000,
         errorUntil: null,
-        freshTtlSeconds: Number.POSITIVE_INFINITY
+        freshTtlMs: Number.POSITIVE_INFINITY
       })
     ).toBe(false)
 
@@ -83,8 +83,8 @@ describe('StoredValue', () => {
         freshUntil: now + 1_000,
         staleUntil: now + 2_000,
         errorUntil: null,
-        freshTtlSeconds: 60,
-        staleWhileRevalidateSeconds: 999_999_999
+        freshTtlMs: 60_000,
+        staleWhileRevalidateMs: 999_999_999_000
       })
     ).toBe(false)
   })
@@ -182,8 +182,8 @@ describe('StoredValue', () => {
         freshUntil: now + 1_000,
         staleUntil: now + 2_000,
         errorUntil: null,
-        freshTtlSeconds: null,
-        staleWhileRevalidateSeconds: 30
+        freshTtlMs: null,
+        staleWhileRevalidateMs: 30_000
       })
     ).toBe(false)
   })
@@ -199,7 +199,7 @@ describe('StoredValue', () => {
         freshUntil: now + 1_000,
         staleUntil: now + 2_000,
         errorUntil: null,
-        staleIfErrorSeconds: Number.POSITIVE_INFINITY
+        staleIfErrorMs: Number.POSITIVE_INFINITY
       })
     ).toBe(false)
   })
@@ -209,9 +209,9 @@ describe('StoredValue', () => {
     const fresh = createStoredValueEnvelope({
       kind: 'value',
       value: { id: 1 },
-      freshTtlSeconds: 10,
-      staleWhileRevalidateSeconds: 5,
-      staleIfErrorSeconds: 7,
+      freshTtlMs: 10_000,
+      staleWhileRevalidateMs: 5_000,
+      staleIfErrorMs: 7_000,
       now
     })
 
@@ -230,17 +230,17 @@ describe('StoredValue', () => {
     const now = Date.now()
     const empty = createStoredValueEnvelope({
       kind: 'empty',
-      freshTtlSeconds: 5,
-      staleWhileRevalidateSeconds: 5,
+      freshTtlMs: 5_000,
+      staleWhileRevalidateMs: 5_000,
       now
     })
 
     expect(unwrapStoredValue(empty)).toBeNull()
-    expect(remainingFreshTtlSeconds(empty, now)).toBe(5)
-    expect(remainingFreshTtlSeconds(empty, now + 6_000)).toBe(0)
-    expect(remainingStoredTtlSeconds(empty, now)).toBe(10)
-    expect(remainingStoredTtlSeconds(empty, now + 11_000)).toBe(1)
-    expect(remainingStoredTtlSeconds('plain')).toBeUndefined()
+    expect(remainingFreshTtlMs(empty, now)).toBe(5_000)
+    expect(remainingFreshTtlMs(empty, now + 6_000)).toBe(0)
+    expect(remainingStoredTtlMs(empty, now)).toBe(10_000)
+    expect(remainingStoredTtlMs(empty, now + 11_000)).toBe(1)
+    expect(remainingStoredTtlMs('plain')).toBeUndefined()
   })
 
   it('returns undefined ttl helpers for envelopes without expiry metadata', () => {
@@ -250,8 +250,8 @@ describe('StoredValue', () => {
       now
     })
 
-    expect(remainingStoredTtlSeconds(empty, now)).toBeUndefined()
-    expect(remainingFreshTtlSeconds(empty, now)).toBeUndefined()
+    expect(remainingStoredTtlMs(empty, now)).toBeUndefined()
+    expect(remainingFreshTtlMs(empty, now)).toBeUndefined()
   })
 
   it('refreshes envelopes and leaves plain values untouched', () => {
@@ -259,8 +259,8 @@ describe('StoredValue', () => {
     const envelope = createStoredValueEnvelope({
       kind: 'value',
       value: 'ok',
-      freshTtlSeconds: 5,
-      staleIfErrorSeconds: 5,
+      freshTtlMs: 5_000,
+      staleIfErrorMs: 5_000,
       now
     })
 
@@ -275,9 +275,9 @@ describe('StoredValue', () => {
     const envelope = createStoredValueEnvelope({
       kind: 'value',
       value: { id: 1 },
-      freshTtlSeconds: 60,
-      staleWhileRevalidateSeconds: 30,
-      staleIfErrorSeconds: 120,
+      freshTtlMs: 60_000,
+      staleWhileRevalidateMs: 30_000,
+      staleIfErrorMs: 120_000,
       now
     })
 
@@ -300,9 +300,9 @@ describe('StoredValue', () => {
     const envelope = createStoredValueEnvelope({
       kind: 'value',
       value: { id: 1 },
-      freshTtlSeconds: 10,
-      staleWhileRevalidateSeconds: 5,
-      staleIfErrorSeconds: 20,
+      freshTtlMs: 10_000,
+      staleWhileRevalidateMs: 5_000,
+      staleIfErrorMs: 20_000,
       now
     })
 

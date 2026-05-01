@@ -24,7 +24,7 @@ import Redis from 'ioredis'
 
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
 const app = express()
@@ -32,7 +32,7 @@ const app = express()
 // Cache all GET requests to /api/users
 app.get('/api/users',
   createExpressCacheMiddleware(cache, {
-    ttl: 30,
+    ttl: 30_000,
     tags: ['users']
   }),
   async (req, res) => {
@@ -50,7 +50,7 @@ app.listen(3000)
 app.get('/api/users/:id',
   createExpressCacheMiddleware(cache, {
     keyResolver: (req) => `user:${req.params.id}`,
-    ttl: 300
+    ttl: 300_000
   }),
   async (req, res) => {
     const user = await fetchUser(req.params.id)
@@ -63,7 +63,7 @@ app.get('/api/users/:id',
 
 - `keyResolver` - Function to generate cache keys from requests
 - `methods` - HTTP methods to cache (default: `['GET']`)
-- `ttl` - Time-to-live in seconds
+- `ttl` - Time-to-live in milliseconds
 - `tags` - Tags for invalidation
 - `allowPrivateCaching` - Allow implicit URL-based keys (default: false)
 
@@ -90,7 +90,7 @@ import Redis from 'ioredis'
 
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: new Redis(), ttl: 300 })
+  new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
 const fastify = Fastify()
@@ -139,7 +139,7 @@ const cache = new CacheStack([
 const app = new Hono()
 
 app.use('/api/*', createHonoCacheMiddleware(cache, {
-  ttl: 60,
+  ttl: 60_000,
   tags: ['api']
 }))
 
@@ -155,7 +155,7 @@ app.get('/api/users', async (c) => {
 app.get('/api/users/:id',
   createHonoCacheMiddleware(cache, {
     keyResolver: (req) => `user:${req.path.split('/').pop()}`,
-    ttl: 300
+    ttl: 300_000
   }),
   async (c) => {
     const id = c.req.param('id')
@@ -182,7 +182,7 @@ import Redis from 'ioredis'
       provide: 'CACHE_STACK',
       useFactory: () => new CacheStack([
         new MemoryLayer({ ttl: 20 }),
-        new RedisLayer({ client: new Redis(), ttl: 300 })
+        new RedisLayer({ client: new Redis(), ttl: 300_000 })
       ])
     }
   ],
@@ -208,7 +208,7 @@ import Redis from 'ioredis'
         new MemoryLayer({ ttl: 20 }),
         new RedisLayer({
           client: new Redis(config.get('REDIS_URL')),
-          ttl: 300
+          ttl: 300_000
         })
       ])
     }
@@ -257,14 +257,14 @@ import { initTRPC } from '@trpc/server'
 import { CacheStack, MemoryLayer, createTrpcCacheMiddleware } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 
 const t = initTRPC.create()
 
 const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', {
   keyResolver: (input) => JSON.stringify(input),
-  ttl: 300
+  ttl: 300_000
 })
 
 export const cachedProcedure = t.procedure.use(cacheMiddleware)
@@ -285,7 +285,7 @@ const cacheMiddleware = createTrpcCacheMiddleware(cache, 'user', {
   keyResolver: (input, path, type) => {
     return `${type}:${path}:${JSON.stringify(input)}`
   },
-  ttl: 300
+  ttl: 300_000
 })
 ```
 
@@ -305,7 +305,7 @@ npm install layercache
 import { CacheStack, MemoryLayer, cacheGraphqlResolver } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 
 const resolvers = {
@@ -318,7 +318,7 @@ const resolvers = {
       },
       {
         keyResolver: (_root, { id }) => id,
-        ttl: 300
+        ttl: 300_000
       }
     )
   }
@@ -338,7 +338,7 @@ const resolvers = {
       },
       {
         keyResolver: (_root, { id }) => id,
-        ttl: 300,
+        ttl: 300_000,
         tags: ({ id }) => ['user', `user:${id}`]
       }
     )
@@ -363,7 +363,7 @@ import { trace } from '@opentelemetry/api'
 import { CacheStack, MemoryLayer, createOpenTelemetryPlugin } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 
 const tracer = trace.getTracer('layercache')
@@ -411,7 +411,7 @@ import { createCacheStatsHandler } from 'layercache'
 import http from 'node:http'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 
 const handler = createCacheStatsHandler(cache)

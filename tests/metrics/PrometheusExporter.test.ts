@@ -5,7 +5,7 @@ import { createPrometheusMetricsExporter } from '../../src/metrics/PrometheusExp
 
 describe('PrometheusExporter', () => {
   it('should export valid prometheus text format for a single stack', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const collect = createPrometheusMetricsExporter(cache)
 
     // Generate some metrics
@@ -37,8 +37,8 @@ describe('PrometheusExporter', () => {
   })
 
   it('should export metrics for multiple named stacks', async () => {
-    const cache1 = new CacheStack([new MemoryLayer({ ttl: 10 })])
-    const cache2 = new CacheStack([new MemoryLayer({ ttl: 10, name: 'fast' })])
+    const cache1 = new CacheStack([new MemoryLayer({ ttl: 10_000 })])
+    const cache2 = new CacheStack([new MemoryLayer({ ttl: 10_000, name: 'fast' })])
 
     const collect = createPrometheusMetricsExporter([
       { stack: cache1, name: 'primary' },
@@ -58,7 +58,7 @@ describe('PrometheusExporter', () => {
   })
 
   it('should export latency metrics', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const collect = createPrometheusMetricsExporter(cache)
 
     await cache.set('key1', 'val')
@@ -76,7 +76,7 @@ describe('PrometheusExporter', () => {
   })
 
   it('should sanitize label values', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 10, name: 'layer"evil\\name\n' })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 10_000, name: 'layer"evil\\name\n' })])
     const collect = createPrometheusMetricsExporter([{ stack: cache, name: 'test"cache' }])
 
     await cache.get('k')
@@ -91,7 +91,7 @@ describe('PrometheusExporter', () => {
   })
 
   it('should export zero hit rate when no operations have occurred', () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 10 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 10_000 })])
     const collect = createPrometheusMetricsExporter(cache)
     const output = collect()
 

@@ -36,7 +36,7 @@ Retrieve a snapshot of all metrics counters:
 ```tsx
 import { CacheStack, MemoryLayer } from 'layercache'
 
-const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
 // ... use cache ...
 
@@ -150,7 +150,7 @@ import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ])
 
 const app = express()
@@ -274,7 +274,7 @@ The plugin emits two types of span events:
 ```tsx
 // Each of these creates a span
 await cache.get('user:123', fetchUser)
-await cache.set('user:123', user, { ttl: 300 })
+await cache.set('user:123', user, { ttl: 300_000 })
 await cache.invalidateByTag('user:123')
 ```
 
@@ -502,7 +502,7 @@ Response:
 {
   "key": "user:123",
   "exists": true,
-  "ttlSeconds": 245,
+  "ttlMs": 245,
   "sizeBytes": 1024,
   "isEnvelope": true,
   "state": "fresh",

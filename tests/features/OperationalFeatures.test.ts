@@ -172,7 +172,7 @@ describe('operational features', () => {
   })
 
   it('supports negative caching for null fetch results', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       negativeCaching: true
     })
     let fetches = 0
@@ -184,7 +184,7 @@ describe('operational features', () => {
           fetches += 1
           return null
         },
-        { negativeTtl: 1 }
+        { negativeTtl: 1_000 }
       )
     ).resolves.toBeNull()
 
@@ -195,7 +195,7 @@ describe('operational features', () => {
           fetches += 1
           return { id: 404 }
         },
-        { negativeTtl: 1 }
+        { negativeTtl: 1_000 }
       )
     ).resolves.toBeNull()
 
@@ -208,7 +208,7 @@ describe('operational features', () => {
           fetches += 1
           return { id: 404 }
         },
-        { negativeTtl: 1 }
+        { negativeTtl: 1_000 }
       )
     ).resolves.toEqual({ id: 404 })
 
@@ -216,8 +216,8 @@ describe('operational features', () => {
   })
 
   it('serves stale values while revalidating in the background', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let fetches = 0
@@ -242,10 +242,10 @@ describe('operational features', () => {
   })
 
   it('times out hung background refreshes so future refresh attempts are not blocked forever', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       backgroundRefreshTimeoutMs: 20
     })
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     const fetcher = vi.fn(
@@ -270,10 +270,10 @@ describe('operational features', () => {
   })
 
   it('does not leak late background refresh rejections after a timeout', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       backgroundRefreshTimeoutMs: 20
     })
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let rejectFetch!: (reason?: unknown) => void
@@ -306,8 +306,8 @@ describe('operational features', () => {
   })
 
   it('does not repopulate cleared keys from in-flight background refreshes', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let releaseFetch!: () => void
@@ -329,8 +329,8 @@ describe('operational features', () => {
   })
 
   it('does not repopulate deleted keys from in-flight background refreshes', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let releaseFetch!: () => void
@@ -352,10 +352,10 @@ describe('operational features', () => {
   })
 
   it('does not repopulate deleted keys with negative-cache markers after refresh completes', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       negativeCaching: true
     })
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let releaseFetch!: () => void
@@ -378,8 +378,8 @@ describe('operational features', () => {
   })
 
   it('returns stale values when refresh fails inside stale-if-error window', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    await cache.set('settings', { version: 1 }, { ttl: 1_000, staleIfError: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let attempts = 0
@@ -395,8 +395,8 @@ describe('operational features', () => {
   })
 
   it('serves stale-if-error values without requiring a fetcher', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    await cache.set('settings', { version: 1 }, { ttl: 1, staleIfError: 5 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    await cache.set('settings', { version: 1 }, { ttl: 1_000, staleIfError: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     await expect(cache.get('settings')).resolves.toEqual({ version: 1 })
@@ -412,7 +412,7 @@ describe('operational features', () => {
     const cache = new CacheStack([layer])
     vi.spyOn(TtlResolverModule.secureRandom, 'value').mockReturnValue(1)
 
-    await cache.set('jittered', { ok: true }, { ttl: 10, ttlJitter: 2 })
+    await cache.set('jittered', { ok: true }, { ttl: 10_000, ttlJitter: 2_000 })
 
     const stored = await layer.getEntry?.<{
       freshUntil: number
@@ -426,7 +426,9 @@ describe('operational features', () => {
   })
 
   it('can tolerate partial write failures in best-effort mode', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 }), new FailingSetLayer()], { writePolicy: 'best-effort' })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new FailingSetLayer()], {
+      writePolicy: 'best-effort'
+    })
 
     await expect(cache.set('user:1', { id: 1 })).resolves.toBeUndefined()
     await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
@@ -454,19 +456,19 @@ describe('operational features', () => {
   })
 
   it('rejects conflicting duplicate mget entries', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.mget([
-        { key: 'user:1', options: { ttl: 5 } },
-        { key: 'user:1', options: { ttl: 10 } }
+        { key: 'user:1', options: { ttl: 5_000 } },
+        { key: 'user:1', options: { ttl: 10_000 } }
       ])
     ).rejects.toThrow(/conflicting entries/i)
   })
 
   it('does not schedule stale refreshes after disconnect begins', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     let refreshes = 0
@@ -485,10 +487,10 @@ describe('operational features', () => {
   })
 
   it('does not schedule a second background refresh while one is already in flight', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       backgroundRefreshTimeoutMs: 20
     })
-    await cache.set('user:1', { version: 1 }, { ttl: 1, staleWhileRevalidate: 5 })
+    await cache.set('user:1', { version: 1 }, { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     const fetcher = vi.fn(
@@ -524,7 +526,7 @@ describe('operational features', () => {
   })
 
   it('supports write-behind for remote layers', async () => {
-    const memory = new MemoryLayer({ ttl: 60 })
+    const memory = new MemoryLayer({ ttl: 60_000 })
     const remote = new BulkLayer()
     ;(remote as { isLocal?: boolean }).isLocal = false
     const cache = new CacheStack([memory, remote], {
@@ -544,7 +546,7 @@ describe('operational features', () => {
   })
 
   it('does not let queued write-behind operations repopulate keys after clear', async () => {
-    const memory = new MemoryLayer({ ttl: 60 })
+    const memory = new MemoryLayer({ ttl: 60_000 })
     const remote = new BulkLayer()
     ;(remote as { isLocal?: boolean }).isLocal = false
     const cache = new CacheStack([memory, remote], {
@@ -560,7 +562,7 @@ describe('operational features', () => {
   })
 
   it('rate-limits fetchers when configured', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     let concurrent = 0
     let maxConcurrent = 0
 
@@ -584,7 +586,7 @@ describe('operational features', () => {
   })
 
   it('can rate-limit fetchers per cache key instead of globally', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     let concurrent = 0
     let maxConcurrent = 0
 
@@ -609,7 +611,7 @@ describe('operational features', () => {
 
   it('does not fail fetches when shouldCache throws', async () => {
     const warn = vi.fn()
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       logger: { warn }
     })
 
@@ -626,7 +628,7 @@ describe('operational features', () => {
   })
 
   it('returns fetched values without caching them when shouldCache returns false', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.get('user:1', async () => ({ id: 1, cacheable: false }), {
@@ -638,23 +640,23 @@ describe('operational features', () => {
   })
 
   it('supports context-aware entry options for fetched values', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.get(
         'oauth:token',
         async () => ({
           accessToken: 'a',
-          refreshTtlSeconds: 2,
+          refreshTtlMs: 2_000,
           tenant: 'acme'
         }),
         {
-          ttl: 60,
+          ttl: 60_000,
           tags: ['fallback'],
           contextOptions: ({ value }) => {
-            const token = value as { refreshTtlSeconds: number; tenant: string }
+            const token = value as { refreshTtlMs: number; tenant: string }
             return {
-              ttl: token.refreshTtlSeconds,
+              ttl: token.refreshTtlMs,
               tags: ['oauth', `tenant:${token.tenant}`]
             }
           }
@@ -662,28 +664,28 @@ describe('operational features', () => {
       )
     ).resolves.toEqual({
       accessToken: 'a',
-      refreshTtlSeconds: 2,
+      refreshTtlMs: 2_000,
       tenant: 'acme'
     })
 
     await expect(cache.inspect('oauth:token')).resolves.toEqual(
       expect.objectContaining({
         tags: ['oauth', 'tenant:acme'],
-        freshTtlSeconds: expect.any(Number)
+        freshTtlMs: expect.any(Number)
       })
     )
   })
 
   it('supports context-aware entry options for direct set operations', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.set(
       'report:daily',
-      { scope: 'daily', expiresInSeconds: 1 },
+      { scope: 'daily', expiresInMs: 1_000 },
       {
-        ttl: 60,
+        ttl: 60_000,
         contextOptions: ({ value }) => ({
-          ttl: (value as { expiresInSeconds: number }).expiresInSeconds
+          ttl: (value as { expiresInMs: number }).expiresInMs
         })
       }
     )
@@ -694,13 +696,13 @@ describe('operational features', () => {
   })
 
   it('falls back to static entry options when context-aware overrides are omitted', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await cache.set(
       'report:weekly',
-      { expiresInSeconds: 10 },
+      { expiresInMs: 10_000 },
       {
-        ttl: 1,
+        ttl: 1_000,
         tags: ['reports'],
         contextOptions: () => undefined
       }
@@ -709,13 +711,13 @@ describe('operational features', () => {
     await expect(cache.inspect('report:weekly')).resolves.toEqual(
       expect.objectContaining({
         tags: ['reports'],
-        freshTtlSeconds: expect.any(Number)
+        freshTtlMs: expect.any(Number)
       })
     )
   })
 
   it('surfaces invalid context-aware entry options clearly', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.get('broken:entry', async () => ({ ttl: -1 }), {
@@ -725,7 +727,7 @@ describe('operational features', () => {
   })
 
   it('surfaces context-aware resolver failures clearly', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.get('broken:resolver', async () => ({ ok: true }), {
@@ -737,7 +739,7 @@ describe('operational features', () => {
   })
 
   it('rejects non-object context-aware resolver results clearly', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.get('broken:primitive', async () => ({ ok: true }), {
@@ -753,7 +755,7 @@ describe('operational features', () => {
   })
 
   it('rejects async context-aware resolvers clearly', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(
       cache.get('broken:async', async () => ({ ok: true }), {
@@ -763,7 +765,7 @@ describe('operational features', () => {
   })
 
   it('does not negative-cache null fetch results unless explicitly enabled', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const fetcher = vi.fn(async () => null)
 
     await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
@@ -773,7 +775,7 @@ describe('operational features', () => {
   })
 
   it('validates cache keys and runtime ttl options', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
     await expect(cache.get('')).rejects.toThrow(/must not be empty/i)
     await expect(cache.set('user:1', { id: 1 }, { negativeTtl: -1 })).rejects.toThrow(/non-negative finite/i)
@@ -787,7 +789,7 @@ describe('operational features', () => {
 
     expect(
       () =>
-        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+        new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
           stampedePrevention: false,
           singleFlightCoordinator: coordinator
         })
@@ -795,7 +797,7 @@ describe('operational features', () => {
 
     expect(
       () =>
-        new CacheStack([new MemoryLayer({ ttl: 60 })], {
+        new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
           negativeTtl: -1
         })
     ).toThrow(/non-negative finite/i)
@@ -803,13 +805,13 @@ describe('operational features', () => {
 
   it('supports broadcastL1Invalidation as an alias for write-triggered invalidation', async () => {
     const redis = new Redis()
-    const memoryB = new MemoryLayer({ ttl: 60 })
+    const memoryB = new MemoryLayer({ ttl: 60_000 })
     const invalidationBus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })],
+      [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:alias:' })],
       { invalidationBus, broadcastL1Invalidation: false }
     )
-    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:alias:' })], {
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:alias:' })], {
       invalidationBus
     })
 
@@ -826,11 +828,11 @@ describe('operational features', () => {
     const redis = new Redis()
     const coordinator = new SharedCoordinator()
     const cacheA = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 60, prefix: 'cache:coordinator:' })],
+      [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 60_000, prefix: 'cache:coordinator:' })],
       { singleFlightCoordinator: coordinator }
     )
     const cacheB = new CacheStack(
-      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 60, prefix: 'cache:coordinator:' })],
+      [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 60_000, prefix: 'cache:coordinator:' })],
       { singleFlightCoordinator: coordinator }
     )
 
@@ -876,7 +878,7 @@ describe('operational features', () => {
 
   it('falls back to fetching after single-flight waiting times out', async () => {
     const fetcher = vi.fn(async () => 'fresh')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       singleFlightCoordinator: new AlwaysWaitCoordinator(),
       singleFlightTimeoutMs: 20,
       singleFlightPollMs: 5
@@ -890,7 +892,7 @@ describe('operational features', () => {
 
   it('falls back to local fetching when the single-flight coordinator fails and graceful degradation is enabled', async () => {
     const fetcher = vi.fn(async () => 'fresh')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       gracefulDegradation: true,
       singleFlightCoordinator: new ThrowingCoordinator(new Error('coordinator offline'))
     })
@@ -901,7 +903,7 @@ describe('operational features', () => {
 
   it('surfaces single-flight coordinator failures when graceful degradation is disabled', async () => {
     const fetcher = vi.fn(async () => 'fresh')
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       singleFlightCoordinator: new ThrowingCoordinator(new Error('coordinator offline'))
     })
 
@@ -937,7 +939,7 @@ describe('operational features', () => {
       await new Promise((resolve) => setTimeout(resolve, 10))
       return 'fetched'
     })
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       singleFlightCoordinator: new ImmediateWorkerCoordinator()
     })
 
@@ -984,7 +986,7 @@ describe('operational features', () => {
       ])
       return { id: 1 }
     })
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       stampedePrevention: false
     })
 
@@ -998,10 +1000,10 @@ describe('operational features', () => {
 
   it('formats primitive refresh failures without masking stale responses', async () => {
     const debug = vi.fn()
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       logger: { debug }
     })
-    await cache.set('settings', 'cached', { ttl: 1, staleIfError: 5 })
+    await cache.set('settings', 'cached', { ttl: 1_000, staleIfError: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     await expect(
@@ -1017,10 +1019,10 @@ describe('operational features', () => {
   })
 
   it('refreshes stale primitive values through the timeout guard', async () => {
-    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       backgroundRefreshTimeoutMs: 50
     })
-    await cache.set('greeting', 'hello-v1', { ttl: 1, staleWhileRevalidate: 5 })
+    await cache.set('greeting', 'hello-v1', { ttl: 1_000, staleWhileRevalidate: 5_000 })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     await expect(cache.get('greeting', async () => 'hello-v2')).resolves.toBe('hello-v1')

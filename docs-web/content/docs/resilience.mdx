@@ -27,8 +27,8 @@ When a cache layer fails (e.g., Redis connection timeout), skip it temporarily i
 import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   gracefulDegradation: {
     retryAfterMs: 10_000  // Retry failed layer after 10 seconds
@@ -80,9 +80,9 @@ Each layer degrades independently:
 
 ```ts
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis1, ttl: 300 }),  // L2
-  new DiskLayer({ directory: './cache', ttl: 3600 })  // L3
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis1, ttl: 300_000 }),  // L2
+  new DiskLayer({ directory: './cache', ttl: 3_600_000 })  // L3
 ], {
   gracefulDegradation: { retryAfterMs: 10_000 }
 })
@@ -264,8 +264,8 @@ Fail if **any** layer fails to write:
 
 ```ts
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 60 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new MemoryLayer({ ttl: 60_000 }),
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   writePolicy: 'strict'  // Default
 })

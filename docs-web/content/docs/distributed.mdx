@@ -46,7 +46,7 @@ const coordinator = new RedisSingleFlightCoordinator({ client: redis })
 ```tsx
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   singleFlightCoordinator: coordinator,
   singleFlightLeaseMs: 30000,        // Lock duration
@@ -119,7 +119,7 @@ const bus = new RedisInvalidationBus({
 ```tsx
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: publisher, ttl: 300 })
+  new RedisLayer({ client: publisher, ttl: 300_000 })
 ], {
   invalidationBus: bus,
   broadcastL1Invalidation: true
@@ -219,7 +219,7 @@ const tagIndex = new RedisTagIndex({
 ```tsx
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   tagIndex
 })
@@ -320,7 +320,7 @@ const tagIndex = new RedisTagIndex({
 // 4. Create cache stack
 const cache = new CacheStack([
   new MemoryLayer({ ttl: 20 }),
-  new RedisLayer({ client: redis, ttl: 300 })
+  new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   // Distributed single-flight
   singleFlightCoordinator: coordinator,
