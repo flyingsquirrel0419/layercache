@@ -28,6 +28,7 @@ import {
   validateAdaptiveTtlOptions,
   validateCacheKey,
   validateCircuitBreakerOptions,
+  validateContextEntryOptions,
   validateLayerNumberOption,
   validateNonNegativeNumber,
   validatePattern,
@@ -48,6 +49,9 @@ import { StampedeGuard } from './stampede/StampedeGuard'
 import {
   type CacheAdaptiveTtlOptions,
   type CacheCircuitBreakerOptions,
+  type CacheContextOptionsContext,
+  type CacheEntryWriteKind,
+  type CacheEntryWriteOptions,
   type CacheGetOptions,
   type CacheHealthCheckResult,
   type CacheHitRateSnapshot,
@@ -886,21 +890,22 @@ export class CacheStack extends EventEmitter {
     value: unknown,
     options?: CacheWriteOptions
   ): Promise<void> {
+    const resolvedOptions = this.resolveContextOptions(key, kind, value, options)
     const clearEpoch = this.maintenance.currentClearEpoch()
     const keyEpoch = this.maintenance.currentKeyEpoch(key)
-    await this.layerWriter.writeAcrossLayers(key, kind, value, options)
+    await this.layerWriter.writeAcrossLayers(key, kind, value, resolvedOptions)
     if (this.maintenance.isWriteOutdated(key, clearEpoch, keyEpoch)) {
       return
     }
-    if (options?.tags) {
-      await this.tagIndex.track(key, options.tags)
+    if (resolvedOptions?.tags) {
+      await this.tagIndex.track(key, resolvedOptions.tags)
     } else {
       await this.tagIndex.touch(key)
     }
 
     this.metricsCollector.increment('sets')
-    this.logger.debug?.('set', { key, kind, tags: options?.tags })
-    this.emit('set', { key, kind: kind as string, tags: options?.tags })
+    this.logger.debug?.('set', { key, kind, tags: resolvedOptions?.tags })
+    this.emit('set', { key, kind: kind as string, tags: resolvedOptions?.tags })
     if (this.shouldBroadcastL1Invalidation()) {
       await this.publishInvalidation({ scope: 'key', keys: [key], sourceId: this.instanceId, operation: 'write' })
     }
@@ -909,12 +914,16 @@ export class CacheStack extends EventEmitter {
   private async writeBatch(
     entries: Array<{ key: string; value: unknown; options?: CacheWriteOptions }>
   ): Promise<void> {
-    const { clearEpoch, entryEpochs } = await this.layerWriter.writeBatch(entries)
+    const resolvedEntries = entries.map((entry) => ({
+      ...entry,
+      options: this.resolveContextOptions(entry.key, 'value', entry.value, entry.options)
+    }))
+    const { clearEpoch, entryEpochs } = await this.layerWriter.writeBatch(resolvedEntries)
     if (clearEpoch !== this.maintenance.currentClearEpoch()) {
       return
     }
 
-    for (const entry of entries) {
+    for (const entry of resolvedEntries) {
       if (this.maintenance.isWriteOutdated(entry.key, clearEpoch, entryEpochs.get(entry.key))) {
         continue
       }
@@ -966,6 +975,40 @@ export class CacheStack extends EventEmitter {
     fallback?: number
   ): number | undefined {
     return this.ttlResolver.resolveLayerSeconds(layerName, override, globalDefault, fallback)
+  }
+
+  private resolveContextOptions(
+    key: string,
+    kind: CacheEntryWriteKind,
+    value: unknown,
+    options: CacheWriteOptions | undefined
+  ): CacheWriteOptions | undefined {
+    if (!options?.contextOptions) {
+      return options
+    }
+
+    const { contextOptions, ...baseOptions } = options
+    let overrides: CacheEntryWriteOptions | undefined
+    try {
+      overrides = contextOptions({ key, value, kind } as CacheContextOptionsContext)
+    } catch (error) {
+      throw new Error(`options.contextOptions() failed for key "${key}": ${this.formatError(error)}`)
+    }
+    if (!overrides) {
+      return baseOptions
+    }
+
+    try {
+      validateContextEntryOptions('options.contextOptions()', overrides)
+    } catch (error) {
+      throw new Error(
+        `options.contextOptions() returned invalid entry options for key "${key}": ${this.formatError(error)}`
+      )
+    }
+    return {
+      ...baseOptions,
+      ...overrides
+    }
   }
 
   private async deleteKeys(keys: string[]): Promise<void> {
@@ -1244,6 +1287,9 @@ export class CacheStack extends EventEmitter {
     validateCircuitBreakerOptions(options.circuitBreaker)
     validateRateLimitOptions('options.fetcherRateLimit', options.fetcherRateLimit)
     validateTags(options.tags)
+    if (options.contextOptions && typeof options.contextOptions !== 'function') {
+      throw new Error('options.contextOptions must be a function.')
+    }
   }
 
   private assertActive(operation: string): void {

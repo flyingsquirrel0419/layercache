@@ -26,18 +26,29 @@ export interface LayerTtlMap {
   [layerName: string]: number | undefined
 }
 
-export interface CacheWriteOptions {
+export type CacheEntryWriteKind = 'value' | 'empty'
+
+export interface CacheEntryWriteOptions {
   tags?: string[]
   ttl?: number | LayerTtlMap
   ttlPolicy?: CacheTtlPolicy
-  negativeCache?: boolean
   negativeTtl?: number | LayerTtlMap
   staleWhileRevalidate?: number | LayerTtlMap
   staleIfError?: number | LayerTtlMap
   ttlJitter?: number | LayerTtlMap
+  adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
+}
+
+export interface CacheContextOptionsContext {
+  key: string
+  value: unknown
+  kind: CacheEntryWriteKind
+}
+
+export interface CacheWriteOptions extends CacheEntryWriteOptions {
+  negativeCache?: boolean
   slidingTtl?: boolean
   refreshAhead?: number | LayerTtlMap
-  adaptiveTtl?: boolean | CacheAdaptiveTtlOptions
   circuitBreaker?: CacheCircuitBreakerOptions
   fetcherRateLimit?: CacheRateLimitOptions
   /**
@@ -49,6 +60,24 @@ export interface CacheWriteOptions {
    * cache.get('key', fetchData, { shouldCache: (v) => v.status === 200 })
    */
   shouldCache?: (value: unknown) => boolean
+  /**
+   * Optional resolver that can override cache entry options using the current
+   * write context. This runs right before a value is stored, so callers can
+   * derive TTLs or tags from the fetched value instead of guessing upfront.
+   *
+   * Returned values override any static entry options already present on the
+   * same object. Fetch controls like `shouldCache`, `negativeCache`,
+   * `refreshAhead`, or `circuitBreaker` are not affected.
+   *
+   * @example
+   * cache.get('oauth:token', fetchToken, {
+   *   ttl: 300,
+   *   contextOptions: ({ value }) => ({
+   *     ttl: Math.max(1, Math.floor(((value as { refreshExpiresIn: number }).refreshExpiresIn ?? 0) / 1_000))
+   *   })
+   * })
+   */
+  contextOptions?: (context: CacheContextOptionsContext) => CacheEntryWriteOptions | undefined
 }
 
 export interface CacheGetOptions extends CacheWriteOptions {}

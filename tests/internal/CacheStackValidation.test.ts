@@ -5,6 +5,7 @@ import {
   validateAdaptiveTtlOptions,
   validateCacheKey,
   validateCircuitBreakerOptions,
+  validateContextEntryOptions,
   validateLayerNumberOption,
   validateNonNegativeNumber,
   validatePattern,
@@ -60,6 +61,8 @@ describe('CacheStackValidation', () => {
     expect(() => validateAdaptiveTtlOptions(true)).not.toThrow()
     expect(() => validateAdaptiveTtlOptions({ hotAfter: 2, step: { memory: 1 }, maxTtl: 10 })).not.toThrow()
     expect(() => validateAdaptiveTtlOptions({ hotAfter: 0 })).toThrow(/positive finite number/i)
+    expect(() => validateContextEntryOptions('contextOptions', { ttl: 10, tags: ['users'] })).not.toThrow()
+    expect(() => validateContextEntryOptions('contextOptions', { ttl: -1 })).toThrow(/non-negative finite number/i)
 
     expect(() => validateCircuitBreakerOptions(undefined)).not.toThrow()
     expect(() => validateCircuitBreakerOptions({ failureThreshold: 1, cooldownMs: 100 })).not.toThrow()

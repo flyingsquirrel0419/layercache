@@ -511,6 +511,7 @@ class MyCustomLayer implements CacheLayer {
 | `adaptiveTtl` | `AdaptiveTtlOptions` | Auto-ramp TTL for hot keys |
 | `circuitBreaker` | `CircuitBreakerOptions` | Per-operation circuit breaker |
 | `fetcherRateLimit` | `RateLimitOptions` | Per-operation rate limiting |
+| `contextOptions` | `(context) => CacheEntryWriteOptions` | Override stored entry TTLs/tags from `{ key, value, kind }` right before write |
 | `shouldCache` | `(value: T) => boolean` | Predicate to skip caching specific results |
 
 ---
@@ -596,6 +597,26 @@ await cache.set('custom', value, {
   ttlPolicy: ({ key }) => key.startsWith('hot:') ? 30 : 300
 })
 ```
+
+### Context-Aware Entry Options
+
+```ts
+await cache.get('oauth:token', fetchToken, {
+  ttl: 300,
+  contextOptions: ({ value }) => {
+    const token = value as { refreshExpiresInMs: number; tenantId: string }
+    return {
+      ttl: Math.max(1, Math.floor(token.refreshExpiresInMs / 1_000)),
+      tags: ['oauth', `tenant:${token.tenantId}`]
+    }
+  }
+})
+```
+
+`contextOptions()` runs immediately before a cache write and overrides static
+entry settings on the same call. Use it for value-dependent `ttl`,
+`negativeTtl`, `staleWhileRevalidate`, `staleIfError`, `ttlJitter`,
+`adaptiveTtl`, or `tags`.
 
 ### Per-Layer TTL Overrides
 

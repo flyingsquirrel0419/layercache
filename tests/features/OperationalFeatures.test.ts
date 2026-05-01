@@ -637,6 +637,72 @@ describe('operational features', () => {
     await expect(cache.get('user:1')).resolves.toBeNull()
   })
 
+  it('supports context-aware entry options for fetched values', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get(
+        'oauth:token',
+        async () => ({
+          accessToken: 'a',
+          refreshTtlSeconds: 2,
+          tenant: 'acme'
+        }),
+        {
+          ttl: 60,
+          tags: ['fallback'],
+          contextOptions: ({ value }) => {
+            const token = value as { refreshTtlSeconds: number; tenant: string }
+            return {
+              ttl: token.refreshTtlSeconds,
+              tags: ['oauth', `tenant:${token.tenant}`]
+            }
+          }
+        }
+      )
+    ).resolves.toEqual({
+      accessToken: 'a',
+      refreshTtlSeconds: 2,
+      tenant: 'acme'
+    })
+
+    await expect(cache.inspect('oauth:token')).resolves.toEqual(
+      expect.objectContaining({
+        tags: ['oauth', 'tenant:acme'],
+        freshTtlSeconds: expect.any(Number)
+      })
+    )
+  })
+
+  it('supports context-aware entry options for direct set operations', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await cache.set(
+      'report:daily',
+      { scope: 'daily', expiresInSeconds: 1 },
+      {
+        ttl: 60,
+        contextOptions: ({ value }) => ({
+          ttl: (value as { expiresInSeconds: number }).expiresInSeconds
+        })
+      }
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+
+    await expect(cache.get('report:daily')).resolves.toBeNull()
+  })
+
+  it('surfaces invalid context-aware entry options clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get('broken:entry', async () => ({ ttl: -1 }), {
+        contextOptions: () => ({ ttl: -1 })
+      })
+    ).rejects.toThrow(/contextOptions\(\) returned invalid entry options/i)
+  })
+
   it('does not negative-cache null fetch results unless explicitly enabled', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
     const fetcher = vi.fn(async () => null)
