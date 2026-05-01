@@ -237,7 +237,7 @@ describe('StoredValue', () => {
     expect(refreshStoredEnvelope('plain')).toBe('plain')
   })
 
-  it('expires envelope freshness while preserving stale windows and plain values', () => {
+  it('expires envelope freshness while preserving original stale deadlines and plain values', () => {
     const now = Date.now()
     const envelope = createStoredValueEnvelope({
       kind: 'value',
@@ -257,8 +257,33 @@ describe('StoredValue', () => {
       envelope: expired
     })
     expect((expired as { freshUntil: number }).freshUntil).toBe(now + 10_000)
-    expect((expired as { staleUntil: number }).staleUntil).toBe(now + 40_000)
-    expect((expired as { errorUntil: number }).errorUntil).toBe(now + 130_000)
+    expect((expired as { staleUntil: number }).staleUntil).toBe(now + 90_000)
+    expect((expired as { errorUntil: number }).errorUntil).toBe(now + 180_000)
+    expect(expireStoredEnvelope('plain')).toBe('plain')
+  })
+
+  it('does not revive stale-if-error entries back into stale-while-revalidate', () => {
+    const now = Date.now()
+    const envelope = createStoredValueEnvelope({
+      kind: 'value',
+      value: { id: 1 },
+      freshTtlSeconds: 10,
+      staleWhileRevalidateSeconds: 5,
+      staleIfErrorSeconds: 20,
+      now
+    })
+
+    const expired = expireStoredEnvelope(envelope, now + 16_000)
+
+    expect(resolveStoredValue(expired, now + 16_000)).toEqual({
+      state: 'stale-if-error',
+      value: { id: 1 },
+      stored: expired,
+      envelope: expired
+    })
+    expect((expired as { freshUntil: number }).freshUntil).toBe(now + 15_000)
+    expect((expired as { staleUntil: number }).staleUntil).toBe(now + 15_000)
+    expect((expired as { errorUntil: number }).errorUntil).toBe(now + 30_000)
     expect(expireStoredEnvelope('plain')).toBe('plain')
   })
 })

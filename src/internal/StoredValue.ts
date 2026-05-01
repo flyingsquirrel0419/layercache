@@ -201,11 +201,12 @@ export function expireStoredEnvelope(stored: unknown, now = Date.now()): unknown
     return stored
   }
 
+  const futureDeadlines = [stored.staleUntil, stored.errorUntil].filter((value): value is number => value !== null)
+  const freshUntil = futureDeadlines.length > 0 ? Math.min(now, ...futureDeadlines) : now
+
   return {
     ...stored,
-    freshUntil: now,
-    staleUntil: stored.staleWhileRevalidateSeconds ? now + stored.staleWhileRevalidateSeconds * 1_000 : null,
-    errorUntil: stored.staleIfErrorSeconds ? now + stored.staleIfErrorSeconds * 1_000 : null
+    freshUntil
   }
 }
 
