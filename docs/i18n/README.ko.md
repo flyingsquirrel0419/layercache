@@ -258,6 +258,7 @@ const cache = new CacheStack([
 | **태그 무효화** | 태그 하나로 관련 키를 모든 레이어에서 한 번에 삭제합니다 |
 | **배치 태그 무효화** | 여러 태그를 `any` / `all` 조건으로 한 번에 처리합니다 |
 | **와일드카드 / 프리픽스 무효화** | `user:*` 같은 패턴으로 범위 삭제가 가능합니다 |
+| **삭제 없는 만료** | 값을 지우지 않고 stale 상태로 표시해 SWR에서 계속 사용할 수 있습니다 |
 | **세대 기반 무효화** | 스캔 없이 네임스페이스 전체를 통째로 갈아치웁니다 |
 | **Stale-while-revalidate** | 캐시된 값을 먼저 돌려주고, 백그라운드에서 조용히 갱신합니다 |
 | **Stale-if-error** | 원본이 장애 나면 만료된 데이터라도 계속 서빙합니다 |
@@ -286,7 +287,7 @@ const cache = new CacheStack([
 | **메트릭** | 히트, 미스, fetch, stale 히트, 서킷 브레이커 트립 등을 추적합니다 |
 | **레이어별 지연 시간** | Welford 알고리즘으로 평균·최대·샘플 수를 계산합니다 |
 | **헬스 체크** | 레이어별로 비동기 헬스 체크 엔드포인트를 제공합니다 |
-| **이벤트 훅** | `hit`, `miss`, `set`, `delete`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
+| **이벤트 훅** | `hit`, `miss`, `set`, `delete`, `expire`, `stale-serve`, `stampede-dedupe`, `backfill`, `warm`, `error` |
 | **OpenTelemetry** | 코드 수정 없이 훅만으로 분산 추적을 연동합니다 |
 | **Prometheus 익스포터** | 지연 시간 게이지를 포함해 메트릭을 내보냅니다 |
 | **HTTP 통계 핸들러** | 대시보드에 바로 쓸 수 있는 JSON 엔드포인트입니다 |

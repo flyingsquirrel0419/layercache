@@ -258,6 +258,7 @@ const cache = new CacheStack([
 | **标签失效** | 一个标签，所有层的关联 key 一起删 |
 | **批量标签失效** | `any` / `all` 语义，多标签一次搞定 |
 | **通配符 / 前缀失效** | `user:*` 这种模式匹配，批量删除 |
+| **不删除的过期标记** | 不删除缓存值，只把它标记为 stale，让 SWR 仍可使用 |
 | **代际轮换** | 不用扫描，整个命名空间直接换一代 |
 | **Stale-while-revalidate** | 先返回缓存值，后台默默刷新 |
 | **Stale-if-error** | 上游挂了？过期数据照样顶着用 |
@@ -286,7 +287,7 @@ const cache = new CacheStack([
 | **指标采集** | 命中、未命中、fetch、过期命中、熔断跳闸，全都有 |
 | **层级延迟统计** | Welford 算法算平均、最大值和采样数 |
 | **健康检查** | 每层一个异步健康端点，延迟也能量 |
-| **事件钩子** | `hit`、`miss`、`set`、`delete`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
+| **事件钩子** | `hit`、`miss`、`set`、`delete`、`expire`、`stale-serve`、`stampede-dedupe`、`backfill`、`warm`、`error` |
 | **OpenTelemetry** | 不改代码，通过事件钩子接入分布式追踪 |
 | **Prometheus 导出器** | 延迟指标也给你导出去 |
 | **HTTP 统计接口** | 给仪表盘用的 JSON 端点 |
