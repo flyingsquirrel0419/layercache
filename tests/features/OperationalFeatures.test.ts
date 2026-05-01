@@ -693,6 +693,27 @@ describe('operational features', () => {
     await expect(cache.get('report:daily')).resolves.toBeNull()
   })
 
+  it('falls back to static entry options when context-aware overrides are omitted', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await cache.set(
+      'report:weekly',
+      { expiresInSeconds: 10 },
+      {
+        ttl: 1,
+        tags: ['reports'],
+        contextOptions: () => undefined
+      }
+    )
+
+    await expect(cache.inspect('report:weekly')).resolves.toEqual(
+      expect.objectContaining({
+        tags: ['reports'],
+        freshTtlSeconds: expect.any(Number)
+      })
+    )
+  })
+
   it('surfaces invalid context-aware entry options clearly', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -701,6 +722,18 @@ describe('operational features', () => {
         contextOptions: () => ({ ttl: -1 })
       })
     ).rejects.toThrow(/contextOptions\(\) returned invalid entry options/i)
+  })
+
+  it('surfaces context-aware resolver failures clearly', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await expect(
+      cache.get('broken:resolver', async () => ({ ok: true }), {
+        contextOptions: () => {
+          throw new Error('resolver exploded')
+        }
+      })
+    ).rejects.toThrow(/contextOptions\(\) failed for key "broken:resolver"/i)
   })
 
   it('does not negative-cache null fetch results unless explicitly enabled', async () => {
@@ -718,6 +751,9 @@ describe('operational features', () => {
 
     await expect(cache.get('')).rejects.toThrow(/must not be empty/i)
     await expect(cache.set('user:1', { id: 1 }, { negativeTtl: -1 })).rejects.toThrow(/non-negative finite/i)
+    await expect(cache.set('user:1', { id: 1 }, { contextOptions: 'nope' as never })).rejects.toThrow(
+      /contextOptions must be a function/i
+    )
   })
 
   it('validates conflicting constructor options eagerly', () => {

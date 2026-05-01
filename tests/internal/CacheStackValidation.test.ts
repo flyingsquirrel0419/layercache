@@ -61,6 +61,7 @@ describe('CacheStackValidation', () => {
     expect(() => validateAdaptiveTtlOptions(true)).not.toThrow()
     expect(() => validateAdaptiveTtlOptions({ hotAfter: 2, step: { memory: 1 }, maxTtl: 10 })).not.toThrow()
     expect(() => validateAdaptiveTtlOptions({ hotAfter: 0 })).toThrow(/positive finite number/i)
+    expect(() => validateContextEntryOptions('contextOptions', undefined)).not.toThrow()
     expect(() => validateContextEntryOptions('contextOptions', { ttl: 10, tags: ['users'] })).not.toThrow()
     expect(() => validateContextEntryOptions('contextOptions', { ttl: -1 })).toThrow(/non-negative finite number/i)
 
