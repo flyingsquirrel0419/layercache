@@ -116,14 +116,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (!validateCliInput(args.key, validateCacheKey)) return
 
       const payload = await redis.getBuffer(args.key)
-      const ttl = await redis.ttl(args.key)
+      const ttl = await redis.pttl(args.key)
       const decoded = decodeInspectablePayload(payload)
       process.stdout.write(
         `${JSON.stringify(
           {
             key: args.key,
             exists: payload !== null,
-            ttlSeconds: ttl >= 0 ? ttl : null,
+            ttlMs: ttl >= 0 ? ttl : null,
             sizeBytes: payload?.byteLength ?? 0,
             isEnvelope: isStoredValueEnvelope(decoded),
             state: payload === null ? null : resolveStoredValue(decoded).state,
