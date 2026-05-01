@@ -58,8 +58,6 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
         singleFlightCoordinator: coordinator
       }
     )
-
-    await Promise.all([cacheA.ready(), cacheB.ready()])
   })
 
   afterAll(async () => {
