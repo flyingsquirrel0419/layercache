@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-05-02
+
 ### Breaking
 
 - **TTL values now use milliseconds across the public API** — layer defaults, per-operation `ttl`, `negativeTtl`, `staleWhileRevalidate`, `staleIfError`, `ttlJitter`, `refreshAhead`, adaptive TTL steps, and TTL policy return values are now documented and handled as milliseconds. Redis writes now use `PX`, Redis TTL reads use `PTTL`, and CLI inspect output now reports `ttlMs`.
@@ -21,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Version bumped from `1.3.4` to `1.4.0`.
 - **Documentation examples now use millisecond TTLs** across README, localized READMEs, root docs, docs-web content, examples, middleware snippets, and migration guides.
+- **npm package contents are now limited to runtime build artifacts** by publishing only `dist/` plus npm's always-included metadata.
 - **Validation now runs broader CI coverage** with Node.js 20/22, Biome GitHub annotations, real Redis integration tests on Node.js 20, and a validation summary.
 - **Test baseline increased to 549 passing tests** with added coverage for context-aware options, stale-preserving expiration, Redis integration behavior, millisecond TTL handling, and docs-web utilities.
 
