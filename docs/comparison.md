@@ -110,7 +110,7 @@ How does layercache compare to other popular Node.js caching libraries?
 
 - **N-layer stacks** - layercache supports any number of layers (Memory + Redis + Disk + …). BentoCache is limited to exactly two tiers (L1 + L2).
 - **Distributed single-flight** - Cross-instance request deduplication via Redis distributed locks. BentoCache's stampede protection is in-memory only — N instances can produce up to N concurrent factory calls for the same key.
-- **Distributed tags** - Shared Redis-backed tag index (`RedisTagIndex`). BentoCache tags are local-only, using client-side invalidation timestamps without a shared index.
+- **Distributed tags** - Shared Redis-backed tag index (`RedisTagIndex`). BentoCache supports backend-backed tag invalidation, but it does not maintain a shared reverse index for enumerating keys by tag.
 - **Wildcard and pattern invalidation** - Glob-style key pattern matching (`user:*`). Not available in BentoCache.
 - **Generation-based rotation** - Bulk namespace invalidation by bumping a generation number, without scanning keys.
 - **Sliding TTL** - Reset expiry on every read for frequently accessed keys.
