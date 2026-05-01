@@ -30,10 +30,15 @@ ctx.onmessage = async (event: MessageEvent) => {
       const { cache } = createPlaygroundCache((message: string) => {
         postLog("cache", message);
       });
+      let activeCache = cache;
 
       const sandbox = {
         cache,
-        createPlaygroundCache: () => createPlaygroundCache((msg: string) => postLog("cache", msg)),
+        createPlaygroundCache: () => {
+          const instance = createPlaygroundCache((msg: string) => postLog("cache", msg));
+          activeCache = instance.cache;
+          return instance;
+        },
         console,
         setTimeout,
         clearTimeout,
@@ -61,8 +66,8 @@ ctx.onmessage = async (event: MessageEvent) => {
 
       ctx.postMessage({
         type: "done",
-        layerInfo: cache.getLayerInfo(),
-        stats: cache.getStats(),
+        layerInfo: activeCache.getLayerInfo(),
+        stats: activeCache.getStats(),
       });
     } catch (error) {
       postLog("error", error instanceof Error ? error.message : String(error));
