@@ -1,4 +1,5 @@
 import type { CacheLayer, CacheTagIndex } from '../types'
+import { expireStoredEnvelope, remainingStoredTtlSeconds } from './StoredValue'
 
 interface CacheStackInvalidationSupportOptions {
   tagIndex: CacheTagIndex
@@ -65,6 +66,41 @@ export class CacheStackInvalidationSupport {
         )
       })
     )
+  }
+
+  async expireKeysInLayers(layers: CacheLayer[], keys: string[]): Promise<Set<string>> {
+    const foundKeys = new Set<string>()
+
+    await Promise.all(
+      layers.map(async (layer) => {
+        if (this.options.shouldSkipLayer(layer)) {
+          return
+        }
+
+        await Promise.all(
+          keys.map(async (key) => {
+            try {
+              const stored = layer.getEntry ? await layer.getEntry(key) : await layer.get(key)
+              if (stored === null) {
+                return
+              }
+
+              foundKeys.add(key)
+              const expired = expireStoredEnvelope(stored)
+              if (expired === stored) {
+                return
+              }
+
+              await layer.set(key, expired, remainingStoredTtlSeconds(expired))
+            } catch (error) {
+              await this.options.handleLayerFailure(layer, 'expire', error)
+            }
+          })
+        )
+      })
+    )
+
+    return foundKeys
   }
 
   assertWithinInvalidationKeyLimit(size: number, maxKeys: number | false): void {

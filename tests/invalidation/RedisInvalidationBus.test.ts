@@ -244,4 +244,38 @@ describe('RedisInvalidationBus', () => {
     publisher.disconnect()
     subscriber.disconnect()
   })
+
+  it('accepts expire operations and rejects unknown operations', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:expire-op' })
+    const handler = vi.fn()
+
+    const unsubscribe = await bus.subscribe(handler)
+
+    await publisher.publish(
+      'layercache:test:expire-op',
+      JSON.stringify({ scope: 'keys', sourceId: 'inst', keys: ['user:1'], operation: 'expire' })
+    )
+    await publisher.publish(
+      'layercache:test:expire-op',
+      JSON.stringify({ scope: 'keys', sourceId: 'inst', keys: ['user:2'], operation: 'unknown' })
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'expire',
+        keys: ['user:1']
+      })
+    )
+    expect(errorSpy).toHaveBeenCalled()
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
 })

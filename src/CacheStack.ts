@@ -651,6 +651,16 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  async expireByTag(tag: string): Promise<void> {
+    await this.observeOperation('layercache.expire_by_tag', undefined, async () => {
+      validateTag(tag)
+      await this.awaitStartup('expireByTag')
+      const keys = await this.invalidation.collectKeysForTag(tag, this.invalidationMaxKeys())
+      await this.expireKeys(keys)
+      await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'expire' })
+    })
+  }
+
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_tags', undefined, async () => {
       if (tags.length === 0) {
@@ -670,6 +680,25 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  async expireByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
+    await this.observeOperation('layercache.expire_by_tags', undefined, async () => {
+      if (tags.length === 0) {
+        return
+      }
+
+      validateTags(tags)
+      await this.awaitStartup('expireByTags')
+      const keysByTag = await Promise.all(
+        tags.map((tag) => this.invalidation.collectKeysForTag(tag, this.invalidationMaxKeys()))
+      )
+      const keys = mode === 'all' ? this.invalidation.intersectKeys(keysByTag) : [...new Set(keysByTag.flat())]
+      this.invalidation.assertWithinInvalidationKeyLimit(keys.length, this.invalidationMaxKeys())
+
+      await this.expireKeys(keys)
+      await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'expire' })
+    })
+  }
+
   async invalidateByPattern(pattern: string): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_pattern', undefined, async () => {
       validatePattern(pattern)
@@ -683,6 +712,19 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  async expireByPattern(pattern: string): Promise<void> {
+    await this.observeOperation('layercache.expire_by_pattern', undefined, async () => {
+      validatePattern(pattern)
+      await this.awaitStartup('expireByPattern')
+      const keys = await this.keyDiscovery.collectKeysMatchingPattern(
+        this.qualifyPattern(pattern),
+        this.invalidationMaxKeys()
+      )
+      await this.expireKeys(keys)
+      await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'expire' })
+    })
+  }
+
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_prefix', undefined, async () => {
       await this.awaitStartup('invalidateByPrefix')
@@ -690,6 +732,16 @@ export class CacheStack extends EventEmitter {
       const keys = await this.keyDiscovery.collectKeysWithPrefix(qualifiedPrefix, this.invalidationMaxKeys())
       await this.deleteKeys(keys)
       await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'invalidate' })
+    })
+  }
+
+  async expireByPrefix(prefix: string): Promise<void> {
+    await this.observeOperation('layercache.expire_by_prefix', undefined, async () => {
+      await this.awaitStartup('expireByPrefix')
+      const qualifiedPrefix = this.qualifyKey(validateCacheKey(prefix))
+      const keys = await this.keyDiscovery.collectKeysWithPrefix(qualifiedPrefix, this.invalidationMaxKeys())
+      await this.expireKeys(keys)
+      await this.publishInvalidation({ scope: 'keys', keys, sourceId: this.instanceId, operation: 'expire' })
     })
   }
 
@@ -1051,6 +1103,37 @@ export class CacheStack extends EventEmitter {
     this.emit('delete', { keys })
   }
 
+  private async expireKeys(keys: string[]): Promise<void> {
+    if (keys.length === 0) {
+      return
+    }
+
+    this.maintenance.bumpKeyEpochs(keys)
+    const foundKeys = await this.expireKeysInLayers(keys, this.layers)
+
+    for (const key of keys) {
+      if (foundKeys.has(key)) {
+        continue
+      }
+
+      await this.tagIndex.remove(key)
+      this.ttlResolver.deleteProfile(key)
+      this.circuitBreakerManager.delete(key)
+    }
+
+    this.metricsCollector.increment('invalidations')
+    this.logger.debug?.('expire', { keys })
+    this.emit('expire', { keys })
+  }
+
+  private async expireKeysInLayers(keys: string[], layers: CacheLayer[]): Promise<Set<string>> {
+    if (keys.length === 0) {
+      return new Set()
+    }
+
+    return this.invalidation.expireKeysInLayers(layers, keys)
+  }
+
   private async publishInvalidation(message: InvalidationMessage): Promise<void> {
     if (!this.options.invalidationBus) {
       return
@@ -1076,6 +1159,11 @@ export class CacheStack extends EventEmitter {
 
     const keys = message.keys ?? []
     this.maintenance.bumpKeyEpochs(keys)
+    if (message.operation === 'expire') {
+      await this.expireKeysInLayers(keys, localLayers)
+      return
+    }
+
     await this.invalidation.deleteKeysFromLayers(localLayers, keys)
 
     if (message.operation !== 'write') {

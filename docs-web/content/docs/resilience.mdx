@@ -1,0 +1,647 @@
+---
+title: "Resilience Features"
+description: "Build fault-tolerant caches with graceful degradation and circuit breakers"
+---
+
+# Resilience Features
+
+Build fault-tolerant caches that handle failures gracefully without cascading errors to your application.
+
+## Table of Contents
+
+- [Graceful Degradation](#graceful-degradation)
+- [Circuit Breaker](#circuit-breaker)
+- [Write Policies](#write-policies)
+- [Write Strategies](#write-strategies)
+- [Fetcher Rate Limiting](#fetcher-rate-limiting)
+
+---
+
+## Graceful Degradation
+
+When a cache layer fails (e.g., Redis connection timeout), skip it temporarily instead of failing every request.
+
+### Configuration
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis, ttl: 300 })
+], {
+  gracefulDegradation: {
+    retryAfterMs: 10_000  // Retry failed layer after 10 seconds
+  }
+})
+```
+
+### How It Works
+
+1. **First failure**: Layer operation fails (e.g., Redis timeout)
+2. **Mark degraded**: Layer is marked as degraded for `retryAfterMs`
+3. **Skip layer**: Subsequent operations skip the degraded layer
+4. **Retry after cooldown**: After `retryAfterMs`, operations retry the layer
+5. **Recover on success**: First successful operation clears degraded state
+
+### Example
+
+```ts
+// Redis is healthy
+const user1 = await cache.get('user:1')
+// -> Reads from memory (miss)
+// -> Reads from Redis (hit)
+// -> Backfills memory
+
+// Redis connection times out
+const user2 = await cache.get('user:2')
+// -> Reads from memory (miss)
+// -> Redis fails (timeout)
+// -> Falls back to fetcher
+// -> Marks Redis as degraded for 10 seconds
+
+// Within 10 second cooldown
+const user3 = await cache.get('user:3')
+// -> Reads from memory (miss)
+// -> Skips Redis (degraded)
+// -> Falls back to fetcher
+// -> Writes to memory only
+
+// After 10 seconds, Redis recovers
+const user4 = await cache.get('user:4')
+// -> Retries Redis
+// -> If successful: clears degraded state
+// -> If failed: restarts cooldown
+```
+
+### Per-Layer Degradation
+
+Each layer degrades independently:
+
+```ts
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis1, ttl: 300 }),  // L2
+  new DiskLayer({ directory: './cache', ttl: 3600 })  // L3
+], {
+  gracefulDegradation: { retryAfterMs: 10_000 }
+})
+
+// Redis fails but disk is healthy
+const data = await cache.get('key')
+// -> Memory: miss
+// -> Redis: degraded (skip)
+// -> Disk: hit
+// -> Backfills memory
+```
+
+### Monitoring Degradation
+
+```ts
+const stats = cache.getStats()
+
+for (const layer of stats.layers) {
+  console.log(`${layer.name}:`, {
+    healthy: !layer.degradedUntil,
+    degradedUntil: layer.degradedUntil
+      ? new Date(layer.degradedUntil).toISOString()
+      : 'N/A'
+  })
+}
+
+// Output:
+// memory: { healthy: true, degradedUntil: 'N/A' }
+// redis: { healthy: false, degradedUntil: '2024-04-11T12:34:56.789Z' }
+```
+
+### Health Checks
+
+Use `healthCheck()` to proactively detect layer issues:
+
+```ts
+const health = await cache.healthCheck()
+
+for (const result of health) {
+  if (!result.healthy) {
+    console.warn(`Layer ${result.layer} is unhealthy: ${result.error}`)
+  }
+}
+
+// Output:
+// [
+//   { layer: 'memory', healthy: true, latencyMs: 0.03 },
+//   { layer: 'redis',  healthy: false, latencyMs: 5000, error: 'Connection timeout' }
+// ]
+```
+
+---
+
+## Circuit Breaker
+
+Stop hammering broken upstream services after repeated failures. Prevents cascading failures and reduces load on struggling systems.
+
+### Configuration
+
+```ts
+const cache = new CacheStack([...], {
+  circuitBreaker: {
+    failureThreshold: 5,      // Trip after 5 consecutive failures
+    cooldownMs: 30_000        // Retry after 30 seconds
+  }
+})
+```
+
+### How It Works
+
+1. **Closed state**: Requests pass through normally
+2. **Failures increment**: Each failure increments a counter
+3. **Trip**: When failures reach `failureThreshold`, circuit trips
+4. **Open state**: Requests fail immediately without calling upstream
+5. **Cooldown**: After `cooldownMs`, enter half-open state
+6. **Half-open**: Allow one request to test recovery
+7. **Recover**: On success, close circuit (reset counter)
+8. **Fail again**: On failure, reopen circuit
+
+### Example
+
+```ts
+let dbFailures = 0
+const fetchUser = async (id: number) => {
+  dbFailures++
+  if (dbFailures <= 7) {
+    throw new Error('Database connection failed')
+  }
+  return { id, name: `User ${id}` }
+}
+
+const cache = new CacheStack([...], {
+  circuitBreaker: {
+    failureThreshold: 5,
+    cooldownMs: 30_000
+  }
+})
+
+// First 5 calls: fail, increment counter
+for (let i = 0; i < 5; i++) {
+  await cache.get(`user:${i}`, fetchUser)
+  // Circuit state: CLOSED -> still trying
+}
+
+// 6th call: trips circuit
+await cache.get('user:6', fetchUser)
+// Circuit state: OPEN -> fails immediately without calling fetcher
+
+// 7th call: circuit still open (within cooldown)
+await cache.get('user:7', fetchUser)
+// Circuit state: OPEN -> fails immediately
+
+// After 30 seconds: circuit enters half-open
+await cache.get('user:8', fetchUser)
+// Circuit state: HALF_OPEN -> tries one request
+// -> Fails (dbFailures = 7)
+// Circuit state: OPEN -> trips again
+
+// After another 30 seconds: circuit enters half-open
+await cache.get('user:9', fetchUser)
+// Circuit state: HALF_OPEN -> tries one request
+// -> Succeeds (dbFailures = 8, database recovered)
+// Circuit state: CLOSED -> circuit resets
+```
+
+### Per-Operation Circuit Breaker
+
+Configure circuit breaker for specific operations:
+
+```ts
+// Global circuit breaker
+const cache = new CacheStack([...], {
+  circuitBreaker: {
+    failureThreshold: 10,
+    cooldownMs: 60_000
+  }
+})
+
+// Override for fragile operation
+await cache.get('fragile-key', fetchFragileData, {
+  circuitBreaker: {
+    failureThreshold: 3,    // Trip after 3 failures
+    cooldownMs: 10_000      // Retry after 10 seconds
+  }
+})
+```
+
+### Circuit Breaker Events
+
+Monitor circuit breaker state changes:
+
+```ts
+cache.on('error', ({ event, context }) => {
+  if (event === 'circuit-breaker-trip') {
+    console.error(`Circuit tripped for key: ${context.key}`)
+  }
+  if (event === 'circuit-breaker-reset') {
+    console.log(`Circuit reset for key: ${context.key}`)
+  }
+})
+```
+
+### Metrics
+
+```ts
+const metrics = cache.getMetrics()
+console.log(`Circuit breaker trips: ${metrics.circuitBreakerTrips}`)
+```
+
+---
+
+## Write Policies
+
+Control how write failures are handled when some cache layers fail.
+
+### Strict Mode (Default)
+
+Fail if **any** layer fails to write:
+
+```ts
+const cache = new CacheStack([
+  new MemoryLayer({ ttl: 60 }),
+  new RedisLayer({ client: redis, ttl: 300 })
+], {
+  writePolicy: 'strict'  // Default
+})
+
+// Redis fails -> entire write fails
+try {
+  await cache.set('user:123', userData)
+} catch (err) {
+  console.error('Write failed: Redis unavailable')
+}
+```
+
+### Best-Effort Mode
+
+Succeed if **at least one** layer writes successfully:
+
+```ts
+const cache = new CacheStack([...], {
+  writePolicy: 'best-effort'
+})
+
+// Redis fails -> memory write succeeds
+await cache.set('user:123', userData)
+// No error thrown
+// Data is cached in memory only
+```
+
+### Use Cases
+
+#### Strict Mode
+
+Use when cache consistency is critical:
+
+```ts
+// Financial data: must be consistent across all layers
+const priceCache = new CacheStack([...], {
+  writePolicy: 'strict'
+})
+```
+
+#### Best-Effort Mode
+
+Use when cache availability is more important than consistency:
+
+```ts
+// Session data: better to cache in memory than not at all
+const sessionCache = new CacheStack([...], {
+  writePolicy: 'best-effort'
+})
+```
+
+### Per-Operation Override
+
+```ts
+// Global: best-effort
+const cache = new CacheStack([...], {
+  writePolicy: 'best-effort'
+})
+
+// Override: strict for critical data
+await cache.set('critical:config', config, {
+  writePolicy: 'strict'  // Override global setting
+})
+```
+
+---
+
+## Write Strategies
+
+Control how writes are executed: immediately (write-through) or batched (write-behind).
+
+### Write-Through (Default)
+
+Write to all layers immediately before returning:
+
+```ts
+const cache = new CacheStack([...], {
+  writeStrategy: 'write-through'  // Default
+})
+
+// Blocks until all layers confirm write
+await cache.set('user:123', userData)
+// -> Write to memory: 0.01ms
+// -> Write to Redis: 0.5ms
+// -> Total: ~0.51ms
+```
+
+### Write-Behind
+
+Queue writes and flush them in batches:
+
+```ts
+const cache = new CacheStack([...], {
+  writeStrategy: 'write-behind',
+  writeBehind: {
+    maxQueueSize: 1000,       // Max pending writes
+    flushIntervalMs: 100,     // Flush every 100ms
+    flushOnOverflow: true     // Flush when queue is full
+  }
+})
+
+// Returns immediately, writes are queued
+await cache.set('user:123', userData)
+// -> Returns in <0.01ms
+// -> Write queued in memory
+// -> Flushed to all layers within 100ms
+```
+
+### Write-Behind Configuration
+
+```ts
+const cache = new CacheStack([...], {
+  writeStrategy: 'write-behind',
+  writeBehind: {
+    maxQueueSize: 1000,       // Maximum queued writes
+    flushIntervalMs: 100,     // Auto-flush interval
+    flushOnOverflow: true,    // Flush when queue is full
+    maxFlushBatchSize: 100    // Max writes per flush
+  }
+})
+```
+
+### Use Cases
+
+#### Write-Through
+
+Use for data that must be persisted immediately:
+
+```ts
+// User payments: write to cache immediately
+const paymentCache = new CacheStack([...], {
+  writeStrategy: 'write-through'
+})
+```
+
+#### Write-Behind
+
+Use for high-volume writes where slight delay is acceptable:
+
+```ts
+// Analytics events: batch writes for performance
+const analyticsCache = new CacheStack([...], {
+  writeStrategy: 'write-behind',
+  writeBehind: {
+    maxQueueSize: 10_000,
+    flushIntervalMs: 1000
+  }
+})
+```
+
+### Manual Flush
+
+Manually trigger write-behind flush:
+
+```ts
+await cache.set('user:123', userData)
+await cache.set('user:456', userData)
+
+// Manually flush pending writes
+await cache.flushWriteBehindQueue()
+```
+
+---
+
+## Fetcher Rate Limiting
+
+Prevent thundering herd problems by limiting concurrent fetcher executions.
+
+### Configuration
+
+```ts
+const cache = new CacheStack([...], {
+  fetcherRateLimit: {
+    maxConcurrent: 10,    // Max 10 concurrent fetchers
+    intervalMs: 1000,     // Reset limit every second
+    scope: 'global'       // 'global' | 'key' | 'fetcher'
+  }
+})
+```
+
+### Scope Options
+
+#### Global Scope
+
+Limit total concurrent fetchers across all keys:
+
+```ts
+const cache = new CacheStack([...], {
+  fetcherRateLimit: {
+    maxConcurrent: 10,
+    scope: 'global'
+  }
+})
+
+// Only 10 fetchers running at once, regardless of key
+await Promise.all([
+  cache.get('key1', fetch1),
+  cache.get('key2', fetch2),
+  // ... 100 more requests
+])
+// -> 10 fetchers run immediately
+// -> 90 wait in queue
+```
+
+#### Key Scope
+
+Limit concurrent fetchers **per key**:
+
+```ts
+const cache = new CacheStack([...], {
+  fetcherRateLimit: {
+    maxConcurrent: 1,
+    scope: 'key'
+  }
+})
+
+// Only 1 fetcher per key
+await Promise.all([
+  cache.get('user:123', fetchUser123),  // Running
+  cache.get('user:123', fetchUser123),  // Queued
+  cache.get('user:456', fetchUser456)   // Running (different key)
+])
+```
+
+#### Fetcher Scope
+
+Limit concurrent fetchers **per unique fetcher function**:
+
+```ts
+const fetchUser = (id: number) => db.findUser(id)
+const fetchPost = (id: number) => db.findPost(id)
+
+const cache = new CacheStack([...], {
+  fetcherRateLimit: {
+    maxConcurrent: 5,
+    scope: 'fetcher'
+  }
+})
+
+// 5 fetchUser calls run concurrently
+// 5 fetchPost calls run concurrently
+await Promise.all([
+  cache.get('user:1', fetchUser),
+  cache.get('user:2', fetchUser),
+  // ... more fetchUser calls
+
+  cache.get('post:1', fetchPost),
+  cache.get('post:2', fetchPost),
+  // ... more fetchPost calls
+])
+```
+
+### Per-Operation Override
+
+```ts
+// Global: no rate limiting
+const cache = new CacheStack([...])
+
+// Override: rate limit specific operation
+await cache.get('expensive-key', fetchExpensiveData, {
+  fetcherRateLimit: {
+    maxConcurrent: 1,
+    scope: 'key'
+  }
+})
+```
+
+### Queue Behavior
+
+When rate limit is reached, requests queue and wait:
+
+```ts
+const cache = new CacheStack([...], {
+  fetcherRateLimit: {
+    maxConcurrent: 2,
+    scope: 'global'
+  }
+})
+
+// First 2 requests start immediately
+const p1 = cache.get('key1', fetch1)  // Running
+const p2 = cache.get('key2', fetch2)  // Running
+
+// Next request queues
+const p3 = cache.get('key3', fetch3)  // Queued
+
+// When p1 or p2 completes, p3 starts
+```
+
+### Combining with Stampede Prevention
+
+Fetcher rate limiting works with stampede prevention:
+
+```ts
+const cache = new CacheStack([...], {
+  stampedePrevention: true,  // Dedupe concurrent requests for same key
+  fetcherRateLimit: {
+    maxConcurrent: 10,
+    scope: 'key'
+  }
+})
+
+// 100 concurrent requests for 'user:123'
+await Promise.all(
+  Array.from({ length: 100 }, () =>
+    cache.get('user:123', () => db.findUser(123))
+  )
+)
+
+// Result:
+// -> 1 fetcher runs (stampede prevention)
+// -> Rate limit not reached (only 1 concurrent fetcher)
+```
+
+---
+
+## Best Practices
+
+### 1. Enable Graceful Degradation
+
+```ts
+// GOOD: Always enable graceful degradation
+const cache = new CacheStack([...], {
+  gracefulDegradation: { retryAfterMs: 10_000 }
+})
+```
+
+### 2. Use Circuit Breakers for Fragile Dependencies
+
+```ts
+// GOOD: Protect fragile upstreams
+const cache = new CacheStack([...], {
+  circuitBreaker: {
+    failureThreshold: 5,
+    cooldownMs: 30_000
+  }
+})
+
+await cache.get('fragile-api-key', fetchFromApi, {
+  circuitBreaker: {
+    failureThreshold: 3,
+    cooldownMs: 10_000
+  }
+})
+```
+
+### 3. Use Best-Effort for Non-Critical Data
+
+```ts
+// GOOD: Use best-effort for non-critical data
+const analyticsCache = new CacheStack([...], {
+  writePolicy: 'best-effort'
+})
+```
+
+### 4. Use Write-Behind for High-Volume Writes
+
+```ts
+// GOOD: Batch high-volume writes
+const eventCache = new CacheStack([...], {
+  writeStrategy: 'write-behind',
+  writeBehind: {
+    maxQueueSize: 10_000,
+    flushIntervalMs: 1000
+  }
+})
+```
+
+### 5. Rate Limit Expensive Operations
+
+```ts
+// GOOD: Rate limit expensive fetchers
+await cache.get('expensive-report', generateReport, {
+  fetcherRateLimit: {
+    maxConcurrent: 1,
+    scope: 'key'
+  }
+})
+```

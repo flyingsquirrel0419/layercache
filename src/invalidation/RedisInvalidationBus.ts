@@ -119,6 +119,7 @@ export class RedisInvalidationBus implements InvalidationBus {
       candidate.operation === 'write' ||
       candidate.operation === 'delete' ||
       candidate.operation === 'invalidate' ||
+      candidate.operation === 'expire' ||
       candidate.operation === 'clear'
     const validKeys =
       candidate.keys === undefined ||

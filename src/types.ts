@@ -223,7 +223,7 @@ export interface InvalidationMessage {
   scope: 'key' | 'keys' | 'clear'
   sourceId: string
   keys?: string[]
-  operation?: 'write' | 'delete' | 'invalidate' | 'clear'
+  operation?: 'write' | 'delete' | 'invalidate' | 'expire' | 'clear'
 }
 
 export interface InvalidationBus {
@@ -418,6 +418,8 @@ export interface CacheStackEvents {
   set: { key: string; kind: string; tags?: string[] }
   /** Fired after one or more keys are deleted. */
   delete: { keys: string[] }
+  /** Fired after one or more keys are marked expired but retained. */
+  expire: { keys: string[] }
   /** Fired when a value is backfilled into a faster layer. */
   backfill: { key: string; layer: string }
   /** Fired when a stale value is returned to the caller. */

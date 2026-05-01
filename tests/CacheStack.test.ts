@@ -56,6 +56,31 @@ class InMemoryInvalidationBus implements InvalidationBus {
   }
 }
 
+async function waitForCondition(
+  assertion: () => Promise<void> | void,
+  timeoutMs = 1_000,
+  pollIntervalMs = 10
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      await assertion()
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+
+  throw new Error('timed out waiting for condition')
+}
+
 describe('CacheStack', () => {
   it('backfills upper layers on lower-layer hits', async () => {
     const redis = new Redis()
@@ -91,6 +116,28 @@ describe('CacheStack', () => {
     await expect(cache.get('user:1:posts')).resolves.toBeNull()
   })
 
+  it('expires tagged entries without deleting stale values', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await cache.set('user:1', { version: 1 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['user:1'] })
+    await cache.expireByTag('user:1')
+
+    await expect(cache.inspect('user:1')).resolves.toEqual(
+      expect.objectContaining({
+        freshTtlSeconds: 0,
+        isStale: true
+      })
+    )
+
+    const fetcher = vi.fn(async () => ({ version: 2 }))
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
+    })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(cache.getMetrics().deletes).toBe(0)
+  })
+
   it('rejects invalid tag input', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
 
@@ -114,6 +161,28 @@ describe('CacheStack', () => {
     await cache.set('user:2', { id: 2 }, { tags: ['users'] })
 
     await expect(cache.invalidateByTags(['users', 'tenant:a'], 'any')).rejects.toThrow(/too many keys/i)
+  })
+
+  it('expires by tags, pattern, and prefix using the existing match rules', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })])
+
+    await cache.mset([
+      { key: 'user:1', value: { id: 1 }, options: { ttl: 60, staleWhileRevalidate: 30, tags: ['users', 'tenant:a'] } },
+      { key: 'user:2', value: { id: 2 }, options: { ttl: 60, staleWhileRevalidate: 30, tags: ['users'] } },
+      { key: 'post:1', value: { id: 1 }, options: { ttl: 60, staleWhileRevalidate: 30 } },
+      { key: 'post:2', value: { id: 2 }, options: { ttl: 60, staleWhileRevalidate: 30 } }
+    ])
+
+    await cache.expireByTags(['users', 'tenant:a'], 'all')
+    await expect(cache.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(cache.inspect('user:2')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    await cache.expireByPattern('post:1')
+    await expect(cache.inspect('post:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(cache.inspect('post:2')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    await cache.expireByPrefix('post:')
+    await expect(cache.inspect('post:2')).resolves.toEqual(expect.objectContaining({ isStale: true }))
   })
 
   it('invalidates by wildcard pattern', async () => {
@@ -183,6 +252,19 @@ describe('CacheStack', () => {
     ])
 
     await expect(cache.invalidateByPrefix('user:1:')).rejects.toThrow(/too many keys/i)
+  })
+
+  it('rejects expiration when too many keys match without partially expiring entries', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationMaxKeys: 1 })
+
+    await cache.mset([
+      { key: 'user:1:profile', value: { id: 1 }, options: { ttl: 60, staleWhileRevalidate: 30 } },
+      { key: 'user:1:posts', value: [{ id: 1 }], options: { ttl: 60, staleWhileRevalidate: 30 } }
+    ])
+
+    await expect(cache.expireByPrefix('user:1:')).rejects.toThrow(/too many keys/i)
+    await expect(cache.inspect('user:1:profile')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+    await expect(cache.inspect('user:1:posts')).resolves.toEqual(expect.objectContaining({ isStale: false }))
   })
 
   it('tracks cache metrics', async () => {
@@ -466,6 +548,44 @@ describe('CacheStack', () => {
     await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
   })
 
+  it('broadcasts tag expiration without deleting remote local stale values', async () => {
+    const redis = new Redis()
+    const bus = new InMemoryInvalidationBus()
+    const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:expire' })
+    const cacheA = new CacheStack(
+      [new MemoryLayer({ ttl: 60 }), new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:expire:' })],
+      { invalidationBus: bus, tagIndex: sharedTagIndex }
+    )
+    const memoryB = new MemoryLayer({ ttl: 60 })
+    const cacheB = new CacheStack([memoryB, new RedisLayer({ client: redis, ttl: 300, prefix: 'cache:expire:' })], {
+      invalidationBus: bus,
+      tagIndex: sharedTagIndex
+    })
+
+    await cacheA.set('user:1', { version: 1 }, { ttl: 60, staleWhileRevalidate: 30, tags: ['user:1'] })
+    await expect(cacheB.get('user:1')).resolves.toEqual({ version: 1 })
+    await expect(memoryB.get('user:1')).resolves.toEqual({ version: 1 })
+
+    await cacheA.expireByTag('user:1')
+
+    await expect(memoryB.get('user:1')).resolves.toEqual({ version: 1 })
+    await expect(cacheB.inspect('user:1')).resolves.toEqual(
+      expect.objectContaining({
+        freshTtlSeconds: 0,
+        isStale: true
+      })
+    )
+
+    const fetcher = vi.fn(async () => ({ version: 2 }))
+    await expect(cacheB.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await waitForCondition(async () => {
+      await expect(cacheB.get('user:1')).resolves.toEqual({ version: 2 })
+    })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
+  })
+
   it('clears remote circuit-breaker state on distributed clear', async () => {
     const bus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack([new MemoryLayer({ ttl: 60 })], { invalidationBus: bus })
@@ -548,6 +668,24 @@ describe('CacheStack', () => {
     await cache.invalidateByTag('session')
 
     expect(cache.getMetrics().deletes).toBe(0)
+  })
+
+  it('removes stale tag entries when expiration finds no stored value', async () => {
+    const tagIndex = {
+      clear: vi.fn(async () => undefined),
+      keysForTag: vi.fn(async () => ['session:missing']),
+      matchPattern: vi.fn(async () => []),
+      remove: vi.fn(async () => undefined),
+      touch: vi.fn(async () => undefined),
+      track: vi.fn(async () => undefined)
+    }
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60 })], { tagIndex: tagIndex as never })
+
+    await cache.expireByTag('session')
+
+    expect(tagIndex.remove).toHaveBeenCalledWith('session:missing')
+    expect(cache.getMetrics().deletes).toBe(0)
+    expect(cache.getMetrics().invalidations).toBe(1)
   })
 
   it('can skip write-triggered invalidation broadcasts', async () => {
