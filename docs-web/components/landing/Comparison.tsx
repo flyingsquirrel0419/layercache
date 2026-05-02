@@ -26,49 +26,46 @@ function Cell({ supported }: { supported: boolean }) {
   if (supported) {
     return (
       <td className="py-3 px-4 text-center">
-        <svg
-          className="inline-block w-5 h-5 text-green-500"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-black px-2 text-xs font-medium text-white">
+          yes
+        </span>
       </td>
     );
   }
   return (
-    <td className="py-3 px-4 text-center text-text-secondary/30">&mdash;</td>
+    <td className="px-4 py-3 text-center text-[#4b4b4b]">&mdash;</td>
   );
 }
 
 export function Comparison() {
   return (
-    <AnimatedSection className="py-24 px-6">
-      <div className="max-w-5xl mx-auto">
-        <h2 className="text-3xl md:text-4xl font-bold text-center mb-12">
-          How Layercache Compares
-        </h2>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+    <AnimatedSection className="bg-white px-4 py-20 text-black sm:px-6">
+      <div className="uber-container">
+        <div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+          <div>
+            <p className="mb-3 text-sm font-medium text-[#4b4b4b]">Comparison</p>
+            <h2 className="max-w-2xl text-4xl font-bold leading-[1.22]">
+              A narrower API with a wider production surface.
+            </h2>
+          </div>
+        </div>
+        <div className="uber-card overflow-x-auto">
+          <table className="w-full min-w-[760px] border-collapse">
             <thead>
-              <tr className="sticky top-0 bg-surface">
-                <th className="py-3 px-4 text-left text-sm font-semibold w-40">
+              <tr className="sticky top-0 border-b border-black bg-white">
+                <th className="w-48 px-4 py-4 text-left text-sm font-bold">
                   Feature
                 </th>
-                <th className="py-3 px-4 text-left text-sm font-semibold w-28 text-accent font-bold">
+                <th className="w-32 px-4 py-4 text-left text-sm font-bold">
                   Layercache
                 </th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">
+                <th className="px-4 py-4 text-left text-sm font-bold">
                   node-cache-manager
                 </th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">
+                <th className="px-4 py-4 text-left text-sm font-bold">
                   keyv
                 </th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">
+                <th className="px-4 py-4 text-left text-sm font-bold">
                   cacheable
                 </th>
               </tr>
@@ -77,9 +74,9 @@ export function Comparison() {
               {features.map((feature) => (
                 <tr
                   key={feature.name}
-                  className="border-b border-border hover:bg-surface/50"
+                  className="border-b border-[#e2e2e2] last:border-b-0 hover:bg-[#f3f3f3]"
                 >
-                  <td className="py-3 px-4 text-sm">{feature.name}</td>
+                  <td className="px-4 py-3 text-sm font-medium">{feature.name}</td>
                   <Cell supported={feature.layercache} />
                   <Cell supported={feature.cacheManager} />
                   <Cell supported={feature.keyv} />

@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import ThemeToggle from "@/components/ui/ThemeToggle";
 import Link from "next/link";
+import { BookIcon, GithubIcon, TerminalIcon } from "@/components/ui/Icons";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -19,65 +20,38 @@ export function Navbar() {
     <nav
       className={`sticky top-0 z-50 transition-all duration-300 ${
         scrolled
-          ? "bg-background/80 backdrop-blur-lg border-b border-border"
-          : ""
+          ? "bg-white/95 shadow-[rgba(0,0,0,0.12)_0px_4px_16px_0px]"
+          : "bg-white"
       }`}
     >
-      <div className="max-w-6xl mx-auto flex items-center justify-between h-16 px-6">
-        {/* Logo + Name */}
-        <Link href="/" className="flex items-center gap-2">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <rect
-              x="2"
-              y="16"
-              width="24"
-              height="6"
-              rx="2"
-              fill="#6366f1"
-              opacity="0.9"
-            />
-            <rect
-              x="4"
-              y="9"
-              width="20"
-              height="6"
-              rx="2"
-              fill="#6366f1"
-              opacity="0.7"
-            />
-            <rect
-              x="6"
-              y="2"
-              width="16"
-              height="6"
-              rx="2"
-              fill="#6366f1"
-              opacity="0.5"
-            />
-          </svg>
-          <span className="font-bold text-lg">Layercache</span>
+      <div className="uber-container flex h-16 items-center justify-between px-4 sm:px-6">
+        <Link href="/" className="flex items-center gap-3" aria-label="Layercache home">
+          <img src="/logo.png" alt="" className="h-7 w-24 object-contain object-left" />
+          <span className="text-lg font-bold leading-none text-text-primary">Layercache</span>
         </Link>
 
-        {/* Desktop nav links */}
-        <div className="hidden md:flex items-center gap-6">
+        <div className="hidden md:flex items-center gap-2">
           <Link
             href="/docs"
-            className="text-text-secondary hover:text-text-primary transition-colors text-sm"
+            className="uber-pill flex items-center gap-2 bg-[#efefef] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e2e2e2]"
           >
+            <BookIcon className="h-4 w-4" />
             Docs
           </Link>
           <Link
             href="/playground"
-            className="text-text-secondary hover:text-text-primary transition-colors text-sm"
+            className="uber-pill flex items-center gap-2 bg-[#efefef] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e2e2e2]"
           >
+            <TerminalIcon className="h-4 w-4" />
             Playground
           </Link>
           <a
             href="https://github.com/flyingsquirrel0419/layercache"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-text-secondary hover:text-text-primary transition-colors text-sm"
+            className="uber-pill flex items-center gap-2 bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2a2a2a]"
           >
+            <GithubIcon className="h-4 w-4" />
             GitHub
           </a>
           <ThemeToggle />
@@ -88,7 +62,7 @@ export function Navbar() {
           <ThemeToggle />
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="p-2 text-text-secondary hover:text-text-primary"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-[#efefef] text-black transition-colors hover:bg-[#e2e2e2]"
             aria-label="Toggle menu"
           >
             <svg
@@ -113,26 +87,29 @@ export function Navbar() {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="md:hidden border-b border-border bg-background/95 backdrop-blur-lg px-6 py-4 space-y-3"
+          className="md:hidden bg-white px-6 py-4 shadow-[rgba(0,0,0,0.12)_0px_4px_16px_0px]"
         >
           <Link
             href="/docs"
-            className="block text-text-secondary hover:text-text-primary"
+            className="mb-2 flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-3 text-sm font-medium text-black"
           >
+            <BookIcon className="h-4 w-4" />
             Docs
           </Link>
           <Link
             href="/playground"
-            className="block text-text-secondary hover:text-text-primary"
+            className="mb-2 flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-3 text-sm font-medium text-black"
           >
+            <TerminalIcon className="h-4 w-4" />
             Playground
           </Link>
           <a
             href="https://github.com/flyingsquirrel0419/layercache"
             target="_blank"
             rel="noopener noreferrer"
-            className="block text-text-secondary hover:text-text-primary"
+            className="flex items-center gap-2 rounded-full bg-black px-4 py-3 text-sm font-medium text-white"
           >
+            <GithubIcon className="h-4 w-4" />
             GitHub
           </a>
         </motion.div>

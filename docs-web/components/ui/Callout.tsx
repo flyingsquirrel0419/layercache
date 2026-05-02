@@ -12,17 +12,17 @@ const calloutConfig: Record<
 > = {
   info: {
     border: "border-blue-500",
-    bg: "bg-blue-50 dark:bg-blue-500/10",
+    bg: "bg-blue-50",
     icon: "\u2139\uFE0F",
   },
   warning: {
     border: "border-amber-500",
-    bg: "bg-amber-50 dark:bg-amber-500/10",
+    bg: "bg-amber-50",
     icon: "\u26A0\uFE0F",
   },
   tip: {
     border: "border-green-500",
-    bg: "bg-green-50 dark:bg-green-500/10",
+    bg: "bg-green-50",
     icon: "\uD83D\uDCA1",
   },
 };

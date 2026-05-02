@@ -2,9 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { CodeEditor } from "./CodeEditor";
 import { ResultPanel } from "./ResultPanel";
 import { PresetSelector } from "./PresetSelector";
+import { BookIcon, GithubIcon, HomeIcon, PlayIcon } from "@/components/ui/Icons";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { presets } from "@/lib/playground/presets";
 import {
   RUN_TIMEOUT_MS,
@@ -124,39 +127,104 @@ export function PlaygroundClient() {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="min-h-screen bg-background"
+      className="min-h-screen bg-white text-black"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <h1 className="text-lg font-bold text-text-primary">Playground</h1>
-        <button
-          onClick={handleRun}
-          disabled={isRunning}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            isRunning
-              ? "bg-surface text-text-secondary cursor-not-allowed"
-              : "bg-accent text-white hover:opacity-90"
-          }`}
-        >
-          {isRunning ? "Running..." : "Run"}
-        </button>
-      </div>
+      <header className="sticky top-0 z-40 bg-white shadow-[rgba(0,0,0,0.12)_0px_4px_16px_0px]">
+        <div className="uber-container flex h-16 items-center justify-between px-4 sm:px-6">
+          <Link href="/" className="flex items-center gap-3" aria-label="Layercache home">
+            <img src="/logo.png" alt="" className="h-7 w-24 object-contain object-left" />
+            <span className="text-lg font-bold leading-none">Playground</span>
+          </Link>
 
-      {/* Preset Selector */}
-      <PresetSelector activeId={activePreset} onSelect={handlePresetSelect} />
+          <div className="hidden items-center gap-2 md:flex">
+            <Link
+              href="/"
+              className="flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e2e2e2]"
+            >
+              <HomeIcon className="h-4 w-4" />
+              Home
+            </Link>
+            <Link
+              href="/docs"
+              className="flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e2e2e2]"
+            >
+              <BookIcon className="h-4 w-4" />
+              Docs
+            </Link>
+            <a
+              href="https://github.com/flyingsquirrel0419/layercache"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e2e2e2]"
+            >
+              <GithubIcon className="h-4 w-4" />
+              GitHub
+            </a>
+          </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 h-[calc(100vh-8rem)]">
-        {/* Code Editor */}
-        <div className="border-r border-border p-0">
-          <CodeEditor value={code} onChange={setCode} />
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <button
+              onClick={handleRun}
+              disabled={isRunning}
+              className={`flex min-h-11 items-center gap-2 rounded-full px-5 py-2 font-medium transition-colors ${
+                isRunning
+                  ? "cursor-not-allowed bg-[#efefef] text-[#4b4b4b]"
+                  : "bg-black text-white hover:bg-[#2a2a2a]"
+              }`}
+            >
+              <PlayIcon className="h-4 w-4" />
+              {isRunning ? "Running..." : "Run"}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="uber-container px-4 py-6 sm:px-6">
+        <div className="mb-5">
+          <div>
+            <div className="mb-3 flex gap-2 md:hidden">
+              <Link href="/" className="flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-2 text-sm font-medium text-black">
+                <HomeIcon className="h-4 w-4" />
+                Home
+              </Link>
+              <Link href="/docs" className="flex items-center gap-2 rounded-full bg-[#efefef] px-4 py-2 text-sm font-medium text-black">
+                <BookIcon className="h-4 w-4" />
+                Docs
+              </Link>
+            </div>
+            <p className="text-sm font-medium text-[#4b4b4b]">Interactive cache lab</p>
+            <h1 className="mt-1 text-4xl font-bold leading-[1.22]">Run Layercache examples in-browser.</h1>
+          </div>
+          <div className="mt-5 max-w-full">
+            <PresetSelector activeId={activePreset} onSelect={handlePresetSelect} />
+          </div>
         </div>
 
-        {/* Result Panel */}
-        <div className="p-0">
-          <ResultPanel logs={logs} layerInfo={layerInfo} />
-        </div>
-      </div>
+        <section className="grid overflow-hidden rounded-xl border border-black bg-white shadow-[rgba(0,0,0,0.12)_0px_4px_16px_0px] lg:grid-cols-2">
+          <div className="border-b border-black lg:border-b-0 lg:border-r">
+            <div className="flex min-h-14 items-center justify-between border-b border-black px-5">
+              <div>
+                <p className="text-sm font-bold">Code</p>
+                <p className="text-xs text-[#4b4b4b]">Edit a preset, then run it in the worker sandbox.</p>
+              </div>
+              <span className="rounded-full bg-[#efefef] px-3 py-1 text-xs font-medium text-black">editor</span>
+            </div>
+            <CodeEditor value={code} onChange={setCode} />
+          </div>
+
+          <div>
+            <div className="flex min-h-14 items-center justify-between border-b border-black px-5">
+              <div>
+                <p className="text-sm font-bold">Output</p>
+                <p className="text-xs text-[#4b4b4b]">Console logs and layer state after execution.</p>
+              </div>
+              <span className="rounded-full bg-[#efefef] px-3 py-1 text-xs font-medium text-black">result</span>
+            </div>
+            <ResultPanel logs={logs} layerInfo={layerInfo} />
+          </div>
+        </section>
+      </main>
     </motion.div>
   );
 }
