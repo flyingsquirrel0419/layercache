@@ -1,5 +1,6 @@
 import { AnimatedSection } from "./AnimatedSection";
 import Button from "@/components/ui/Button";
+import { GithubIcon } from "@/components/ui/Icons";
 
 export function CTA() {
   return (
@@ -21,10 +22,11 @@ export function CTA() {
               Get started
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               href="https://github.com/flyingsquirrel0419/layercache"
-              className="bg-[#1f1f1f] text-white hover:bg-[#2a2a2a]"
+              className="gap-2"
             >
+              <GithubIcon className="h-4 w-4" />
               GitHub
             </Button>
           </div>

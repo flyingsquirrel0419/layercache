@@ -124,10 +124,6 @@ body {
   margin: 2rem 0;
 }
 
-.dark img[src="/logo.png"] {
-  filter: invert(1);
-}
-
 .dark .bg-white,
 .dark .bg-white\/95 {
   background-color: var(--color-background) !important;
@@ -142,16 +138,8 @@ body {
   background-color: var(--color-chip) !important;
 }
 
-.dark .bg-black {
-  background-color: var(--color-text-primary) !important;
-}
-
 .dark .text-black {
   color: var(--color-text-primary) !important;
-}
-
-.dark .text-white {
-  color: var(--color-background) !important;
 }
 
 .dark .text-\[\#4b4b4b\] {

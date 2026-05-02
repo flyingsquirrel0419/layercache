@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
+import { CheckIcon, CopyIcon } from "@/components/ui/Icons";
 
 const COMMANDS = [
   "npm install layercache",
@@ -9,7 +11,38 @@ const COMMANDS = [
   "yarn add layercache",
 ];
 
+async function writeClipboardText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      document.execCommand("copy");
+      return true;
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+}
+
 export function Hero() {
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+
+  const copyCommand = async (command: string) => {
+    if (await writeClipboardText(command)) {
+      setCopiedCommand(command);
+      window.setTimeout(() => setCopiedCommand(null), 1600);
+    }
+  };
+
   return (
     <section className="bg-white px-4 pb-16 pt-10 text-black sm:px-6 lg:pb-24">
       <div className="uber-container grid items-center gap-10 lg:grid-cols-[1.02fr_0.98fr]">
@@ -81,7 +114,19 @@ export function Hero() {
                   className="flex min-h-11 items-center justify-between rounded-lg border border-black px-4 text-sm"
                 >
                   <code className="font-mono">{command}</code>
-                  <span className="text-[#4b4b4b]">copy</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCommand(command)}
+                    className="inline-flex min-h-9 items-center gap-2 rounded-full bg-[#efefef] px-3 text-xs font-medium text-black transition-colors hover:bg-[#e2e2e2]"
+                    aria-label={`Copy ${command}`}
+                  >
+                    {copiedCommand === command ? (
+                      <CheckIcon className="h-4 w-4" />
+                    ) : (
+                      <CopyIcon className="h-4 w-4" />
+                    )}
+                    {copiedCommand === command ? "copied" : "copy"}
+                  </button>
                 </div>
               ))}
             </div>
