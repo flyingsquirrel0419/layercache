@@ -233,6 +233,23 @@ describe('CacheStack', () => {
     await expect(cache.inspect('post:2')).resolves.toEqual(expect.objectContaining({ isStale: true }))
   })
 
+  it('treats empty batch invalidations and unmatched expirations as no-ops', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await cache.set('user:1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000, tags: ['users'] })
+
+    await cache.invalidateByTags([])
+    await cache.expireByTags([])
+    await cache.expireByKeys([])
+    await cache.expireByPattern('missing:*')
+
+    await expect(cache.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    cache.resetMetrics()
+    expect(cache.getMetrics().sets).toBe(0)
+    expect(cache.getMetrics().invalidations).toBe(0)
+  })
+
   it('invalidates by wildcard pattern', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 
