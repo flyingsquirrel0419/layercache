@@ -7,10 +7,15 @@ interface CacheStatsHandlerOptions {
    * future release.
    */
   allowPublicAccess?: boolean
+  /** Authorize requests before returning cache stats. Required unless `allowPublicAccess` is true. */
   authorize?: (request: unknown) => boolean | Promise<boolean>
+  /** Status code returned when a request is unauthorized. Defaults to 403. */
   unauthorizedStatusCode?: number
 }
 
+/**
+ * Creates a small Node HTTP handler that returns `cache.getStats()` as JSON.
+ */
 export function createCacheStatsHandler(cache: CacheStack, options: CacheStatsHandlerOptions = {}) {
   if (options.allowPublicAccess === true) {
     console.warn(
