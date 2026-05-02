@@ -53,22 +53,32 @@ console.log("Layer info:", JSON.stringify(cache.getLayerInfo(), null, 2));`,
     code: `// Simulating stale-while-revalidate pattern
 const { cache } = createPlaygroundCache();
 let fetchCount = 0;
+const cacheOptions = { ttl: 1_000, staleWhileRevalidate: 10_000 };
 
 // Initial fetch
 const data1 = await cache.get("dashboard:metrics", async () => {
   fetchCount++;
   console.log(\`Fetch #\${fetchCount}: Loading metrics...\`);
   return { views: 1250, users: 89, revenue: 45000 };
-}, 10);
+}, cacheOptions);
 console.log("First load:", JSON.stringify(data1));
 
-// Second request - should hit cache
-const data2 = await cache.get("dashboard:metrics", async () => {
+// Let the fresh TTL expire, but keep the stale window open
+await new Promise(r => setTimeout(r, 1100));
+
+// This returns stale data immediately while the refresh runs
+const stale = await cache.get("dashboard:metrics", async () => {
+  await new Promise(r => setTimeout(r, 150));
   fetchCount++;
   console.log(\`Fetch #\${fetchCount}: Refreshing metrics...\`);
   return { views: 1300, users: 92, revenue: 47000 };
-}, 10);
-console.log("Cache hit:", JSON.stringify(data2));
+}, cacheOptions);
+console.log("Stale hit while refresh runs:", JSON.stringify(stale));
+
+// Wait for the background refresh, then read the updated value
+await new Promise(r => setTimeout(r, 250));
+const refreshed = await cache.get("dashboard:metrics");
+console.log("Fresh after revalidate:", JSON.stringify(refreshed));
 
 console.log("Total fetcher calls:", fetchCount);
 console.log("Stats:", JSON.stringify(cache.getStats()));`,
