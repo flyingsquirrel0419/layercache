@@ -28,6 +28,10 @@ class ErrorTransform extends Transform {
 }
 
 class StringTransform extends Transform {
+  constructor() {
+    super({ readableObjectMode: true })
+  }
+
   override _transform(
     _chunk: Buffer,
     _encoding: BufferEncoding,

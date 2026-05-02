@@ -921,7 +921,6 @@ export class CacheStack extends EventEmitter {
         await Promise.allSettled(
           this.reader.getAllRefreshPromises().map((promise) => {
             let timer: ReturnType<typeof setTimeout> | undefined
-            /* v8 ignore start -- timeout fallback for still-running background refreshes during shutdown */
             return Promise.race([
               promise,
               new Promise<void>((resolve) => {
@@ -931,7 +930,6 @@ export class CacheStack extends EventEmitter {
             ]).finally(() => {
               if (timer) clearTimeout(timer)
             })
-            /* v8 ignore stop */
           })
         )
         this.maintenance.disposeWriteBehindTimer()
@@ -963,7 +961,6 @@ export class CacheStack extends EventEmitter {
     const clearEpoch = this.maintenance.currentClearEpoch()
     const keyEpoch = this.maintenance.currentKeyEpoch(key)
     await this.layerWriter.writeAcrossLayers(key, kind, value, resolvedOptions)
-    /* v8 ignore next -- race guard covered through batch invalidation path */
     if (this.maintenance.isWriteOutdated(key, clearEpoch, keyEpoch)) {
       return
     }
@@ -989,13 +986,11 @@ export class CacheStack extends EventEmitter {
       options: this.resolveContextOptions(entry.key, 'value', entry.value, entry.options)
     }))
     const { clearEpoch, entryEpochs } = await this.layerWriter.writeBatch(resolvedEntries)
-    /* v8 ignore next -- race guard for clear during batch writes */
     if (clearEpoch !== this.maintenance.currentClearEpoch()) {
       return
     }
 
     for (const entry of resolvedEntries) {
-      /* v8 ignore next -- race guard for per-key invalidation during batch writes */
       if (this.maintenance.isWriteOutdated(entry.key, clearEpoch, entryEpochs.get(entry.key))) {
         continue
       }
@@ -1226,14 +1221,14 @@ export class CacheStack extends EventEmitter {
           timer.unref?.()
         })
       ])
-      /* v8 ignore next -- Promise.race returns the wrapped observer result unless the timeout rejects */
+      /* v8 ignore next -- Promise.race only resolves the wrapped observer object; timeout rejects instead */
       if (result !== null && result !== undefined && typeof result === 'object' && 'kind' in result) {
         if (result.kind === 'error') {
           throw result.error
         }
         return result.value
       }
-      /* v8 ignore next -- Promise.race returns the wrapped observer result unless the timeout rejects */
+      /* v8 ignore next -- Promise.race only resolves the wrapped observer object; timeout rejects instead */
       return result
     } finally {
       /* v8 ignore next -- timer is assigned synchronously when timeoutMs > 0 */

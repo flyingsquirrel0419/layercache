@@ -337,7 +337,6 @@ export class RedisLayer implements CacheLayer {
       try {
         const value = serializer.deserialize<T>(decodedPayload)
         if (serializer !== this.primarySerializer()) {
-          /* v8 ignore next -- rewrite failures are intentionally non-fatal during legacy reads */
           await this.rewriteWithPrimarySerializer(key, value).catch(() => undefined)
         }
         return value
@@ -456,7 +455,6 @@ export class RedisLayer implements CacheLayer {
       }
 
       decompressor.on('data', (chunk: Buffer | string) => {
-        /* v8 ignore next -- zlib streams emit Buffer chunks in normal operation */
         const normalized = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
         totalBytes += normalized.byteLength
         if (totalBytes > this.decompressionMaxBytes) {
@@ -518,7 +516,6 @@ export class RedisLayer implements CacheLayer {
     return Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        /* v8 ignore next -- timeout rejection path is covered by slow-command tests */
         timer = setTimeout(() => {
           reject(new Error(`RedisLayer command ${operation} timed out after ${this.commandTimeoutMs}ms.`))
         }, this.commandTimeoutMs)
