@@ -67,6 +67,22 @@ export class CacheNamespace {
     await this.trackMetrics(() => this.cache.mdelete(keys.map((k) => this.qualify(k))))
   }
 
+  async invalidateByKey(key: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.invalidateByKey(this.qualify(key)))
+  }
+
+  async invalidateByKeys(keys: string[]): Promise<void> {
+    await this.trackMetrics(() => this.cache.invalidateByKeys(keys.map((k) => this.qualify(k))))
+  }
+
+  async expireByKey(key: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByKey(this.qualify(key)))
+  }
+
+  async expireByKeys(keys: string[]): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByKeys(keys.map((k) => this.qualify(k))))
+  }
+
   async clear(): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByPrefix(this.prefix))
   }

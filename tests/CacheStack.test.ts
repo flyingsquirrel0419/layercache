@@ -138,6 +138,50 @@ describe('CacheStack', () => {
     expect(cache.getMetrics().deletes).toBe(0)
   })
 
+  it('invalidates exact keys without matching similarly prefixed keys', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await cache.mset([
+      { key: 'user:1', value: { id: 1 } },
+      { key: 'user:1:posts', value: [{ id: 9 }] },
+      { key: 'post:1', value: { id: 1 } }
+    ])
+
+    await cache.invalidateByKey('user:1')
+    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1:posts')).resolves.toEqual([{ id: 9 }])
+
+    await cache.invalidateByKeys(['user:1:posts', 'post:1'])
+    await expect(cache.get('user:1:posts')).resolves.toBeNull()
+    await expect(cache.get('post:1')).resolves.toBeNull()
+  })
+
+  it('expires exact keys without deleting stale values or touching similarly prefixed keys', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await cache.mset([
+      { key: 'user:1', value: { version: 1 }, options: { ttl: 60_000, staleWhileRevalidate: 30_000 } },
+      { key: 'user:1:posts', value: [{ version: 1 }], options: { ttl: 60_000, staleWhileRevalidate: 30_000 } },
+      { key: 'post:1', value: { version: 1 }, options: { ttl: 60_000, staleWhileRevalidate: 30_000 } }
+    ])
+
+    await cache.expireByKey('user:1')
+
+    await expect(cache.inspect('user:1')).resolves.toEqual(expect.objectContaining({ freshTtlMs: 0, isStale: true }))
+    await expect(cache.inspect('user:1:posts')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    const fetcher = vi.fn(async () => ({ version: 2 }))
+    await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
+    await waitForCondition(async () => {
+      await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
+    })
+
+    await cache.expireByKeys(['user:1:posts', 'post:1'])
+    await expect(cache.inspect('user:1:posts')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(cache.inspect('post:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    expect(cache.getMetrics().deletes).toBe(0)
+  })
+
   it('rejects invalid tag input', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 

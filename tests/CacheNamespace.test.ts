@@ -45,6 +45,42 @@ describe('CacheNamespace', () => {
     expect(await ns.get('2')).toBeNull()
   })
 
+  it('invalidates exact keys within the namespace only', async () => {
+    const cache = makeCache()
+    const tenantA = cache.namespace('tenant-a')
+    const tenantB = cache.namespace('tenant-b')
+
+    await tenantA.set('user:1', { id: 1 })
+    await tenantA.set('user:1:posts', [{ id: 9 }])
+    await tenantB.set('user:1', { id: 2 })
+
+    await tenantA.invalidateByKey('user:1')
+    await expect(tenantA.get('user:1')).resolves.toBeNull()
+    await expect(tenantA.get('user:1:posts')).resolves.toEqual([{ id: 9 }])
+    await expect(tenantB.get('user:1')).resolves.toEqual({ id: 2 })
+
+    await tenantA.invalidateByKeys(['user:1:posts'])
+    await expect(tenantA.get('user:1:posts')).resolves.toBeNull()
+  })
+
+  it('expires exact keys within the namespace only', async () => {
+    const cache = makeCache()
+    const tenantA = cache.namespace('tenant-a')
+    const tenantB = cache.namespace('tenant-b')
+
+    await tenantA.set('user:1', { id: 1 }, { ttl: 60_000, staleWhileRevalidate: 30_000 })
+    await tenantA.set('user:1:posts', [{ id: 9 }], { ttl: 60_000, staleWhileRevalidate: 30_000 })
+    await tenantB.set('user:1', { id: 2 }, { ttl: 60_000, staleWhileRevalidate: 30_000 })
+
+    await tenantA.expireByKey('user:1')
+    await expect(tenantA.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+    await expect(tenantA.inspect('user:1:posts')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+    await expect(tenantB.inspect('user:1')).resolves.toEqual(expect.objectContaining({ isStale: false }))
+
+    await tenantA.expireByKeys(['user:1:posts'])
+    await expect(tenantA.inspect('user:1:posts')).resolves.toEqual(expect.objectContaining({ isStale: true }))
+  })
+
   it('has() returns true when key exists', async () => {
     const ns = makeCache().namespace('items')
     await ns.set('x', 1)
