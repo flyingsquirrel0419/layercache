@@ -1,6 +1,22 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
 
+const SENSITIVE_QUERY_PARAMETERS = new Set([
+  'access_token',
+  'auth',
+  'authorization',
+  'code',
+  'id_token',
+  'jwt',
+  'password',
+  'refresh_token',
+  'secret',
+  'session',
+  'sessionid',
+  'session_id',
+  'token'
+])
+
 interface HonoLikeRequest {
   method?: string
   url?: string
@@ -75,6 +91,11 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
 function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url, 'http://localhost')
+    for (const name of [...parsed.searchParams.keys()]) {
+      if (SENSITIVE_QUERY_PARAMETERS.has(name.toLowerCase())) {
+        parsed.searchParams.delete(name)
+      }
+    }
     parsed.searchParams.sort()
     return parsed.pathname + parsed.search
   } catch {

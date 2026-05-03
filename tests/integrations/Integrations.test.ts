@@ -533,6 +533,22 @@ describe('createExpressCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
+  it('excludes sensitive query parameters from implicit express cache keys', async () => {
+    const cache = makeCache()
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    const response = {
+      setHeader: vi.fn(),
+      json: vi.fn((body: unknown) => body)
+    }
+
+    await middleware({ method: 'GET', url: '/users?token=secret&b=2&code=oauth&a=1&session=abc' }, response, () => {
+      response.json({ ok: true })
+    })
+
+    expect(setSpy).toHaveBeenCalledWith('GET:/users?a=1&b=2', { ok: true }, expect.any(Object))
+  })
+
   it('falls back to res.end on cached hits when res.json is unavailable', async () => {
     const cache = makeCache()
     const middleware = createExpressCacheMiddleware(cache, {
@@ -787,6 +803,23 @@ describe('createHonoCacheMiddleware', () => {
     await run()
 
     expect(calls).toBe(1)
+  })
+
+  it('excludes sensitive query parameters from implicit hono cache keys', async () => {
+    const cache = makeCache()
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    const context = {
+      req: { method: 'GET', path: '/users?token=secret&b=2&code=oauth&a=1&session=abc' },
+      header: vi.fn(),
+      json: vi.fn((body) => body)
+    }
+
+    await middleware(context, async () => {
+      context.json({ ok: true })
+    })
+
+    expect(setSpy).toHaveBeenCalledWith('GET:/users?a=1&b=2', { ok: true }, expect.any(Object))
   })
 
   it('defaults hono requests without a method to GET and falls back to req.url when path is missing', async () => {

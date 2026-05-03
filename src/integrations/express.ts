@@ -20,6 +20,22 @@ interface ExpressLikeResponse {
 
 type NextFunction = (error?: unknown) => void
 
+const SENSITIVE_QUERY_PARAMETERS = new Set([
+  'access_token',
+  'auth',
+  'authorization',
+  'code',
+  'id_token',
+  'jwt',
+  'password',
+  'refresh_token',
+  'secret',
+  'session',
+  'sessionid',
+  'session_id',
+  'token'
+])
+
 interface ExpressCacheMiddlewareOptions extends CacheGetOptions {
   /**
    * Resolves a cache key from the incoming request. Defaults to
@@ -106,6 +122,11 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
 function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url, 'http://localhost')
+    for (const name of [...parsed.searchParams.keys()]) {
+      if (SENSITIVE_QUERY_PARAMETERS.has(name.toLowerCase())) {
+        parsed.searchParams.delete(name)
+      }
+    }
     parsed.searchParams.sort()
     return parsed.pathname + parsed.search
   } catch {
