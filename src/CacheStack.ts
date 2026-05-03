@@ -477,6 +477,59 @@ export class CacheStack extends EventEmitter {
   }
 
   /**
+   * Alias for `delete(key)` that matches the `invalidateBy*` API family.
+   */
+  async invalidateByKey(key: string): Promise<void> {
+    await this.delete(key)
+  }
+
+  /**
+   * Alias for `mdelete(keys)` that matches the `invalidateBy*` API family.
+   */
+  async invalidateByKeys(keys: string[]): Promise<void> {
+    await this.mdelete(keys)
+  }
+
+  /**
+   * Marks one exact key expired without deleting its stale value.
+   */
+  async expireByKey(key: string): Promise<void> {
+    await this.observeOperation('layercache.expire_by_key', { 'layercache.key': String(key ?? '') }, async () => {
+      const normalizedKey = this.qualifyKey(validateCacheKey(key))
+      await this.awaitStartup('expireByKey')
+      await this.expireKeys([normalizedKey])
+      await this.publishInvalidation({
+        scope: 'key',
+        keys: [normalizedKey],
+        sourceId: this.instanceId,
+        operation: 'expire'
+      })
+    })
+  }
+
+  /**
+   * Marks multiple exact keys expired without deleting their stale values.
+   */
+  async expireByKeys(keys: string[]): Promise<void> {
+    await this.observeOperation('layercache.expire_by_keys', undefined, async () => {
+      if (keys.length === 0) {
+        return
+      }
+
+      const normalizedKeys = keys.map((k) => validateCacheKey(k))
+      const cacheKeys = normalizedKeys.map((key) => this.qualifyKey(key))
+      await this.awaitStartup('expireByKeys')
+      await this.expireKeys(cacheKeys)
+      await this.publishInvalidation({
+        scope: 'keys',
+        keys: cacheKeys,
+        sourceId: this.instanceId,
+        operation: 'expire'
+      })
+    })
+  }
+
+  /**
    * Reads many keys concurrently. Simple reads use layer-level bulk fast paths;
    * entries with fetchers or options fall back to per-entry read-through logic.
    */

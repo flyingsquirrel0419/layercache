@@ -160,11 +160,11 @@ Concurrent multi-key write.
 
 #### `cache.delete(key): Promise<void>`
 
-Delete from all layers.
+Delete one exact key from all layers.
 
 #### `cache.mdelete(keys): Promise<void>`
 
-Bulk delete.
+Bulk delete exact keys.
 
 #### `cache.clear(): Promise<void>`
 
@@ -173,6 +173,22 @@ Delete all keys from all layers.
 ---
 
 ### Invalidation
+
+#### `cache.invalidateByKey(key): Promise<void>`
+
+Alias for `cache.delete(key)`. Use it when you want the `invalidateBy*` naming style for one exact key.
+
+```ts
+await cache.invalidateByKey('user:123') // deletes only user:123
+```
+
+#### `cache.invalidateByKeys(keys): Promise<void>`
+
+Alias for `cache.mdelete(keys)`. Deletes only the exact keys provided.
+
+```ts
+await cache.invalidateByKeys(['user:123', 'user:123:posts'])
+```
 
 #### `cache.invalidateByTag(tag): Promise<void>`
 
@@ -208,6 +224,22 @@ Hierarchical prefix-based invalidation. Prefer this over glob when keys are hier
 
 ```ts
 await cache.invalidateByPrefix('user:123:') // deletes user:123:profile, user:123:posts, ...
+```
+
+#### `cache.expireByKey(key): Promise<void>`
+
+Marks one exact key as no longer fresh while keeping the cached value available for stale-while-revalidate / stale-if-error windows.
+
+```ts
+await cache.expireByKey('user:123') // expires only user:123
+```
+
+#### `cache.expireByKeys(keys): Promise<void>`
+
+Expires only the exact keys provided without deleting their stored values.
+
+```ts
+await cache.expireByKeys(['user:123', 'user:123:posts'])
 ```
 
 #### `cache.expireByTag(tag): Promise<void>`
@@ -564,6 +596,13 @@ await cache.set('user:123', user, { tags: ['user', 'user:123'] })
 await cache.invalidateByTag('user:123')
 ```
 
+### Exact-Key Invalidation
+
+```ts
+await cache.invalidateByKey('user:123') // alias for delete()
+await cache.invalidateByKeys(['user:123', 'user:456']) // alias for mdelete()
+```
+
 ### Batch Tag Invalidation
 
 ```ts
@@ -589,7 +628,9 @@ Use the `expireBy*` counterparts when stale serving is preferable to removing va
 
 ```ts
 await cache.expireByTag('user:123')
+await cache.expireByKey('user:123')
 await cache.expireByTags(['tenant:a', 'users'], 'all')
+await cache.expireByKeys(['user:123', 'user:456'])
 await cache.expireByPattern('user:*')
 await cache.expireByPrefix('user:123:')
 ```
