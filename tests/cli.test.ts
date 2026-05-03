@@ -3,11 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // We test the exported `main` function with mocked ioredis
 let connectImpl = async () => undefined
 let scanImpl = async () => ['0', ['key:1', 'key:2']] as [string, string[]]
+let connectCalls = 0
 
 vi.mock('ioredis', () => {
   function makeClient() {
     return {
-      connect: async () => connectImpl(),
+      connect: async () => {
+        connectCalls += 1
+        return connectImpl()
+      },
       scan: async () => scanImpl(),
       del: async () => 2,
       getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
@@ -36,10 +40,13 @@ vi.mock('../src/invalidation/RedisTagIndex', () => ({
 describe('CLI — main()', () => {
   let stdoutOutput: string[]
   let stderrOutput: string[]
+  let originalNodeEnv: string | undefined
 
   beforeEach(() => {
     connectImpl = async () => undefined
     scanImpl = async () => ['0', ['key:1', 'key:2']]
+    connectCalls = 0
+    originalNodeEnv = process.env.NODE_ENV
     stdoutOutput = []
     stderrOutput = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -56,6 +63,7 @@ describe('CLI — main()', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     process.exitCode = undefined
+    process.env.NODE_ENV = originalNodeEnv
   })
 
   it('prints usage and sets exitCode=1 when no arguments', async () => {
@@ -193,5 +201,29 @@ describe('CLI — main()', () => {
     expect(process.exitCode).toBeUndefined()
     expect(stdoutOutput.join('')).toContain('"totalKeys": 2')
     expect(stderrOutput.join('')).toContain('stopped scanning after 2 keys')
+  })
+
+  it('rejects plaintext redis:// in production before connecting', async () => {
+    process.env.NODE_ENV = 'production'
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379'])
+
+    expect(process.exitCode).toBe(1)
+    expect(connectCalls).toBe(0)
+    expect(stderrOutput.join('')).toContain('NODE_ENV=production')
+    expect(stderrOutput.join('')).toContain('--allow-plaintext')
+  })
+
+  it('allows plaintext redis:// in production when explicitly overridden', async () => {
+    process.env.NODE_ENV = 'production'
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379', '--allow-plaintext'])
+
+    expect(process.exitCode).toBeUndefined()
+    expect(connectCalls).toBe(1)
+    expect(stderrOutput.join('')).toContain('Warning')
+    expect(stdoutOutput.join('')).toContain('totalKeys')
   })
 })
