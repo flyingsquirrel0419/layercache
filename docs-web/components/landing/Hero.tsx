@@ -53,7 +53,7 @@ export function Hero() {
           className="max-w-xl"
         >
           <div className="mb-5 flex flex-wrap gap-2">
-            {["Node.js >= 20", "v2.0.0", "Apache-2.0"].map((label, index) => (
+            {["Node.js >= 20", "v2.1.0", "Apache-2.0"].map((label, index) => (
               <span
                 key={label}
                 className={`rounded-full px-4 py-2 text-sm font-medium ${
