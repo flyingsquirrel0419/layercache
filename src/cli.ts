@@ -13,6 +13,7 @@ interface ParsedArgs {
   tag?: string
   key?: string
   tagIndexPrefix?: string
+  knownKeysShards?: number
   scanLimit?: number
   requireTls?: boolean
   allowPlaintext?: boolean
@@ -123,6 +124,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return
     }
 
+    if (args.command === 'migrate-tag-index') {
+      const tagIndex = new RedisTagIndex({
+        client: redis,
+        prefix: args.tagIndexPrefix ?? 'layercache:tag-index',
+        knownKeysShards: args.knownKeysShards
+      })
+      const result = await tagIndex.migrateLegacyKnownKeys()
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      return
+    }
+
     if (args.command === 'inspect') {
       if (!args.key) {
         throw new Error('inspect requires --key <key>.')
@@ -210,6 +222,22 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (token === '--tag-index-prefix') {
       parsed.tagIndexPrefix = value
       index += 1
+    } else if (token === '--known-key-shards') {
+      if (!value || value.startsWith('--')) {
+        process.stderr.write('Error: --known-key-shards requires a positive integer value.\n')
+        process.exitCode = 1
+        parsed.parseError = true
+        return parsed
+      }
+      const knownKeysShards = Number(value)
+      if (!Number.isSafeInteger(knownKeysShards) || knownKeysShards <= 0) {
+        process.stderr.write('Error: --known-key-shards requires a positive integer value.\n')
+        process.exitCode = 1
+        parsed.parseError = true
+        return parsed
+      }
+      parsed.knownKeysShards = knownKeysShards
+      index += 1
     } else if (token === '--limit') {
       if (!value || value.startsWith('--')) {
         process.stderr.write('Error: --limit requires a positive integer value.\n')
@@ -273,6 +301,7 @@ function printUsage(): void {
       '  layercache keys --redis <url> [--pattern <glob>]\n' +
       '  layercache inspect --redis <url> --key <key>\n' +
       '  layercache invalidate --redis <url> [--pattern <glob> | --tag <tag>] [--tag-index-prefix <prefix>]\n' +
+      '  layercache migrate-tag-index --redis <url> [--tag-index-prefix <prefix>] [--known-key-shards <count>]\n' +
       '\n' +
       'Options:\n' +
       '  --redis <url>               Redis connection URL (e.g. redis://localhost:6379)\n' +
@@ -280,6 +309,7 @@ function printUsage(): void {
       '  --key <key>                 Exact cache key to inspect\n' +
       '  --tag <tag>                 Invalidate by tag name\n' +
       '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n' +
+      '  --known-key-shards <count>  Shard count for RedisTagIndex migration (default: 16)\n' +
       '  --limit <count>             Maximum Redis keys to scan (default: 100000)\n' +
       '  --require-tls               Reject non-TLS (redis://) connections\n' +
       '  --allow-plaintext          Explicitly allow redis:// when NODE_ENV=production\n'

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 let connectImpl = async () => undefined
 let scanImpl = async () => ['0', ['key:1', 'key:2']] as [string, string[]]
 let connectCalls = 0
+let migrateCalls = 0
+let tagIndexOptions: unknown[] = []
 
 vi.mock('ioredis', () => {
   function makeClient() {
@@ -30,9 +32,14 @@ vi.mock('ioredis', () => {
 
 // Mock RedisTagIndex to avoid complex setup
 vi.mock('../src/invalidation/RedisTagIndex', () => ({
-  RedisTagIndex: function RedisTagIndex() {
+  RedisTagIndex: function RedisTagIndex(options: unknown) {
+    tagIndexOptions.push(options)
     return {
-      keysForTag: async () => ['tag:key:1', 'tag:key:2']
+      keysForTag: async () => ['tag:key:1', 'tag:key:2'],
+      migrateLegacyKnownKeys: async () => {
+        migrateCalls += 1
+        return { migratedKeys: 2 }
+      }
     }
   }
 }))
@@ -46,6 +53,8 @@ describe('CLI — main()', () => {
     connectImpl = async () => undefined
     scanImpl = async () => ['0', ['key:1', 'key:2']]
     connectCalls = 0
+    migrateCalls = 0
+    tagIndexOptions = []
     originalNodeEnv = process.env.NODE_ENV
     stdoutOutput = []
     stderrOutput = []
@@ -225,5 +234,22 @@ describe('CLI — main()', () => {
     expect(connectCalls).toBe(1)
     expect(stderrOutput.join('')).toContain('Warning')
     expect(stdoutOutput.join('')).toContain('totalKeys')
+  })
+
+  it('runs RedisTagIndex legacy known-key migrations', async () => {
+    const { main } = await import('../src/cli')
+    await main([
+      'migrate-tag-index',
+      '--redis',
+      'redis://localhost:6379',
+      '--tag-index-prefix',
+      'tags:migrate',
+      '--known-key-shards',
+      '8'
+    ])
+
+    expect(migrateCalls).toBe(1)
+    expect(tagIndexOptions).toEqual([expect.objectContaining({ prefix: 'tags:migrate', knownKeysShards: 8 })])
+    expect(stdoutOutput.join('')).toContain('"migratedKeys": 2')
   })
 })
