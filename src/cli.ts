@@ -14,6 +14,7 @@ interface ParsedArgs {
   key?: string
   tagIndexPrefix?: string
   requireTls?: boolean
+  allowPlaintext?: boolean
   force?: boolean
 }
 
@@ -37,6 +38,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.stderr.write(
         'Error: --require-tls is set but the URL uses redis:// (plaintext). ' +
           'Use rediss:// for TLS-encrypted connections.\n'
+      )
+      process.exitCode = 1
+      return
+    }
+    if (process.env.NODE_ENV === 'production' && !args.allowPlaintext) {
+      process.stderr.write(
+        'Error: refusing plaintext redis:// connection because NODE_ENV=production. ' +
+          'Use rediss:// for TLS-encrypted connections, or pass --allow-plaintext to explicitly override.\n'
       )
       process.exitCode = 1
       return
@@ -196,6 +205,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       index += 1
     } else if (token === '--require-tls') {
       parsed.requireTls = true
+    } else if (token === '--allow-plaintext') {
+      parsed.allowPlaintext = true
     } else if (token === '--force') {
       parsed.force = true
     }
@@ -247,7 +258,8 @@ function printUsage(): void {
       '  --key <key>                 Exact cache key to inspect\n' +
       '  --tag <tag>                 Invalidate by tag name\n' +
       '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n' +
-      '  --require-tls               Reject non-TLS (redis://) connections\n'
+      '  --require-tls               Reject non-TLS (redis://) connections\n' +
+      '  --allow-plaintext          Explicitly allow redis:// when NODE_ENV=production\n'
   )
 }
 
