@@ -1,3 +1,4 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type Redis from 'ioredis'
 import { sanitizeStructuredData } from '../internal/StructuredDataSanitizer'
 import type { CacheLogger, InvalidationBus, InvalidationMessage } from '../types'
@@ -9,8 +10,18 @@ interface RedisInvalidationBusOptions {
   subscriber?: Redis
   /** Pub/sub channel name. Defaults to `layercache:invalidation`. */
   channel?: string
+  /**
+   * Optional shared secret used to sign and verify invalidation messages.
+   * When configured, unsigned or invalidly signed messages are rejected.
+   */
+  signingSecret?: string | Buffer
   /** Optional logger for invalid payloads or subscriber errors. */
   logger?: CacheLogger
+}
+
+interface SignedInvalidationEnvelope {
+  payload: InvalidationMessage
+  signature: string
 }
 
 /**
@@ -25,6 +36,7 @@ export class RedisInvalidationBus implements InvalidationBus {
   private readonly publisher: Redis
   private readonly subscriber: Redis
   private readonly logger?: CacheLogger
+  private readonly signingKey?: Buffer
   private readonly handlers = new Set<(message: InvalidationMessage) => Promise<void> | void>()
   private sharedListener?: (_channel: string, payload: string) => void
   private subscribePromise: Promise<void> | undefined
@@ -34,6 +46,7 @@ export class RedisInvalidationBus implements InvalidationBus {
     this.subscriber = options.subscriber ?? options.publisher.duplicate()
     this.channel = options.channel ?? 'layercache:invalidation'
     this.logger = options.logger
+    this.signingKey = options.signingSecret ? normalizeSigningSecret(options.signingSecret) : undefined
   }
 
   /**
@@ -84,7 +97,7 @@ export class RedisInvalidationBus implements InvalidationBus {
    * Publishes an invalidation message to other subscribers.
    */
   async publish(message: InvalidationMessage): Promise<void> {
-    await this.publisher.publish(this.channel, JSON.stringify(message))
+    await this.publisher.publish(this.channel, JSON.stringify(this.signingKey ? this.signMessage(message) : message))
   }
 
   private async dispatchToHandlers(payload: string): Promise<void> {
@@ -97,10 +110,11 @@ export class RedisInvalidationBus implements InvalidationBus {
         maxNodes: 10_000,
         createObject: () => Object.create(null) as Record<string, unknown>
       })
-      if (!this.isInvalidationMessage(parsed)) {
+      const candidate = this.signingKey ? this.verifySignedEnvelope(parsed) : parsed
+      if (!this.isInvalidationMessage(candidate)) {
         throw new Error('Invalid invalidation payload shape.')
       }
-      message = parsed
+      message = candidate
     } catch (error) {
       this.reportError('invalid invalidation payload', error)
       return
@@ -144,6 +158,41 @@ export class RedisInvalidationBus implements InvalidationBus {
     )
   }
 
+  private signMessage(message: InvalidationMessage): SignedInvalidationEnvelope {
+    const payload = JSON.stringify(message)
+    return {
+      payload: message,
+      signature: this.createSignature(payload)
+    }
+  }
+
+  private verifySignedEnvelope(value: unknown): InvalidationMessage {
+    if (!value || typeof value !== 'object') {
+      throw new Error('Signed invalidation envelope must be an object.')
+    }
+
+    const envelope = value as Partial<SignedInvalidationEnvelope>
+    if (!envelope.payload || typeof envelope.payload !== 'object' || typeof envelope.signature !== 'string') {
+      throw new Error('Signed invalidation envelope is missing payload or signature.')
+    }
+
+    const payload = JSON.stringify(envelope.payload)
+    const expected = this.createSignature(payload)
+    if (!isEqualSignature(envelope.signature, expected)) {
+      throw new Error('Invalid invalidation message signature.')
+    }
+
+    return envelope.payload
+  }
+
+  private createSignature(payload: string): string {
+    if (!this.signingKey) {
+      throw new Error('RedisInvalidationBus signing key is not configured.')
+    }
+
+    return createHmac('sha256', this.signingKey).update(payload).digest('hex')
+  }
+
   private reportError(message: string, error: unknown): void {
     if (this.logger?.error) {
       this.logger.error(message, { error })
@@ -152,4 +201,15 @@ export class RedisInvalidationBus implements InvalidationBus {
 
     console.error(`[layercache] ${message}`, error)
   }
+}
+
+function normalizeSigningSecret(secret: string | Buffer): Buffer {
+  const raw = Buffer.isBuffer(secret) ? secret : Buffer.from(secret, 'utf8')
+  return createHash('sha256').update(raw).digest()
+}
+
+function isEqualSignature(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, 'hex')
+  const expectedBuffer = Buffer.from(expected, 'hex')
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
 }
