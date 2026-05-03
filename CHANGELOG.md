@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CLI `migrate-tag-index` migrates legacy RedisTagIndex known-key sets into the current sharded layout.
+- CLI `--limit` allows explicit scan caps for `stats`, `keys`, and pattern-based `invalidate` commands.
+- `RedisInvalidationBus` supports optional HMAC-SHA256 message signing with `signingSecret`.
+
+### Changed
+
+- `RedisTagIndex` now defaults `knownKeysShards` to 16 and reads the legacy single-set layout with a warning until migrated.
+- Docs-web CLI, distributed deployment, invalidation, API, and framework integration docs now reflect current Redis TLS, scan-limit, signed invalidation, tag-index migration, and HTTP cache-key behavior.
+- Docs playground examples now use current write-option syntax for tags, millisecond TTL option objects, `null` cache misses, and `shouldCache` examples.
+
+### Fixed
+
+- Express and Hono cache middleware now avoid storing non-2xx JSON responses.
+- Hono cache middleware now respects status set via `context.status(status)` before `context.json(body)`.
+- Implicit Express/Hono URL cache keys now omit sensitive query parameters such as `api_key`, `apikey`, `private_key`, and `credentials`.
+- Production CLI runs now reject plaintext `redis://` URLs unless `--allow-plaintext` is explicitly passed.
+- CLI Redis scans now default to 100,000 keys instead of 1,000,000 to reduce memory exposure.
+
 ## [2.1.0] — 2026-05-03
 
 ### Added

@@ -45,7 +45,7 @@ const coordinator = new RedisSingleFlightCoordinator({ client: redis })
 
 ```tsx
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   singleFlightCoordinator: coordinator,
@@ -110,7 +110,8 @@ const subscriber = new Redis()
 const bus = new RedisInvalidationBus({
   publisher,
   subscriber,
-  channel: 'myapp:invalidation'
+  channel: 'myapp:invalidation',
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
 })
 ```
 
@@ -118,7 +119,7 @@ const bus = new RedisInvalidationBus({
 
 ```tsx
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: publisher, ttl: 300_000 })
 ], {
   invalidationBus: bus,
@@ -133,6 +134,7 @@ const cache = new CacheStack([
 | `invalidationBus` | `RedisInvalidationBus` | - | Bus instance |
 | `broadcastL1Invalidation` | `boolean` | `false` | Enable L1 invalidation broadcasts |
 | `channel` | `string` | `'layercache:invalidation'` | Pub/sub channel name |
+| `signingSecret` | `string \| Buffer` | - | Optional HMAC-SHA256 secret for message authenticity |
 | `logger` | `Logger` | - | Optional logger for errors |
 
 ### Invalidation Message Format
@@ -169,9 +171,25 @@ const bus = new RedisInvalidationBus({
   publisher: redis,
   subscriber: new Redis(),
   channel: 'myapp:cache:invalidation',
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET,
   logger: console
 })
 ```
+
+### Signed Messages
+
+Use `signingSecret` when a Redis channel can be reached by more than one trusted application. Layercache signs published invalidation messages and verifies inbound messages before handlers run.
+
+```tsx
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(process.env.REDIS_URL),
+  channel: 'myapp:cache:invalidation',
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+})
+```
+
+All instances on the same channel must use the same secret. Unsigned mode remains available for compatibility with older deployments.
 
 ### Cleanup
 
@@ -195,8 +213,8 @@ Maintain a consistent tag index across all servers using Redis sets.
 
 The tag index shards known-keys sets across multiple Redis keys for horizontal scaling:
 
-- Default: 1 shard (single set)
-- Recommended: 8-16 shards for high cardinality
+- Default: 16 shards
+- Set `knownKeysShards: 1` only when you intentionally need the legacy single-set layout
 - Sharding reduces single-key contention
 
 ### Installation
@@ -210,7 +228,7 @@ const redis = new Redis()
 const tagIndex = new RedisTagIndex({
   client: redis,
   prefix: 'myapp:tag-index',
-  knownKeysShards: 8  // Distribute across 8 sets
+  knownKeysShards: 16  // Default: distribute across 16 sets
 })
 ```
 
@@ -218,7 +236,7 @@ const tagIndex = new RedisTagIndex({
 
 ```tsx
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   tagIndex
@@ -236,7 +254,7 @@ await cache.invalidateByTag('user:123')
 | `client` | `Redis` | - | Redis client |
 | `prefix` | `string` | `'layercache:tag-index'` | Key prefix for index |
 | `scanCount` | `number` | `100` | SSCAN batch size |
-| `knownKeysShards` | `number` | `1` | Number of shards for known keys |
+| `knownKeysShards` | `number` | `16` | Number of shards for known keys |
 
 ### Redis Key Structure
 
@@ -267,7 +285,7 @@ await cache.invalidateByTag('user:123')
 ### Sharding Example
 
 ```tsx
-// For high-volume deployments, use more shards
+// The default is already 16; tune explicitly for unusual workloads
 const tagIndex = new RedisTagIndex({
   client: redis,
   knownKeysShards: 16  // Distribute across 16 sets
@@ -275,6 +293,18 @@ const tagIndex = new RedisTagIndex({
 
 // Each shard handles ~1/16 of known keys
 // Reduces contention on SSCAN/SADD operations
+```
+
+### Migrating Legacy Known Keys
+
+Older deployments may have a single known-key set at `&lt;prefix&gt;:keys`. Current RedisTagIndex reads that set for compatibility and logs a warning when it exists, but migration avoids repeated fallback scans:
+
+```bash
+npx layercache migrate-tag-index \
+  --redis rediss://prod-redis.example.com:6380 \
+  --tag-index-prefix "myapp:tag-index" \
+  --known-key-shards 16 \
+  --require-tls
 ```
 
 ## Complete Distributed Setup
@@ -307,6 +337,7 @@ const bus = new RedisInvalidationBus({
   publisher: redis,
   subscriber: new Redis(),
   channel: 'myapp:invalidation',
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET,
   logger: console
 })
 
@@ -314,12 +345,12 @@ const bus = new RedisInvalidationBus({
 const tagIndex = new RedisTagIndex({
   client: redis,
   prefix: 'myapp:tag-index',
-  knownKeysShards: 8
+  knownKeysShards: 16
 })
 
 // 4. Create cache stack
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: redis, ttl: 300_000 })
 ], {
   // Distributed single-flight

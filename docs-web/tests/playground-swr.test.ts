@@ -56,14 +56,14 @@ test("playground cache supports exact-key invalidation aliases", async () => {
 
   await cache.invalidateByKey("user:1");
 
-  assert.equal(await cache.get("user:1"), undefined);
+  assert.equal(await cache.get("user:1"), null);
   assert.deepEqual(await cache.get("user:1:posts"), [{ id: 1 }]);
   assert.deepEqual(await cache.get("user:2"), { name: "Bob" });
 
   await cache.invalidateByKeys(["user:1:posts", "user:2"]);
 
-  assert.equal(await cache.get("user:1:posts"), undefined);
-  assert.equal(await cache.get("user:2"), undefined);
+  assert.equal(await cache.get("user:1:posts"), null);
+  assert.equal(await cache.get("user:2"), null);
 });
 
 test("playground cache supports exact-key expiration while serving stale values", async () => {
@@ -118,4 +118,43 @@ test("playground presets include exact-key invalidation and expiration syntax", 
   assert.match(source, /invalidateByKeys\(\["user:1:posts", "user:2"\]\)/);
   assert.match(source, /expireByKey\("profile:1"\)/);
   assert.match(source, /expireByKeys\(\["profile:2", "profile:3"\]\)/);
+});
+
+test("playground presets use current write options for tags instead of cache.tag()", async () => {
+  const presetsPath = resolve(__dirname, "../lib/playground/presets.ts");
+  const source = await readFile(presetsPath, "utf8");
+
+  assert.match(source, /tags:\s*\["products", "catalog"\]/);
+  assert.doesNotMatch(source, /cache\.tag\(/);
+});
+
+test("playground cache supports shouldCache and null misses", async () => {
+  const { cache } = createPlaygroundCache();
+  let attempts = 0;
+
+  const failed = await cache.get(
+    "http:profile",
+    async ({ state }) => {
+      attempts++;
+      assert.equal(state, "miss");
+      return { ok: false };
+    },
+    { ttl: 1_000, shouldCache: (value) => (value as { ok: boolean }).ok }
+  );
+
+  assert.deepEqual(failed, { ok: false });
+  assert.equal(await cache.get("http:profile"), null);
+
+  const successful = await cache.get(
+    "http:profile",
+    async () => {
+      attempts++;
+      return { ok: true };
+    },
+    { ttl: 1_000, shouldCache: (value) => (value as { ok: boolean }).ok }
+  );
+
+  assert.deepEqual(successful, { ok: true });
+  assert.deepEqual(await cache.get("http:profile"), { ok: true });
+  assert.equal(attempts, 2);
 });

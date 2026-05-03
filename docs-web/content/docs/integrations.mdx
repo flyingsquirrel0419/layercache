@@ -23,7 +23,7 @@ import { CacheStack, MemoryLayer, RedisLayer, createExpressCacheMiddleware } fro
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
@@ -65,7 +65,9 @@ app.get('/api/users/:id',
 - `methods` - HTTP methods to cache (default: `['GET']`)
 - `ttl` - Time-to-live in milliseconds
 - `tags` - Tags for invalidation
-- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Implicit URL keys omit common sensitive query parameters such as `token`, `api_key`, `code`, `session`, and `private_key`; upgrading can therefore cause cache misses for older entries that included those parameters.
+- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Implicit URL keys omit common sensitive query parameters such as `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token`; upgrading can therefore cause cache misses for older entries that included those parameters.
+
+Only 2xx JSON responses are written to the cache. 3xx, 4xx, and 5xx responses still return to the client but are not cached.
 
 ### Response Headers
 
@@ -89,7 +91,7 @@ import { CacheStack, MemoryLayer, RedisLayer, createFastifyLayercachePlugin } fr
 import Redis from 'ioredis'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: new Redis(), ttl: 300_000 })
 ])
 
@@ -133,7 +135,7 @@ import { Hono } from 'hono'
 import { CacheStack, MemoryLayer, createHonoCacheMiddleware } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 })
+  new MemoryLayer({ ttl: 60_000 })
 ])
 
 const app = new Hono()
@@ -165,6 +167,16 @@ app.get('/api/users/:id',
 )
 ```
 
+### Options
+
+- `keyResolver` - Function to generate cache keys from Hono requests
+- `methods` - HTTP methods to cache (default: `['GET']`)
+- `ttl` - Time-to-live in milliseconds
+- `tags` - Tags for invalidation
+- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Implicit URL keys use the same sensitive query parameter filtering as the Express middleware.
+
+Only 2xx JSON responses are written to the cache. The middleware also respects status set via `context.status(500)` before `context.json(body)`.
+
 ## NestJS
 
 Use `CacheStack` directly in your NestJS providers. Import from `layercache` — no separate package needed.
@@ -181,7 +193,7 @@ import Redis from 'ioredis'
     {
       provide: 'CACHE_STACK',
       useFactory: () => new CacheStack([
-        new MemoryLayer({ ttl: 20 }),
+        new MemoryLayer({ ttl: 60_000 }),
         new RedisLayer({ client: new Redis(), ttl: 300_000 })
       ])
     }
@@ -205,7 +217,7 @@ import Redis from 'ioredis'
       provide: 'CACHE_STACK',
       inject: [ConfigService],
       useFactory: (config: ConfigService) => new CacheStack([
-        new MemoryLayer({ ttl: 20 }),
+        new MemoryLayer({ ttl: 60_000 }),
         new RedisLayer({
           client: new Redis(config.get('REDIS_URL')),
           ttl: 300_000

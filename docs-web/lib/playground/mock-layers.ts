@@ -1,4 +1,11 @@
-type CacheTimingOptions = number | { ttl?: number; staleWhileRevalidate?: number };
+type CacheOperationOptions =
+  | number
+  | {
+      ttl?: number;
+      staleWhileRevalidate?: number;
+      tags?: string[];
+      shouldCache?: (value: unknown) => boolean;
+    };
 
 type CacheEntryState = "fresh" | "stale-while-revalidate";
 
@@ -10,14 +17,16 @@ type CacheEntry = {
 
 const DEFAULT_TTL_MS = 60_000;
 
-function resolveTimingOptions(options: CacheTimingOptions = DEFAULT_TTL_MS) {
+function resolveOperationOptions(options: CacheOperationOptions = DEFAULT_TTL_MS) {
   if (typeof options === "number") {
-    return { ttlMs: options, staleWhileRevalidateMs: 0 };
+    return { ttlMs: options, staleWhileRevalidateMs: 0, tags: undefined, shouldCache: undefined };
   }
 
   return {
     ttlMs: options.ttl ?? DEFAULT_TTL_MS,
     staleWhileRevalidateMs: options.staleWhileRevalidate ?? 0,
+    tags: options.tags,
+    shouldCache: options.shouldCache,
   };
 }
 
@@ -117,8 +126,12 @@ export class MockCacheStack {
     this.onLog = options?.onLog;
   }
 
-  async get<T>(key: string, fetcher?: () => Promise<T>, options: CacheTimingOptions = DEFAULT_TTL_MS): Promise<T | undefined> {
-    const timing = resolveTimingOptions(options);
+  async get<T>(
+    key: string,
+    fetcher?: (context: { key: string; currentValue: T | undefined; state: "miss" | "stale-while-revalidate" }) => Promise<T>,
+    options: CacheOperationOptions = DEFAULT_TTL_MS
+  ): Promise<T | null> {
+    const operation = resolveOperationOptions(options);
 
     // Try each layer
     for (const layer of this.layers) {
@@ -129,7 +142,7 @@ export class MockCacheStack {
           this.stats.staleHits++;
           this.log(`[${layer.name}] STALE for key "${key}"`);
           if (fetcher) {
-            this.refreshStale(key, fetcher, timing);
+            this.refreshStale(key, entry.value as T, fetcher, operation);
           }
         } else {
           this.log(`[${layer.name}] HIT for key "${key}"`);
@@ -143,21 +156,24 @@ export class MockCacheStack {
 
     // Stampede prevention: reuse in-flight fetcher for same key
     if (fetcher) {
-      return this.fetchAndStore(key, fetcher, timing);
+      return this.fetchAndStore(key, fetcher, operation);
     }
 
-    return undefined;
+    return null;
   }
 
-  async set<T>(key: string, value: T, options: CacheTimingOptions = DEFAULT_TTL_MS): Promise<void> {
-    const timing = resolveTimingOptions(options);
-    await this.storeInLayers(key, value, timing);
+  async set<T>(key: string, value: T, options: CacheOperationOptions = DEFAULT_TTL_MS): Promise<void> {
+    const operation = resolveOperationOptions(options);
+    await this.storeInLayers(key, value, operation);
   }
 
-  private async storeInLayers<T>(key: string, value: T, timing: ReturnType<typeof resolveTimingOptions>): Promise<void> {
+  private async storeInLayers<T>(key: string, value: T, operation: ReturnType<typeof resolveOperationOptions>): Promise<void> {
     this.stats.sets++;
     for (const layer of this.layers) {
-      await layer.set(key, value, timing.ttlMs, timing.staleWhileRevalidateMs);
+      await layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs);
+    }
+    if (operation.tags) {
+      this.trackTags(key, operation.tags);
     }
     this.log(`[SET] Stored "${key}" in ${this.layers.length} layers`);
   }
@@ -213,13 +229,17 @@ export class MockCacheStack {
   }
 
   async tag(key: string, ...tags: string[]): Promise<void> {
+    this.trackTags(key, tags);
+    this.log(`[TAG] Tagged "${key}" with: ${tags.join(", ")}`);
+  }
+
+  private trackTags(key: string, tags: string[]): void {
     if (!this.keyTags.has(key)) this.keyTags.set(key, new Set());
     for (const tag of tags) {
       if (!this.tags.has(tag)) this.tags.set(tag, new Set());
       this.tags.get(tag)!.add(key);
       this.keyTags.get(key)!.add(tag);
     }
-    this.log(`[TAG] Tagged "${key}" with: ${tags.join(", ")}`);
   }
 
   async warm(entries: Array<{ key: string; value: unknown; ttlMs?: number }>): Promise<void> {
@@ -243,21 +263,21 @@ export class MockCacheStack {
 
   private async fetchAndStore<T>(
     key: string,
-    fetcher: () => Promise<T>,
-    timing: ReturnType<typeof resolveTimingOptions>
-  ): Promise<T | undefined> {
+    fetcher: (context: { key: string; currentValue: T | undefined; state: "miss" }) => Promise<T>,
+    operation: ReturnType<typeof resolveOperationOptions>
+  ): Promise<T | null> {
     const existing = this.inFlight.get(key);
     if (existing) {
       this.log(`[STAMPEDE-PREVENT] Deduplicating request for "${key}"`);
-      return existing as Promise<T>;
+      return existing as Promise<T | null>;
     }
 
     this.log(`[FETCH] Calling fetcher for "${key}"...`);
     const fetchPromise = (async () => {
       try {
-        const value = await fetcher();
-        if (value !== undefined) {
-          await this.storeInLayers(key, value, timing);
+        const value = await fetcher({ key, currentValue: undefined, state: "miss" });
+        if (value !== null && value !== undefined && operation.shouldCache?.(value) !== false) {
+          await this.storeInLayers(key, value, operation);
           this.stats.backfills++;
           this.log(`[BACKFILL] Stored "${key}" in all layers`);
         }
@@ -268,10 +288,15 @@ export class MockCacheStack {
     })();
 
     this.inFlight.set(key, fetchPromise);
-    return fetchPromise as Promise<T>;
+    return fetchPromise as Promise<T | null>;
   }
 
-  private refreshStale<T>(key: string, fetcher: () => Promise<T>, timing: ReturnType<typeof resolveTimingOptions>) {
+  private refreshStale<T>(
+    key: string,
+    currentValue: T,
+    fetcher: (context: { key: string; currentValue: T | undefined; state: "stale-while-revalidate" }) => Promise<T>,
+    operation: ReturnType<typeof resolveOperationOptions>
+  ) {
     if (this.inFlight.has(key)) {
       this.log(`[SWR] Refresh already in progress for "${key}"`);
       return;
@@ -282,9 +307,9 @@ export class MockCacheStack {
 
     const refreshPromise = (async () => {
       try {
-        const value = await fetcher();
-        if (value !== undefined) {
-          await this.storeInLayers(key, value, timing);
+        const value = await fetcher({ key, currentValue, state: "stale-while-revalidate" });
+        if (value !== null && value !== undefined && operation.shouldCache?.(value) !== false) {
+          await this.storeInLayers(key, value, operation);
           this.stats.backfills++;
           this.log(`[SWR] Refreshed "${key}" in all layers`);
         }
