@@ -1,5 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
+import { normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface ExpressLikeRequest {
   method?: string
@@ -66,7 +67,7 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       }
 
       const rawUrl = req.originalUrl ?? req.url ?? '/'
-      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeUrl(rawUrl)}`
+      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeHttpCacheUrl(rawUrl)}`
 
       const cached = await cache.get<unknown>(key, undefined, options)
       if (cached !== null) {
@@ -107,14 +108,4 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
 
 function isSuccessfulStatus(statusCode: number | undefined): boolean {
   return statusCode === undefined || (statusCode >= 200 && statusCode < 300)
-}
-
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url, 'http://localhost')
-    parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
-  } catch {
-    return url
-  }
 }

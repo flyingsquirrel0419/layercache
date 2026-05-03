@@ -1,5 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
+import { normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface HonoLikeRequest {
   method?: string
@@ -48,7 +49,7 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     }
 
     const rawPath = context.req.path ?? context.req.url ?? '/'
-    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeUrl(rawPath)}`
+    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeHttpCacheUrl(rawPath)}`
 
     const cached = await cache.get(key, undefined, options)
     if (cached !== null) {
@@ -86,14 +87,4 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
 
 function isSuccessfulStatus(statusCode: number | undefined): boolean {
   return statusCode === undefined || (statusCode >= 200 && statusCode < 300)
-}
-
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url, 'http://localhost')
-    parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
-  } catch {
-    return url
-  }
 }
