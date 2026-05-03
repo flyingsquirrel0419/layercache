@@ -853,6 +853,47 @@ describe('createHonoCacheMiddleware', () => {
     expect(calls).toBe(2)
   })
 
+  it('does not cache a hono error response set through context.status()', async () => {
+    const cache = makeCache()
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async (status: number, body: unknown) => {
+      let currentStatus: number | undefined
+      const json = vi.fn((payload: unknown, responseStatus?: number) => ({
+        body: payload,
+        status: responseStatus ?? currentStatus
+      }))
+      const context = {
+        req: { method: 'GET', path: '/users' },
+        header: vi.fn(),
+        status: vi.fn((responseStatus: number) => {
+          currentStatus = responseStatus
+          return context
+        }),
+        json
+      }
+
+      const result = await middleware(context, async () => {
+        calls += 1
+        context.status(status)
+        context.json(body)
+      })
+      await Promise.resolve()
+
+      return { context, json, result }
+    }
+
+    const errorResponse = await run(500, { error: 'temporary' })
+    const successResponse = await run(200, { ok: true })
+    const hitResponse = await run(200, { ok: 'cached' })
+
+    expect(errorResponse.json).toHaveBeenCalledWith({ error: 'temporary' }, undefined)
+    expect(successResponse.json).toHaveBeenCalledWith({ ok: true }, undefined)
+    expect(hitResponse.result).toEqual({ body: { ok: true }, status: undefined })
+    expect(calls).toBe(2)
+  })
+
   it('defaults hono requests without a method to GET and falls back to req.url when path is missing', async () => {
     const cache = makeCache()
     await cache.set('GET:/fallback', { ok: true })
