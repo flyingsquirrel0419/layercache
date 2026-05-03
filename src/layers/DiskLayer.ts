@@ -7,9 +7,13 @@ import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
 
 interface DiskLayerOptions {
+  /** Directory where cache entry files are stored. */
   directory: string
+  /** Default TTL in milliseconds for writes that do not provide an explicit TTL. */
   ttl?: number
+  /** Layer name used for metrics and per-layer TTL maps. Defaults to `disk`. */
   name?: string
+  /** Serializer used to encode values before writing them to disk. */
   serializer?: CacheSerializer
   /**
    * Maximum number of cache files to store on disk. When exceeded, the oldest
@@ -71,6 +75,9 @@ export class DiskLayer implements CacheLayer {
   private readonly protection: PayloadProtection
   private writeQueue = Promise.resolve()
 
+  /**
+   * Creates a disk-backed cache layer.
+   */
   constructor(options: DiskLayerOptions) {
     this.directory = this.resolveDirectory(options.directory)
     this.defaultTtl = options.ttl
@@ -84,10 +91,16 @@ export class DiskLayer implements CacheLayer {
     })
   }
 
+  /**
+   * Reads and unwraps a fresh value from disk.
+   */
   async get<T>(key: string): Promise<T | null> {
     return unwrapStoredValue<T>(await this.getEntry(key))
   }
 
+  /**
+   * Reads the raw stored value or envelope from disk.
+   */
   async getEntry<T = unknown>(key: string): Promise<T | null> {
     const filePath = this.keyToPath(key)
     const raw = await this.readEntryFile(filePath)
@@ -111,6 +124,9 @@ export class DiskLayer implements CacheLayer {
     return entry.value as T
   }
 
+  /**
+   * Stores a value on disk using the provided TTL or layer default TTL.
+   */
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
     await this.enqueueWrite(async () => {
       await fs.mkdir(this.directory, { recursive: true })
@@ -138,19 +154,31 @@ export class DiskLayer implements CacheLayer {
     })
   }
 
+  /**
+   * Reads many raw entries from disk.
+   */
   async getMany<T>(keys: string[]): Promise<Array<T | null>> {
     return Promise.all(keys.map((key) => this.getEntry<T>(key)))
   }
 
+  /**
+   * Writes many entries to disk.
+   */
   async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
     await Promise.all(entries.map((entry) => this.set(entry.key, entry.value, entry.ttl)))
   }
 
+  /**
+   * Returns true when the key exists and has not expired.
+   */
   async has(key: string): Promise<boolean> {
     const value = await this.getEntry(key)
     return value !== null
   }
 
+  /**
+   * Returns remaining TTL in milliseconds, or null when absent or non-expiring.
+   */
   async ttl(key: string): Promise<number | null> {
     const filePath = this.keyToPath(key)
     const raw = await this.readEntryFile(filePath)
@@ -177,16 +205,25 @@ export class DiskLayer implements CacheLayer {
     return remaining
   }
 
+  /**
+   * Deletes a key from disk.
+   */
   async delete(key: string): Promise<void> {
     await this.enqueueWrite(() => this.safeDelete(this.keyToPath(key)))
   }
 
+  /**
+   * Deletes multiple keys from disk.
+   */
   async deleteMany(keys: string[]): Promise<void> {
     await this.enqueueWrite(async () => {
       await this.deletePathsWithConcurrency(keys.map((key) => this.keyToPath(key)))
     })
   }
 
+  /**
+   * Removes all cache entry files from this layer's directory.
+   */
   async clear(): Promise<void> {
     await this.enqueueWrite(async () => {
       let entries: string[]
@@ -214,12 +251,18 @@ export class DiskLayer implements CacheLayer {
     return keys
   }
 
+  /**
+   * Visits all non-expired keys stored on disk.
+   */
   async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
     await this.scanEntries(async (entry) => {
       await visitor(entry.key)
     })
   }
 
+  /**
+   * Returns the number of non-expired entries stored on disk.
+   */
   async size(): Promise<number> {
     let count = 0
     await this.scanEntries(async () => {
@@ -228,6 +271,9 @@ export class DiskLayer implements CacheLayer {
     return count
   }
 
+  /**
+   * Verifies the cache directory can be created.
+   */
   async ping(): Promise<boolean> {
     try {
       await fs.mkdir(this.directory, { recursive: true })
@@ -237,6 +283,9 @@ export class DiskLayer implements CacheLayer {
     }
   }
 
+  /**
+   * Reserved for interface compatibility; DiskLayer does not hold persistent handles.
+   */
   async dispose(): Promise<void> {}
 
   private keyToPath(key: string): string {

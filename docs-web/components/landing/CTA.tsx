@@ -1,28 +1,35 @@
 import { AnimatedSection } from "./AnimatedSection";
 import Button from "@/components/ui/Button";
+import { GithubIcon } from "@/components/ui/Icons";
 
 export function CTA() {
   return (
-    <AnimatedSection className="py-24 px-6 relative overflow-hidden">
-      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-accent/5 to-transparent" />
-      <div className="max-w-3xl mx-auto text-center">
-        <h2 className="text-3xl md:text-4xl font-bold mb-4">
-          Ready to Cache Smarter?
-        </h2>
-        <p className="text-text-secondary mb-8">
-          Get started with Layercache in minutes. Production-ready caching with
-          zero configuration headaches.
-        </p>
-        <div className="flex items-center justify-center gap-4">
-          <Button variant="primary" href="/docs/getting-started">
-            Get Started
-          </Button>
-          <Button
-            variant="secondary"
-            href="https://github.com/flyingsquirrel0419/layercache"
-          >
-            View on GitHub
-          </Button>
+    <AnimatedSection className="bg-black px-4 py-16 text-white sm:px-6">
+      <div className="uber-container">
+        <div className="grid gap-8 md:grid-cols-[1fr_auto] md:items-end">
+          <div>
+            <img src="/logo.png" alt="Layercache" className="mb-8 h-14 w-40 object-contain object-left" />
+            <h2 className="max-w-2xl text-4xl font-bold leading-[1.22]">
+              Put a disciplined cache stack in front of your slow paths.
+            </h2>
+            <p className="mt-4 max-w-xl text-base leading-6 text-[#afafaf]">
+              Start with memory. Add Redis, disk, invalidation, and metrics when
+              production needs them. Keep the same API.
+            </p>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row md:flex-col">
+            <Button variant="secondary" href="/docs/getting-started">
+              Get started
+            </Button>
+            <Button
+              variant="secondary"
+              href="https://github.com/flyingsquirrel0419/layercache"
+              className="gap-2"
+            >
+              <GithubIcon className="h-4 w-4" />
+              GitHub
+            </Button>
+          </div>
         </div>
       </div>
     </AnimatedSection>

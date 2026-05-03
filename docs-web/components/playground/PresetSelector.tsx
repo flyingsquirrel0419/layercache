@@ -9,16 +9,16 @@ interface PresetSelectorProps {
 
 export function PresetSelector({ activeId, onSelect }: PresetSelectorProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto pb-2 px-4">
+    <div className="flex gap-2 overflow-x-auto">
       {presets.map((preset) => (
         <button
           key={preset.id}
           onClick={() => onSelect(preset.id)}
           title={preset.description}
-          className={`px-3 py-1.5 rounded-md text-sm whitespace-nowrap transition-colors ${
+          className={`min-h-11 whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
             activeId === preset.id
-              ? "bg-accent text-white"
-              : "bg-surface border border-border text-text-secondary hover:text-text-primary"
+              ? "bg-black text-white"
+              : "bg-[#efefef] text-black hover:bg-[#e2e2e2]"
           }`}
         >
           {preset.title}

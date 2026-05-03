@@ -2,8 +2,11 @@ import { unwrapStoredValue } from '../internal/StoredValue'
 import type { CacheLayer, CacheLayerSetManyEntry } from '../types'
 
 export interface MemoryLayerSnapshotEntry {
+  /** Cache key stored in the snapshot. */
   key: string
+  /** Stored raw value or envelope. */
   value: unknown
+  /** Absolute expiry timestamp in milliseconds, or null for no expiry. */
   expiresAt: number | null
 }
 
@@ -16,11 +19,17 @@ export interface MemoryLayerSnapshotEntry {
 export type EvictionPolicy = 'lru' | 'lfu' | 'fifo'
 
 export interface MemoryLayerOptions {
+  /** Default TTL in milliseconds for entries written without an explicit TTL. */
   ttl?: number
+  /** Maximum number of entries retained in memory. Defaults to 1,000. */
   maxSize?: number
+  /** Layer name used for metrics and per-layer TTL maps. Defaults to `memory`. */
   name?: string
+  /** Eviction policy used when `maxSize` is exceeded. Defaults to `lru`. */
   evictionPolicy?: EvictionPolicy
+  /** Milliseconds between automatic expired-entry cleanup passes. Disabled when omitted. */
   cleanupIntervalMs?: number
+  /** Called with the key and unwrapped value whenever an entry is evicted. */
   onEvict?: (key: string, value: unknown) => void
 }
 
@@ -33,6 +42,9 @@ interface MemoryEntry {
   insertedAt: number
 }
 
+/**
+ * In-process cache layer with TTL support and bounded-size eviction.
+ */
 export class MemoryLayer implements CacheLayer {
   readonly name: string
   readonly defaultTtl?: number
@@ -44,6 +56,9 @@ export class MemoryLayer implements CacheLayer {
   private readonly entries = new Map<string, MemoryEntry>()
   private cleanupTimer?: ReturnType<typeof setInterval>
 
+  /**
+   * Creates an in-memory cache layer.
+   */
   constructor(options: MemoryLayerOptions = {}) {
     this.name = options.name ?? 'memory'
     this.defaultTtl = options.ttl
@@ -59,11 +74,17 @@ export class MemoryLayer implements CacheLayer {
     }
   }
 
+  /**
+   * Reads and unwraps a fresh value from memory.
+   */
   async get<T>(key: string): Promise<T | null> {
     const value = await this.getEntry(key)
     return unwrapStoredValue<T>(value)
   }
 
+  /**
+   * Reads the raw stored value or envelope from memory.
+   */
   async getEntry<T = unknown>(key: string): Promise<T | null> {
     const entry = this.entries.get(key)
     if (!entry) {
@@ -89,14 +110,23 @@ export class MemoryLayer implements CacheLayer {
     return entry.value as T
   }
 
+  /**
+   * Reads many raw entries from memory.
+   */
   async getMany<T>(keys: string[]): Promise<Array<T | null>> {
     return Promise.all(keys.map((key) => this.getEntry<T>(key)))
   }
 
+  /**
+   * Writes many entries to memory.
+   */
   async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
     await Promise.all(entries.map((entry) => this.set(entry.key, entry.value, entry.ttl)))
   }
 
+  /**
+   * Stores a value in memory using the provided TTL or layer default TTL.
+   */
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
     this.entries.delete(key)
     this.entries.set(key, {
@@ -111,6 +141,9 @@ export class MemoryLayer implements CacheLayer {
     }
   }
 
+  /**
+   * Returns true when the key exists and has not expired.
+   */
   async has(key: string): Promise<boolean> {
     const entry = this.entries.get(key)
     if (!entry) {
@@ -123,6 +156,9 @@ export class MemoryLayer implements CacheLayer {
     return true
   }
 
+  /**
+   * Returns remaining TTL in milliseconds, or null when absent or non-expiring.
+   */
   async ttl(key: string): Promise<number | null> {
     const entry = this.entries.get(key)
     if (!entry) {
@@ -138,29 +174,47 @@ export class MemoryLayer implements CacheLayer {
     return Math.max(0, Math.ceil(entry.expiresAt - Date.now()))
   }
 
+  /**
+   * Returns the number of currently retained, non-expired entries.
+   */
   async size(): Promise<number> {
     this.pruneExpired()
     return this.entries.size
   }
 
+  /**
+   * Deletes a key from memory.
+   */
   async delete(key: string): Promise<void> {
     this.entries.delete(key)
   }
 
+  /**
+   * Deletes multiple keys from memory.
+   */
   async deleteMany(keys: string[]): Promise<void> {
     for (const key of keys) {
       this.entries.delete(key)
     }
   }
 
+  /**
+   * Removes all entries from memory.
+   */
   async clear(): Promise<void> {
     this.entries.clear()
   }
 
+  /**
+   * Health check hook that always succeeds for the in-process layer.
+   */
   async ping(): Promise<boolean> {
     return true
   }
 
+  /**
+   * Stops the cleanup timer, when one is active.
+   */
   async dispose(): Promise<void> {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer)
@@ -168,11 +222,17 @@ export class MemoryLayer implements CacheLayer {
     }
   }
 
+  /**
+   * Returns all currently retained, non-expired keys.
+   */
   async keys(): Promise<string[]> {
     this.pruneExpired()
     return [...this.entries.keys()]
   }
 
+  /**
+   * Visits all currently retained, non-expired keys.
+   */
   async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
     this.pruneExpired()
     for (const key of this.entries.keys()) {
@@ -180,6 +240,9 @@ export class MemoryLayer implements CacheLayer {
     }
   }
 
+  /**
+   * Exports memory entries for process-local snapshots.
+   */
   exportState(): MemoryLayerSnapshotEntry[] {
     this.pruneExpired()
     return [...this.entries.entries()].map(([key, entry]) => ({
@@ -189,6 +252,9 @@ export class MemoryLayer implements CacheLayer {
     }))
   }
 
+  /**
+   * Imports entries previously produced by `exportState()`.
+   */
   importState(entries: MemoryLayerSnapshotEntry[]): void {
     for (const entry of entries) {
       if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
