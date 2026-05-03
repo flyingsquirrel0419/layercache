@@ -13,6 +13,7 @@ interface HonoLikeRequest {
 interface HonoLikeContext {
   req: HonoLikeRequest
   header?: (name: string, value: string) => void
+  status?: (status: number) => unknown
   json: (body: unknown, status?: number) => Response | Promise<Response> | unknown
 }
 
@@ -56,20 +57,35 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
       return context.json(cached)
     }
 
+    let currentStatus: number | undefined
+    const originalStatus = context.status?.bind(context)
+    if (originalStatus) {
+      context.status = (status: number) => {
+        currentStatus = status
+        return originalStatus(status)
+      }
+    }
+
     const originalJson = context.json.bind(context)
     context.json = (body: unknown, status?: number) => {
       context.header?.('x-cache', 'MISS')
-      cache.set(key, body, options).catch((err: unknown) => {
-        cache.emit('error', {
-          operation: 'set',
-          error: err instanceof Error ? err.message : String(err)
+      if (isSuccessfulStatus(status ?? currentStatus)) {
+        cache.set(key, body, options).catch((err: unknown) => {
+          cache.emit('error', {
+            operation: 'set',
+            error: err instanceof Error ? err.message : String(err)
+          })
         })
-      })
+      }
       return originalJson(body, status)
     }
 
     await next()
   }
+}
+
+function isSuccessfulStatus(statusCode: number | undefined): boolean {
+  return statusCode === undefined || (statusCode >= 200 && statusCode < 300)
 }
 
 function normalizeUrl(url: string): string {
