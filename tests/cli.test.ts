@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // We test the exported `main` function with mocked ioredis
 let connectImpl = async () => undefined
+let scanImpl = async () => ['0', ['key:1', 'key:2']] as [string, string[]]
 
 vi.mock('ioredis', () => {
   function makeClient() {
     return {
       connect: async () => connectImpl(),
-      scan: async () => ['0', ['key:1', 'key:2']],
+      scan: async () => scanImpl(),
       del: async () => 2,
       getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
       ttl: async () => 42,
@@ -38,6 +39,7 @@ describe('CLI — main()', () => {
 
   beforeEach(() => {
     connectImpl = async () => undefined
+    scanImpl = async () => ['0', ['key:1', 'key:2']]
     stdoutOutput = []
     stderrOutput = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -144,5 +146,37 @@ describe('CLI — main()', () => {
     await main(['stats', '--redis', 'redis://localhost:6379'])
     expect(stderrOutput.join('')).toContain('Warning')
     expect(stderrOutput.join('')).toContain('redis://')
+  })
+
+  it('limits Redis scans to 100000 keys by default and warns when truncated', async () => {
+    const firstBatch = Array.from({ length: 60_000 }, (_, index) => `key:${index}`)
+    const secondBatch = Array.from({ length: 60_000 }, (_, index) => `key:${index + firstBatch.length}`)
+    let scanCalls = 0
+    scanImpl = async () => {
+      scanCalls += 1
+      return scanCalls === 1 ? ['1', firstBatch] : ['0', secondBatch]
+    }
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379'])
+
+    const output = stdoutOutput.join('')
+    expect(output).toContain('"totalKeys": 100000')
+    expect(stderrOutput.join('')).toContain('stopped scanning after 100000 keys')
+  })
+
+  it('supports a custom Redis scan limit', async () => {
+    let scanCalls = 0
+    scanImpl = async () => {
+      scanCalls += 1
+      return scanCalls === 1 ? ['1', ['key:1', 'key:2']] : ['0', ['key:3', 'key:4']]
+    }
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379', '--limit', '3'])
+
+    const output = stdoutOutput.join('')
+    expect(output).toContain('"totalKeys": 3')
+    expect(stderrOutput.join('')).toContain('stopped scanning after 3 keys')
   })
 })
