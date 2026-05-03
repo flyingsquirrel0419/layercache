@@ -17,11 +17,20 @@ interface HonoLikeContext {
 }
 
 interface HonoCacheMiddlewareOptions extends CacheGetOptions {
+  /**
+   * Resolves a cache key from the incoming Hono request. Defaults to
+   * `GET:<normalized path>` when `allowPrivateCaching` is enabled.
+   */
   keyResolver?: (request: HonoLikeRequest) => string
+  /** Only cache responses for these HTTP methods. Defaults to `['GET']`. */
   methods?: string[]
+  /** Explicitly allow URL-only implicit cache keys. Disabled by default. */
   allowPrivateCaching?: boolean
 }
 
+/**
+ * Hono-compatible middleware that caches JSON responses for selected methods.
+ */
 export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheMiddlewareOptions = {}) {
   const allowedMethods = new Set((options.methods ?? ['GET']).map((method) => method.toUpperCase()))
 

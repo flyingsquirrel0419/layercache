@@ -3,9 +3,13 @@ import { sanitizeStructuredData } from '../internal/StructuredDataSanitizer'
 import type { CacheLogger, InvalidationBus, InvalidationMessage } from '../types'
 
 interface RedisInvalidationBusOptions {
+  /** Redis client used to publish invalidation messages. */
   publisher: Redis
+  /** Redis client used for subscriptions. Defaults to `publisher.duplicate()`. */
   subscriber?: Redis
+  /** Pub/sub channel name. Defaults to `layercache:invalidation`. */
   channel?: string
+  /** Optional logger for invalid payloads or subscriber errors. */
   logger?: CacheLogger
 }
 
@@ -32,6 +36,9 @@ export class RedisInvalidationBus implements InvalidationBus {
     this.logger = options.logger
   }
 
+  /**
+   * Subscribes to invalidation messages and returns an unsubscribe function.
+   */
   async subscribe(handler: (message: InvalidationMessage) => Promise<void> | void): Promise<() => Promise<void>> {
     // Serialize concurrent subscribe() calls to prevent race conditions.
     // Chain onto the existing promise so late callers wait for earlier ones.
@@ -73,6 +80,9 @@ export class RedisInvalidationBus implements InvalidationBus {
     }
   }
 
+  /**
+   * Publishes an invalidation message to other subscribers.
+   */
   async publish(message: InvalidationMessage): Promise<void> {
     await this.publisher.publish(this.channel, JSON.stringify(message))
   }

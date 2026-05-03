@@ -28,6 +28,9 @@ export class StampedeGuard {
     this.entryTimeoutMs = options.entryTimeoutMs
   }
 
+  /**
+   * Deduplicates concurrent work for the same key in this process.
+   */
   async execute<T>(key: string, task: () => Promise<T>): Promise<T> {
     const existing = this.inFlight.get(key) as InFlightEntry<T> | undefined
     if (existing) {

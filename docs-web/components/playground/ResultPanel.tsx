@@ -26,9 +26,9 @@ export function ResultPanel({ logs, layerInfo }: ResultPanelProps) {
       case "log":
         return "text-text-primary";
       case "error":
-        return "text-red-400";
+        return "text-black";
       case "cache":
-        return "text-accent";
+        return "text-text-primary";
       default:
         return "text-text-primary";
     }
@@ -40,11 +40,13 @@ export function ResultPanel({ logs, layerInfo }: ResultPanelProps) {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-[520px] flex-col bg-white">
       {/* Console output */}
-      <div className="flex-1 overflow-y-auto max-h-[350px] p-4 bg-background border-b border-border">
+      <div className="flex-1 overflow-y-auto bg-[#fbfbfb] p-5">
         {logs.length === 0 ? (
-          <div className="text-text-secondary text-sm">Run code to see output here</div>
+          <div className="flex h-full min-h-[320px] items-center justify-center rounded-lg border border-dashed border-[#afafaf] bg-white text-sm text-[#4b4b4b]">
+            Run code to see output here
+          </div>
         ) : (
           <div className="space-y-1">
             {logs.map((log, index) => (
@@ -58,16 +60,16 @@ export function ResultPanel({ logs, layerInfo }: ResultPanelProps) {
 
       {/* Layer status */}
       {layerInfo && (
-        <div className="p-4 bg-surface">
+        <div className="border-t border-black bg-white p-4">
           <div className="flex flex-wrap gap-2">
             {layerInfo.map((layer) => (
               <div
                 key={layer.name}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-background border border-border"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 shadow-[rgba(0,0,0,0.12)_0px_4px_16px_0px]"
               >
                 <div
                   className={`w-2 h-2 rounded-full ${
-                    layer.size > 0 ? "bg-green-500" : "bg-gray-400"
+                    layer.size > 0 ? "bg-black" : "bg-[#afafaf]"
                   }`}
                 />
                 <span className="text-sm font-medium text-text-primary">{layer.name}</span>

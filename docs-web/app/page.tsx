@@ -8,7 +8,7 @@ import { WebMCP } from "@/components/landing/WebMCP";
 
 export default function LandingPage() {
   return (
-    <main>
+    <main className="bg-white text-black">
       <WebMCP />
       <Navbar />
       <Hero />

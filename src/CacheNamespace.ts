@@ -21,10 +21,19 @@ import type {
   CacheWriteOptions
 } from './types'
 
+/**
+ * Prefix-scoped view over a `CacheStack`.
+ *
+ * All keys and tags passed through the namespace are qualified with the
+ * namespace prefix, while metrics are tracked separately for namespace usage.
+ */
 export class CacheNamespace {
   private static readonly metricsMutexes = new WeakMap<CacheStack, Mutex>()
   private metrics: CacheMetricsSnapshot = createEmptyNamespaceMetrics()
 
+  /**
+   * Creates a namespace backed by an existing cache stack.
+   */
   constructor(
     private readonly cache: CacheStack,
     private readonly prefix: string
@@ -32,10 +41,17 @@ export class CacheNamespace {
     validateNamespaceKey(prefix)
   }
 
+  /**
+   * Reads a key inside this namespace and optionally runs a read-through fetcher
+   * on miss or refresh.
+   */
   async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.get(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
+  /**
+   * Alias for `get(key, fetcher, options)` that makes the get-or-set behavior explicit.
+   */
   async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
@@ -47,30 +63,79 @@ export class CacheNamespace {
     return this.trackMetrics(() => this.cache.getOrThrow(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
+  /**
+   * Returns true when the namespaced key exists and has not expired in any layer.
+   */
   async has(key: string): Promise<boolean> {
     return this.trackMetrics(() => this.cache.has(this.qualify(key)))
   }
 
+  /**
+   * Returns the remaining TTL in milliseconds for the namespaced key.
+   */
   async ttl(key: string): Promise<number | null> {
     return this.trackMetrics(() => this.cache.ttl(this.qualify(key)))
   }
 
+  /**
+   * Stores a value under a namespaced key.
+   */
   async set<T>(key: string, value: T, options?: CacheWriteOptions): Promise<void> {
     await this.trackMetrics(() => this.cache.set(this.qualify(key), value, this.qualifyWriteOptions(options)))
   }
 
+  /**
+   * Deletes a namespaced key from all layers.
+   */
   async delete(key: string): Promise<void> {
     await this.trackMetrics(() => this.cache.delete(this.qualify(key)))
   }
 
+  /**
+   * Deletes multiple namespaced keys from all layers.
+   */
   async mdelete(keys: string[]): Promise<void> {
     await this.trackMetrics(() => this.cache.mdelete(keys.map((k) => this.qualify(k))))
   }
 
+  /**
+   * Alias for `delete(key)` scoped to this namespace.
+   */
+  async invalidateByKey(key: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.invalidateByKey(this.qualify(key)))
+  }
+
+  /**
+   * Alias for `mdelete(keys)` scoped to this namespace.
+   */
+  async invalidateByKeys(keys: string[]): Promise<void> {
+    await this.trackMetrics(() => this.cache.invalidateByKeys(keys.map((k) => this.qualify(k))))
+  }
+
+  /**
+   * Marks one exact namespaced key expired without deleting its stale value.
+   */
+  async expireByKey(key: string): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByKey(this.qualify(key)))
+  }
+
+  /**
+   * Marks multiple exact namespaced keys expired without deleting their stale values.
+   */
+  async expireByKeys(keys: string[]): Promise<void> {
+    await this.trackMetrics(() => this.cache.expireByKeys(keys.map((k) => this.qualify(k))))
+  }
+
+  /**
+   * Clears all keys in this namespace by invalidating the namespace prefix.
+   */
   async clear(): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByPrefix(this.prefix))
   }
 
+  /**
+   * Reads many namespaced keys concurrently.
+   */
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
     return this.trackMetrics(() =>
       this.cache.mget(
@@ -83,6 +148,9 @@ export class CacheNamespace {
     )
   }
 
+  /**
+   * Writes many namespaced entries concurrently.
+   */
   async mset<T>(entries: CacheMSetEntry<T>[]): Promise<void> {
     await this.trackMetrics(() =>
       this.cache.mset(
@@ -95,14 +163,23 @@ export class CacheNamespace {
     )
   }
 
+  /**
+   * Deletes keys associated with a tag scoped to this namespace.
+   */
   async invalidateByTag(tag: string): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByTag(this.qualifyTag(tag)))
   }
 
+  /**
+   * Expires keys associated with a tag scoped to this namespace while preserving stale windows.
+   */
   async expireByTag(tag: string): Promise<void> {
     await this.trackMetrics(() => this.cache.expireByTag(this.qualifyTag(tag)))
   }
 
+  /**
+   * Deletes keys associated with any or all namespace-scoped tags.
+   */
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.trackMetrics(() =>
       this.cache.invalidateByTags(
@@ -112,6 +189,9 @@ export class CacheNamespace {
     )
   }
 
+  /**
+   * Expires keys associated with any or all namespace-scoped tags while preserving stale windows.
+   */
   async expireByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.trackMetrics(() =>
       this.cache.expireByTags(
@@ -121,18 +201,30 @@ export class CacheNamespace {
     )
   }
 
+  /**
+   * Deletes namespaced keys matching a wildcard pattern.
+   */
   async invalidateByPattern(pattern: string): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByPattern(this.qualify(pattern)))
   }
 
+  /**
+   * Expires namespaced keys matching a wildcard pattern while preserving stale windows.
+   */
   async expireByPattern(pattern: string): Promise<void> {
     await this.trackMetrics(() => this.cache.expireByPattern(this.qualify(pattern)))
   }
 
+  /**
+   * Deletes namespaced keys with the provided prefix.
+   */
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByPrefix(this.qualify(prefix)))
   }
 
+  /**
+   * Expires namespaced keys with the provided prefix while preserving stale windows.
+   */
   async expireByPrefix(prefix: string): Promise<void> {
     await this.trackMetrics(() => this.cache.expireByPrefix(this.qualify(prefix)))
   }
@@ -154,6 +246,9 @@ export class CacheNamespace {
     }
   }
 
+  /**
+   * Returns a cached wrapper whose generated keys are scoped to this namespace.
+   */
   wrap<TArgs extends unknown[], TResult>(
     keyPrefix: string,
     fetcher: (...args: TArgs) => Promise<TResult>,
@@ -162,6 +257,9 @@ export class CacheNamespace {
     return this.cache.wrap(`${this.prefix}:${keyPrefix}`, fetcher, this.qualifyWrapOptions(options))
   }
 
+  /**
+   * Warms entries after qualifying each key and tag with this namespace prefix.
+   */
   warm(entries: CacheWarmEntry[], options?: CacheWarmOptions): Promise<void> {
     return this.cache.warm(
       entries.map((entry) => ({
@@ -173,10 +271,16 @@ export class CacheNamespace {
     )
   }
 
+  /**
+   * Returns metrics accumulated by operations performed through this namespace.
+   */
   getMetrics(): CacheMetricsSnapshot {
     return cloneNamespaceMetrics(this.metrics)
   }
 
+  /**
+   * Returns hit-rate statistics for operations performed through this namespace.
+   */
   getHitRate(): CacheHitRateSnapshot {
     return computeNamespaceHitRate(this.metrics)
   }
@@ -195,6 +299,9 @@ export class CacheNamespace {
     return new CacheNamespace(this.cache, `${this.prefix}:${childPrefix}`)
   }
 
+  /**
+   * Qualifies a raw key with this namespace prefix.
+   */
   qualify(key: string): string {
     return `${this.prefix}:${key}`
   }

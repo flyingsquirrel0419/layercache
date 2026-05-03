@@ -121,15 +121,28 @@ class DebugLogger implements CacheLogger {
 
 /** Typed overloads for EventEmitter so callers get autocomplete on event names. */
 export interface CacheStack {
+  /** Register a typed CacheStack event listener. */
   on<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  /** Register a typed CacheStack event listener that runs once. */
   once<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  /** Remove a typed CacheStack event listener. */
   off<K extends keyof CacheStackEvents>(event: K, listener: (data: CacheStackEvents[K]) => void): this
+  /** Remove all listeners, optionally only for one typed CacheStack event. */
   removeAllListeners<K extends keyof CacheStackEvents>(event?: K): this
+  /** Return listeners registered for a typed CacheStack event. */
   listeners<K extends keyof CacheStackEvents>(event: K): Array<(data: CacheStackEvents[K]) => void>
+  /** Return the listener count for a typed CacheStack event. */
   listenerCount<K extends keyof CacheStackEvents>(event: K): number
+  /** Emit a typed CacheStack event. Mostly useful for custom integrations. */
   emit<K extends keyof CacheStackEvents>(event: K, data: CacheStackEvents[K]): boolean
 }
 
+/**
+ * Multi-layer read-through cache coordinator.
+ *
+ * Layers are checked from fastest to slowest, partial hits are backfilled into
+ * faster layers, and misses can be resolved by read-through fetchers.
+ */
 export class CacheStack extends EventEmitter {
   private readonly stampedeGuard: StampedeGuard
   private readonly metricsCollector = new MetricsCollector()
@@ -154,6 +167,9 @@ export class CacheStack extends EventEmitter {
   private readonly reader: CacheStackReader
   private disconnectPromise?: Promise<void>
 
+  /**
+   * Creates a cache stack from ordered layers and optional global behavior settings.
+   */
   constructor(
     private readonly layers: CacheLayer[],
     private readonly options: CacheStackOptions = {}
@@ -425,6 +441,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Clears every configured layer, removes tag metadata, resets internal TTL
+   * profiles, and broadcasts a clear invalidation message.
+   */
   async clear(): Promise<void> {
     await this.awaitStartup('clear')
     this.maintenance.beginClearEpoch()
@@ -456,6 +476,63 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Alias for `delete(key)` that matches the `invalidateBy*` API family.
+   */
+  async invalidateByKey(key: string): Promise<void> {
+    await this.delete(key)
+  }
+
+  /**
+   * Alias for `mdelete(keys)` that matches the `invalidateBy*` API family.
+   */
+  async invalidateByKeys(keys: string[]): Promise<void> {
+    await this.mdelete(keys)
+  }
+
+  /**
+   * Marks one exact key expired without deleting its stale value.
+   */
+  async expireByKey(key: string): Promise<void> {
+    await this.observeOperation('layercache.expire_by_key', { 'layercache.key': String(key ?? '') }, async () => {
+      const normalizedKey = this.qualifyKey(validateCacheKey(key))
+      await this.awaitStartup('expireByKey')
+      await this.expireKeys([normalizedKey])
+      await this.publishInvalidation({
+        scope: 'key',
+        keys: [normalizedKey],
+        sourceId: this.instanceId,
+        operation: 'expire'
+      })
+    })
+  }
+
+  /**
+   * Marks multiple exact keys expired without deleting their stale values.
+   */
+  async expireByKeys(keys: string[]): Promise<void> {
+    await this.observeOperation('layercache.expire_by_keys', undefined, async () => {
+      if (keys.length === 0) {
+        return
+      }
+
+      const normalizedKeys = keys.map((k) => validateCacheKey(k))
+      const cacheKeys = normalizedKeys.map((key) => this.qualifyKey(key))
+      await this.awaitStartup('expireByKeys')
+      await this.expireKeys(cacheKeys)
+      await this.publishInvalidation({
+        scope: 'keys',
+        keys: cacheKeys,
+        sourceId: this.instanceId,
+        operation: 'expire'
+      })
+    })
+  }
+
+  /**
+   * Reads many keys concurrently. Simple reads use layer-level bulk fast paths;
+   * entries with fetchers or options fall back to per-entry read-through logic.
+   */
   async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
     return this.observeOperation('layercache.mget', undefined, async () => {
       this.assertActive('mget')
@@ -567,6 +644,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Writes many entries concurrently using each layer's bulk write fast path
+   * when available.
+   */
   async mset<T>(entries: CacheMSetEntry<T>[]): Promise<void> {
     await this.observeOperation('layercache.mset', undefined, async () => {
       this.assertActive('mset')
@@ -580,6 +661,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Pre-populates cache entries by running their fetchers with bounded
+   * concurrency. Higher-priority entries run first.
+   */
   async warm(entries: CacheWarmEntry[], options: CacheWarmOptions = {}): Promise<void> {
     this.assertActive('warm')
     const concurrency = Math.max(1, options.concurrency ?? 4)
@@ -641,6 +726,10 @@ export class CacheStack extends EventEmitter {
     return new CacheNamespace(this, prefix)
   }
 
+  /**
+   * Deletes every key currently associated with `tag` and broadcasts an
+   * invalidation message.
+   */
   async invalidateByTag(tag: string): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_tag', undefined, async () => {
       validateTag(tag)
@@ -651,6 +740,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Marks every key associated with `tag` as expired while preserving stale
+   * windows for stale serving.
+   */
   async expireByTag(tag: string): Promise<void> {
     await this.observeOperation('layercache.expire_by_tag', undefined, async () => {
       validateTag(tag)
@@ -661,6 +754,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Deletes keys associated with any or all of the provided tags and broadcasts
+   * an invalidation message.
+   */
   async invalidateByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_tags', undefined, async () => {
       if (tags.length === 0) {
@@ -680,6 +777,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Marks keys associated with any or all of the provided tags as expired while
+   * preserving stale windows for stale serving.
+   */
   async expireByTags(tags: string[], mode: 'any' | 'all' = 'any'): Promise<void> {
     await this.observeOperation('layercache.expire_by_tags', undefined, async () => {
       if (tags.length === 0) {
@@ -699,6 +800,9 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Deletes keys matching a wildcard pattern such as `user:*`.
+   */
   async invalidateByPattern(pattern: string): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_pattern', undefined, async () => {
       validatePattern(pattern)
@@ -712,6 +816,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Marks keys matching a wildcard pattern as expired while preserving stale
+   * windows for stale serving.
+   */
   async expireByPattern(pattern: string): Promise<void> {
     await this.observeOperation('layercache.expire_by_pattern', undefined, async () => {
       validatePattern(pattern)
@@ -725,6 +833,9 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Deletes keys that start with the provided prefix.
+   */
   async invalidateByPrefix(prefix: string): Promise<void> {
     await this.observeOperation('layercache.invalidate_by_prefix', undefined, async () => {
       await this.awaitStartup('invalidateByPrefix')
@@ -735,6 +846,10 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Marks keys that start with the provided prefix as expired while preserving
+   * stale windows for stale serving.
+   */
   async expireByPrefix(prefix: string): Promise<void> {
     await this.observeOperation('layercache.expire_by_prefix', undefined, async () => {
       await this.awaitStartup('expireByPrefix')
@@ -745,10 +860,16 @@ export class CacheStack extends EventEmitter {
     })
   }
 
+  /**
+   * Returns cumulative cache metrics since startup or the last `resetMetrics()`.
+   */
   getMetrics(): CacheMetricsSnapshot {
     return this.metricsCollector.snapshot
   }
 
+  /**
+   * Returns metrics plus layer degradation state and active background refresh count.
+   */
   getStats(): CacheStatsSnapshot {
     return {
       metrics: this.getMetrics(),
@@ -761,6 +882,9 @@ export class CacheStack extends EventEmitter {
     }
   }
 
+  /**
+   * Resets cumulative metrics counters.
+   */
   resetMetrics(): void {
     this.metricsCollector.reset()
   }
@@ -772,6 +896,10 @@ export class CacheStack extends EventEmitter {
     return this.metricsCollector.hitRate()
   }
 
+  /**
+   * Runs each layer's `ping()` hook when available and returns per-layer health
+   * and latency information.
+   */
   async healthCheck(): Promise<CacheHealthCheckResult[]> {
     await this.startup
 
@@ -874,26 +1002,42 @@ export class CacheStack extends EventEmitter {
     return { key: userKey, foundInLayers, freshTtlMs, staleTtlMs, errorTtlMs, isStale, tags }
   }
 
+  /**
+   * Exports cache entries from configured layers for process-local snapshots.
+   */
   async exportState(): Promise<CacheSnapshotEntry[]> {
     await this.awaitStartup('exportState')
     return this.snapshots.exportState(this.snapshotMaxEntries())
   }
 
+  /**
+   * Imports entries produced by `exportState()` into the configured layers.
+   */
   async importState(entries: CacheSnapshotEntry[]): Promise<void> {
     await this.awaitStartup('importState')
     await this.snapshots.importState(entries)
   }
 
+  /**
+   * Writes a snapshot file containing current cache entries.
+   */
   async persistToFile(filePath: string): Promise<void> {
     this.assertActive('persistToFile')
     await this.snapshots.persistToFile(filePath, this.options.snapshotBaseDir, this.snapshotMaxEntries())
   }
 
+  /**
+   * Restores cache entries from a snapshot file.
+   */
   async restoreFromFile(filePath: string): Promise<void> {
     this.assertActive('restoreFromFile')
     await this.snapshots.restoreFromFile(filePath, this.options.snapshotBaseDir, this.snapshotMaxBytes())
   }
 
+  /**
+   * Flushes background work, unsubscribes from buses, disposes timers, and then
+   * disposes each layer that provides `dispose()`.
+   */
   async disconnect(): Promise<void> {
     if (!this.disconnectPromise) {
       this.isDisconnecting = true

@@ -1,9 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
-import { useState, useEffect } from "react";
+import { MonitorIcon, MoonIcon, SunIcon } from "./Icons";
 
-export default function ThemeToggle() {
+const modes = [
+  { value: "light", label: "Light", short: "L", Icon: SunIcon },
+  { value: "dark", label: "Dark", short: "D", Icon: MoonIcon },
+  { value: "system", label: "System", short: "S", Icon: MonitorIcon },
+] as const;
+
+export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -11,47 +18,36 @@ export default function ThemeToggle() {
     setMounted(true);
   }, []);
 
-  if (!mounted) {
-    return <div className="w-9 h-9" />;
-  }
+  const activeTheme = mounted ? theme ?? "system" : "system";
 
   return (
-    <button
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      className="w-9 h-9 rounded-lg flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface transition-colors duration-150"
-      aria-label="Toggle theme"
+    <div
+      className="inline-flex min-h-11 items-center rounded-full bg-[var(--color-chip)] p-1 text-sm font-medium"
+      aria-label="Theme mode"
     >
-      {theme === "dark" ? (
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <circle cx="12" cy="12" r="5" />
-          <line x1="12" y1="1" x2="12" y2="3" />
-          <line x1="12" y1="21" x2="12" y2="23" />
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-          <line x1="1" y1="12" x2="3" y2="12" />
-          <line x1="21" y1="12" x2="23" y2="12" />
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-        </svg>
-      ) : (
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-        </svg>
-      )}
-    </button>
+      {modes.map((mode) => {
+        const active = activeTheme === mode.value;
+        const Icon = mode.Icon;
+
+        return (
+          <button
+            key={mode.value}
+            type="button"
+            onClick={() => setTheme(mode.value)}
+            className={`flex min-h-9 items-center gap-2 rounded-full px-3 transition-colors ${
+              active
+                ? "bg-[var(--color-text-primary)] text-[var(--color-background)]"
+                : "text-[var(--color-text-primary)] hover:bg-[var(--color-hover)]"
+            }`}
+            aria-pressed={active}
+            title={mode.label}
+          >
+            <Icon className="h-4 w-4" />
+            <span className="hidden sm:inline">{mode.label}</span>
+            <span className="sm:hidden">{mode.short}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }

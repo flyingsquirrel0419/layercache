@@ -1,6 +1,29 @@
+type CacheTimingOptions = number | { ttl?: number; staleWhileRevalidate?: number };
+
+type CacheEntryState = "fresh" | "stale-while-revalidate";
+
+type CacheEntry = {
+  value: unknown;
+  freshUntil: number;
+  expiresAt: number;
+};
+
+const DEFAULT_TTL_MS = 60_000;
+
+function resolveTimingOptions(options: CacheTimingOptions = DEFAULT_TTL_MS) {
+  if (typeof options === "number") {
+    return { ttlMs: options, staleWhileRevalidateMs: 0 };
+  }
+
+  return {
+    ttlMs: options.ttl ?? DEFAULT_TTL_MS,
+    staleWhileRevalidateMs: options.staleWhileRevalidate ?? 0,
+  };
+}
+
 // Simple in-memory cache layer mock
 export class MockCacheLayer {
-  private store = new Map<string, { value: unknown; expiresAt: number }>();
+  private store = new Map<string, CacheEntry>();
   readonly name: string;
   readonly latencyMs: number;
 
@@ -10,24 +33,45 @@ export class MockCacheLayer {
   }
 
   async get(key: string): Promise<unknown> {
+    const entry = await this.getEntry(key);
+    return entry?.state === "fresh" ? entry.value : undefined;
+  }
+
+  async getEntry(key: string): Promise<{ value: unknown; state: CacheEntryState } | undefined> {
     await this.simulateLatency();
     const entry = this.store.get(key);
     if (!entry) return undefined;
-    if (Date.now() > entry.expiresAt) {
+
+    const now = Date.now();
+    if (now > entry.expiresAt) {
       this.store.delete(key);
       return undefined;
     }
-    return entry.value;
+
+    return {
+      value: entry.value,
+      state: now > entry.freshUntil ? "stale-while-revalidate" : "fresh",
+    };
   }
 
-  async set(key: string, value: unknown, ttlMs: number): Promise<void> {
+  async set(key: string, value: unknown, ttlMs: number, staleWhileRevalidateMs = 0): Promise<void> {
     await this.simulateLatency();
-    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
+    const freshUntil = Date.now() + ttlMs;
+    this.store.set(key, { value, freshUntil, expiresAt: freshUntil + staleWhileRevalidateMs });
   }
 
   async delete(key: string): Promise<boolean> {
     await this.simulateLatency();
     return this.store.delete(key);
+  }
+
+  async expire(key: string): Promise<boolean> {
+    await this.simulateLatency();
+    const entry = this.store.get(key);
+    if (!entry) return false;
+
+    this.store.set(key, { ...entry, freshUntil: Date.now() - 1 });
+    return true;
   }
 
   async clear(): Promise<void> {
@@ -36,11 +80,22 @@ export class MockCacheLayer {
   }
 
   size(): number {
+    this.pruneExpired();
     return this.store.size;
   }
 
   keys(): string[] {
+    this.pruneExpired();
     return Array.from(this.store.keys());
+  }
+
+  private pruneExpired() {
+    const now = Date.now();
+    for (const [key, entry] of this.store) {
+      if (now > entry.expiresAt) {
+        this.store.delete(key);
+      }
+    }
   }
 
   private simulateLatency(): Promise<void> {
@@ -53,7 +108,7 @@ export class MockCacheStack {
   private layers: MockCacheLayer[];
   private tags = new Map<string, Set<string>>(); // tag -> keys
   private keyTags = new Map<string, Set<string>>(); // key -> tags
-  private stats = { hits: 0, misses: 0, sets: 0, deletes: 0, backfills: 0 };
+  private stats = { hits: 0, misses: 0, sets: 0, deletes: 0, backfills: 0, staleHits: 0, refreshes: 0 };
   private inFlight = new Map<string, Promise<unknown>>();
   private onLog?: (message: string) => void;
 
@@ -62,14 +117,24 @@ export class MockCacheStack {
     this.onLog = options?.onLog;
   }
 
-  async get<T>(key: string, fetcher?: () => Promise<T>, ttlMs = 60_000): Promise<T | undefined> {
+  async get<T>(key: string, fetcher?: () => Promise<T>, options: CacheTimingOptions = DEFAULT_TTL_MS): Promise<T | undefined> {
+    const timing = resolveTimingOptions(options);
+
     // Try each layer
     for (const layer of this.layers) {
-      const value = await layer.get(key);
-      if (value !== undefined) {
+      const entry = await layer.getEntry(key);
+      if (entry) {
         this.stats.hits++;
-        this.log(`[${layer.name}] HIT for key "${key}"`);
-        return value as T;
+        if (entry.state === "stale-while-revalidate") {
+          this.stats.staleHits++;
+          this.log(`[${layer.name}] STALE for key "${key}"`);
+          if (fetcher) {
+            this.refreshStale(key, fetcher, timing);
+          }
+        } else {
+          this.log(`[${layer.name}] HIT for key "${key}"`);
+        }
+        return entry.value as T;
       }
     }
 
@@ -78,38 +143,21 @@ export class MockCacheStack {
 
     // Stampede prevention: reuse in-flight fetcher for same key
     if (fetcher) {
-      const existing = this.inFlight.get(key);
-      if (existing) {
-        this.log(`[STAMPEDE-PREVENT] Deduplicating request for "${key}"`);
-        return existing as Promise<T>;
-      }
-
-      this.log(`[FETCH] Calling fetcher for "${key}"...`);
-      const fetchPromise = (async () => {
-        try {
-          const value = await fetcher();
-          if (value !== undefined) {
-            await this.set(key, value, ttlMs);
-            this.stats.backfills++;
-            this.log(`[BACKFILL] Stored "${key}" in all layers`);
-          }
-          return value;
-        } finally {
-          this.inFlight.delete(key);
-        }
-      })();
-
-      this.inFlight.set(key, fetchPromise);
-      return fetchPromise as Promise<T>;
+      return this.fetchAndStore(key, fetcher, timing);
     }
 
     return undefined;
   }
 
-  async set<T>(key: string, value: T, ttlMs = 60_000): Promise<void> {
+  async set<T>(key: string, value: T, options: CacheTimingOptions = DEFAULT_TTL_MS): Promise<void> {
+    const timing = resolveTimingOptions(options);
+    await this.storeInLayers(key, value, timing);
+  }
+
+  private async storeInLayers<T>(key: string, value: T, timing: ReturnType<typeof resolveTimingOptions>): Promise<void> {
     this.stats.sets++;
     for (const layer of this.layers) {
-      await layer.set(key, value, ttlMs);
+      await layer.set(key, value, timing.ttlMs, timing.staleWhileRevalidateMs);
     }
     this.log(`[SET] Stored "${key}" in ${this.layers.length} layers`);
   }
@@ -128,6 +176,29 @@ export class MockCacheStack {
       this.keyTags.delete(key);
     }
     this.log(`[DELETE] Removed "${key}" from all layers`);
+  }
+
+  async invalidateByKey(key: string): Promise<void> {
+    await this.delete(key);
+  }
+
+  async invalidateByKeys(keys: string[]): Promise<void> {
+    for (const key of keys) {
+      await this.delete(key);
+    }
+  }
+
+  async expireByKey(key: string): Promise<void> {
+    for (const layer of this.layers) {
+      await layer.expire(key);
+    }
+    this.log(`[EXPIRE] Marked "${key}" stale in all layers`);
+  }
+
+  async expireByKeys(keys: string[]): Promise<void> {
+    for (const key of keys) {
+      await this.expireByKey(key);
+    }
   }
 
   async invalidateByTag(tag: string): Promise<number> {
@@ -168,6 +239,63 @@ export class MockCacheStack {
 
   private log(message: string) {
     this.onLog?.(message);
+  }
+
+  private async fetchAndStore<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    timing: ReturnType<typeof resolveTimingOptions>
+  ): Promise<T | undefined> {
+    const existing = this.inFlight.get(key);
+    if (existing) {
+      this.log(`[STAMPEDE-PREVENT] Deduplicating request for "${key}"`);
+      return existing as Promise<T>;
+    }
+
+    this.log(`[FETCH] Calling fetcher for "${key}"...`);
+    const fetchPromise = (async () => {
+      try {
+        const value = await fetcher();
+        if (value !== undefined) {
+          await this.storeInLayers(key, value, timing);
+          this.stats.backfills++;
+          this.log(`[BACKFILL] Stored "${key}" in all layers`);
+        }
+        return value;
+      } finally {
+        this.inFlight.delete(key);
+      }
+    })();
+
+    this.inFlight.set(key, fetchPromise);
+    return fetchPromise as Promise<T>;
+  }
+
+  private refreshStale<T>(key: string, fetcher: () => Promise<T>, timing: ReturnType<typeof resolveTimingOptions>) {
+    if (this.inFlight.has(key)) {
+      this.log(`[SWR] Refresh already in progress for "${key}"`);
+      return;
+    }
+
+    this.log(`[SWR] Serving stale "${key}" while refreshing in background`);
+    this.stats.refreshes++;
+
+    const refreshPromise = (async () => {
+      try {
+        const value = await fetcher();
+        if (value !== undefined) {
+          await this.storeInLayers(key, value, timing);
+          this.stats.backfills++;
+          this.log(`[SWR] Refreshed "${key}" in all layers`);
+        }
+      } catch (error) {
+        this.log(`[SWR] Refresh failed for "${key}": ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.inFlight.delete(key);
+      }
+    })();
+
+    this.inFlight.set(key, refreshPromise);
   }
 }
 

@@ -3,9 +3,13 @@ import type { CacheTagIndex } from '../types'
 import { PatternMatcher } from './PatternMatcher'
 
 interface RedisTagIndexOptions {
+  /** Redis client used for tag and known-key sets. */
   client: Redis
+  /** Redis key prefix for index data. Defaults to `layercache:tag-index`. */
   prefix?: string
+  /** Redis SCAN count hint used by pattern and prefix discovery. Defaults to 100. */
   scanCount?: number
+  /** Number of shards for known-key sets. Defaults to 16. */
   knownKeysShards?: number
 }
 
@@ -22,10 +26,16 @@ export class RedisTagIndex implements CacheTagIndex {
     this.knownKeysShards = normalizeKnownKeysShards(options.knownKeysShards)
   }
 
+  /**
+   * Records a key as known without changing tag assignments.
+   */
   async touch(key: string): Promise<void> {
     await this.client.sadd(this.knownKeysKeyFor(key), key)
   }
 
+  /**
+   * Replaces the tags associated with a key and records the key as known.
+   */
   async track(key: string, tags: string[]): Promise<void> {
     const keyTagsKey = this.keyTagsKey(key)
     const existingTags = await this.client.smembers(keyTagsKey)
@@ -49,6 +59,9 @@ export class RedisTagIndex implements CacheTagIndex {
     await pipeline.exec()
   }
 
+  /**
+   * Removes a key from all tag mappings and known-key tracking.
+   */
   async remove(key: string): Promise<void> {
     const keyTagsKey = this.keyTagsKey(key)
     const existingTags = await this.client.smembers(keyTagsKey)
@@ -64,10 +77,16 @@ export class RedisTagIndex implements CacheTagIndex {
     await pipeline.exec()
   }
 
+  /**
+   * Returns keys currently associated with a tag.
+   */
   async keysForTag(tag: string): Promise<string[]> {
     return this.client.smembers(this.tagKeysKey(tag))
   }
 
+  /**
+   * Visits keys currently associated with a tag.
+   */
   async forEachKeyForTag(tag: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
     let cursor = '0'
     const tagKey = this.tagKeysKey(tag)
@@ -81,6 +100,9 @@ export class RedisTagIndex implements CacheTagIndex {
     } while (cursor !== '0')
   }
 
+  /**
+   * Returns known keys that start with a prefix.
+   */
   async keysForPrefix(prefix: string): Promise<string[]> {
     const matches: string[] = []
     for (const knownKeysKey of this.knownKeysKeys()) {
@@ -96,6 +118,9 @@ export class RedisTagIndex implements CacheTagIndex {
     return matches
   }
 
+  /**
+   * Visits known keys that start with a prefix.
+   */
   async forEachKeyForPrefix(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
     for (const knownKeysKey of this.knownKeysKeys()) {
       let cursor = '0'
@@ -112,10 +137,16 @@ export class RedisTagIndex implements CacheTagIndex {
     }
   }
 
+  /**
+   * Returns the tags currently associated with a key.
+   */
   async tagsForKey(key: string): Promise<string[]> {
     return this.client.smembers(this.keyTagsKey(key))
   }
 
+  /**
+   * Returns known keys matching a wildcard pattern.
+   */
   async matchPattern(pattern: string): Promise<string[]> {
     const matches: string[] = []
     for (const knownKeysKey of this.knownKeysKeys()) {
@@ -138,6 +169,9 @@ export class RedisTagIndex implements CacheTagIndex {
     return matches
   }
 
+  /**
+   * Visits known keys matching a wildcard pattern.
+   */
   async forEachKeyMatchingPattern(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
     for (const knownKeysKey of this.knownKeysKeys()) {
       let cursor = '0'
@@ -161,6 +195,9 @@ export class RedisTagIndex implements CacheTagIndex {
     }
   }
 
+  /**
+   * Clears all Redis tag-index state under this prefix.
+   */
   async clear(): Promise<void> {
     const indexKeys = await this.scanIndexKeys()
     if (indexKeys.length === 0) {

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import { ThemeProvider } from "next-themes";
 import { SITE_URL } from "@/lib/site-url";
+import { ThemeProvider } from "@/components/ui/ThemeProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -23,11 +23,13 @@ export const metadata: Metadata = {
     url: SITE_URL,
     siteName: "Layercache",
     type: "website",
+    images: [{ url: "/logo.png", width: 1200, height: 630, alt: "Layercache" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Layercache — Multi-Layer Caching for Node.js",
     description: "Production-ready multi-layer caching with stampede prevention, tag invalidation, and full observability.",
+    images: ["/logo.png"],
   },
   metadataBase: new URL(SITE_URL),
   alternates: {
@@ -56,13 +58,12 @@ export default function RootLayout({
         <link rel="service-doc" href="/docs/api" type="text/html" title="Layercache API Reference" />
         <link rel="help" href="/docs" type="text/html" title="Layercache Documentation" />
         <link rel="alternate" href="/" type="text/markdown" title="Markdown version" />
+        <link rel="icon" href="/logo.png" type="image/png" />
       </head>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          {children}
-        </ThemeProvider>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

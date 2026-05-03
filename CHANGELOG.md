@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-05-03
+
+### Added
+
+- **Exact-key invalidation aliases** — `invalidateByKey()` and `invalidateByKeys()` now mirror `delete()` and `mdelete()` while matching the `invalidateBy*` API family.
+- **Exact-key stale-preserving expiration** — `expireByKey()` and `expireByKeys()` mark specific keys stale without deleting their stale-while-revalidate / stale-if-error windows.
+- **Namespace exact-key APIs** — `CacheNamespace` now exposes the same exact-key invalidation and expiration helpers with namespace-scoped keys.
+- **Public type-definition descriptions** — JSDoc comments now cover the public TypeScript surface so editor hover/autocomplete can describe methods, options, metrics, layers, serializers, integrations, and helpers.
+
+### Changed
+
+- Version bumped from `2.0.0` to `2.1.0`.
+- Docs-web package metadata and landing page version badge now reflect `2.1.0`.
+- API docs now document exact-key invalidation aliases and stale-preserving expiration methods, including the relationship between `invalidateByKey()` / `invalidateByKeys()` and `delete()` / `mdelete()`.
+- The docs playground now supports and includes a preset for exact-key invalidation and stale-preserving expiration syntax.
+- The docs playground UI was refreshed with clearer light/dark/system theme behavior, visible controls, improved copy fallback behavior, and a clearer two-pane editor/result layout.
+
+### Fixed
+
+- Playground stale-while-revalidate examples now use millisecond TTL options and demonstrate stale serving during background refresh before showing the refreshed value.
+- Light-mode playground controls and result panels are now readable after the docs UI refresh.
+
 ## [2.0.0] — 2026-05-02
 
 ### Breaking

@@ -14,14 +14,23 @@ const gzipAsync = promisify(gzip)
 const brotliCompressAsync = promisify(brotliCompress)
 
 interface RedisLayerOptions {
+  /** ioredis client used for all Redis commands. */
   client: Redis
+  /** Default TTL in milliseconds for writes that do not provide an explicit TTL. */
   ttl?: number
+  /** Layer name used for metrics and per-layer TTL maps. Defaults to `redis`. */
   name?: string
+  /** Serializer or serializer chain used to encode values before storage. */
   serializer?: CacheSerializer | CacheSerializer[]
+  /** Prefix prepended to every Redis key. */
   prefix?: string
+  /** Allow `clear()` without a key prefix. Disabled by default to avoid deleting unrelated Redis keys. */
   allowUnprefixedClear?: boolean
+  /** Redis SCAN count hint used when discovering keys. Defaults to 100. */
   scanCount?: number
+  /** Optional compression algorithm applied to large serialized payloads. */
   compression?: CompressionAlgorithm
+  /** Minimum serialized payload size in bytes before compression is attempted. Defaults to 1 KiB. */
   compressionThreshold?: number
   /**
    * Maximum number of bytes allowed after decompression.
@@ -33,9 +42,13 @@ interface RedisLayerOptions {
    * Slow commands reject so CacheStack can treat the layer as degraded.
    */
   commandTimeoutMs?: number
+  /** Disconnect the Redis client when this layer is disposed. Disabled by default. */
   disconnectOnDispose?: boolean
 }
 
+/**
+ * Redis-backed cache layer for shared cross-process cache state.
+ */
 export class RedisLayer implements CacheLayer {
   readonly name: string
   readonly defaultTtl?: number
@@ -52,6 +65,9 @@ export class RedisLayer implements CacheLayer {
   private readonly commandTimeoutMs: number | undefined
   private readonly disconnectOnDispose: boolean
 
+  /**
+   * Creates a Redis cache layer using an existing ioredis client.
+   */
   constructor(options: RedisLayerOptions) {
     this.client = options.client
     this.defaultTtl = options.ttl
@@ -69,11 +85,17 @@ export class RedisLayer implements CacheLayer {
     this.disconnectOnDispose = options.disconnectOnDispose ?? false
   }
 
+  /**
+   * Reads and unwraps a fresh value from Redis.
+   */
   async get<T>(key: string): Promise<T | null> {
     const payload = await this.getEntry(key)
     return unwrapStoredValue<T>(payload)
   }
 
+  /**
+   * Reads the raw stored value or envelope from Redis.
+   */
   async getEntry<T = unknown>(key: string): Promise<T | null> {
     this.validateKey(key)
     const payload = await this.runCommand(`get(${this.displayKey(key)})`, () =>
@@ -86,6 +108,9 @@ export class RedisLayer implements CacheLayer {
     return this.deserializeOrDelete(key, payload)
   }
 
+  /**
+   * Reads many raw entries from Redis using a pipeline.
+   */
   async getMany<T>(keys: string[]): Promise<Array<T | null>> {
     if (keys.length === 0) {
       return []
@@ -117,6 +142,9 @@ export class RedisLayer implements CacheLayer {
     )
   }
 
+  /**
+   * Writes many entries to Redis using a pipeline.
+   */
   async setMany(entries: CacheLayerSetManyEntry[]): Promise<void> {
     if (entries.length === 0) {
       return
@@ -141,6 +169,9 @@ export class RedisLayer implements CacheLayer {
     await this.runCommand(`mset(${entries.length})`, () => pipeline.exec())
   }
 
+  /**
+   * Stores a value in Redis using the provided TTL or layer default TTL.
+   */
   async set(key: string, value: unknown, ttl = this.defaultTtl): Promise<void> {
     this.validateKey(key)
     const serialized = this.primarySerializer().serialize(value)
@@ -157,11 +188,17 @@ export class RedisLayer implements CacheLayer {
     await this.runCommand(`set(${this.displayKey(key)})`, () => this.client.set(normalizedKey, payload as never))
   }
 
+  /**
+   * Deletes a key from Redis.
+   */
   async delete(key: string): Promise<void> {
     this.validateKey(key)
     await this.runCommand(`delete(${this.displayKey(key)})`, () => this.client.del(this.withPrefix(key)))
   }
 
+  /**
+   * Deletes multiple keys from Redis in batches.
+   */
   async deleteMany(keys: string[]): Promise<void> {
     if (keys.length === 0) {
       return
@@ -174,12 +211,18 @@ export class RedisLayer implements CacheLayer {
     )
   }
 
+  /**
+   * Returns true when the key exists in Redis.
+   */
   async has(key: string): Promise<boolean> {
     this.validateKey(key)
     const exists = await this.runCommand(`has(${this.displayKey(key)})`, () => this.client.exists(this.withPrefix(key)))
     return exists > 0
   }
 
+  /**
+   * Returns remaining Redis TTL in milliseconds, or null when absent or non-expiring.
+   */
   async ttl(key: string): Promise<number | null> {
     this.validateKey(key)
     const remaining = await this.runCommand(`ttl(${this.displayKey(key)})`, () =>
@@ -192,6 +235,9 @@ export class RedisLayer implements CacheLayer {
     return remaining
   }
 
+  /**
+   * Returns the number of keys under this layer's prefix.
+   */
   async size(): Promise<number> {
     if (!this.prefix) {
       return this.runCommand('dbsize()', () => this.client.dbsize())
@@ -212,6 +258,9 @@ export class RedisLayer implements CacheLayer {
     return count
   }
 
+  /**
+   * Runs a Redis ping command.
+   */
   async ping(): Promise<boolean> {
     try {
       return (await this.runCommand('ping()', () => this.client.ping())) === 'PONG'
@@ -220,6 +269,9 @@ export class RedisLayer implements CacheLayer {
     }
   }
 
+  /**
+   * Disconnects the Redis client when `disconnectOnDispose` is enabled.
+   */
   async dispose(): Promise<void> {
     if (this.disconnectOnDispose) {
       this.client.disconnect()
@@ -258,6 +310,9 @@ export class RedisLayer implements CacheLayer {
     } while (cursor !== '0')
   }
 
+  /**
+   * Returns keys under this layer's prefix without the prefix included.
+   */
   async keys(): Promise<string[]> {
     const pattern = `${this.prefix}*`
     const keys = await this.scanKeys(pattern)
@@ -267,6 +322,9 @@ export class RedisLayer implements CacheLayer {
     return keys.map((key) => key.slice(this.prefix.length))
   }
 
+  /**
+   * Visits keys under this layer's prefix without materializing all results.
+   */
   async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
     const pattern = `${this.prefix}*`
     let cursor = '0'

@@ -14,7 +14,7 @@ export const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
         ref={ref}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full h-full min-h-[400px] p-4 bg-background border border-border rounded-lg font-mono text-sm resize-none outline-none focus:border-accent/50 ${className}`}
+        className={`h-full min-h-[520px] w-full resize-none border-0 bg-[#fbfbfb] p-5 font-mono text-sm leading-6 text-black outline-none focus:shadow-[inset_0_0_0_2px_rgb(0,0,0)] ${className}`}
         spellCheck={false}
         {...props}
       />

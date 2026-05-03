@@ -29,11 +29,17 @@ export class TagIndex implements CacheTagIndex {
     this.maxKnownKeys = options.maxKnownKeys ?? 100_000
   }
 
+  /**
+   * Records a key as known without changing tag assignments.
+   */
   async touch(key: string): Promise<void> {
     this.insertKnownKey(key)
     this.pruneKnownKeysIfNeeded()
   }
 
+  /**
+   * Replaces the tags associated with a key and records the key as known.
+   */
   async track(key: string, tags: string[]): Promise<void> {
     this.insertKnownKey(key)
     this.pruneKnownKeysIfNeeded()
@@ -59,20 +65,32 @@ export class TagIndex implements CacheTagIndex {
     }
   }
 
+  /**
+   * Removes a key from all tag mappings and known-key tracking.
+   */
   async remove(key: string): Promise<void> {
     this.removeKey(key)
   }
 
+  /**
+   * Returns keys currently associated with a tag.
+   */
   async keysForTag(tag: string): Promise<string[]> {
     return [...(this.tagToKeys.get(tag) ?? new Set<string>())]
   }
 
+  /**
+   * Visits keys currently associated with a tag.
+   */
   async forEachKeyForTag(tag: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
     for (const key of this.tagToKeys.get(tag) ?? new Set<string>()) {
       await visitor(key)
     }
   }
 
+  /**
+   * Returns known keys that start with a prefix.
+   */
   async keysForPrefix(prefix: string): Promise<string[]> {
     const node = this.findNode(prefix)
     if (!node) {
@@ -84,6 +102,9 @@ export class TagIndex implements CacheTagIndex {
     return matches
   }
 
+  /**
+   * Visits known keys that start with a prefix.
+   */
   async forEachKeyForPrefix(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
     const node = this.findNode(prefix)
     if (!node) {
@@ -93,16 +114,25 @@ export class TagIndex implements CacheTagIndex {
     await this.visitFromNode(node, prefix, visitor)
   }
 
+  /**
+   * Returns the tags currently associated with a key.
+   */
   async tagsForKey(key: string): Promise<string[]> {
     return [...(this.keyToTags.get(key) ?? new Set<string>())]
   }
 
+  /**
+   * Returns known keys matching a wildcard pattern.
+   */
   async matchPattern(pattern: string): Promise<string[]> {
     const matches = new Set<string>()
     this.collectPatternMatches(this.root, '', pattern, 0, matches, new Set<string>(), 0)
     return [...matches]
   }
 
+  /**
+   * Visits known keys matching a wildcard pattern.
+   */
   async forEachKeyMatchingPattern(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
     const matches = await this.matchPattern(pattern)
     for (const key of matches) {
@@ -110,6 +140,9 @@ export class TagIndex implements CacheTagIndex {
     }
   }
 
+  /**
+   * Clears all tag and known-key index state.
+   */
   async clear(): Promise<void> {
     this.tagToKeys.clear()
     this.keyToTags.clear()
