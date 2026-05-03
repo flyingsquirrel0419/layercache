@@ -12,7 +12,9 @@ interface FastifyLikeReply {
 }
 
 interface FastifyLayercachePluginOptions {
+  /** Register an HTTP route that returns `cache.getStats()`. Disabled by default. */
   exposeStatsRoute?: boolean
+  /** Path for the stats route when `exposeStatsRoute` is enabled. Defaults to `/cache/stats`. */
   statsPath?: string
   /**
    * @deprecated Exposing cache stats without authentication is a security risk.
@@ -20,10 +22,15 @@ interface FastifyLayercachePluginOptions {
    * removed in a future release.
    */
   allowPublicStatsRoute?: boolean
+  /** Authorize requests to the stats route. Required unless `allowPublicStatsRoute` is true. */
   authorizeStatsRoute?: (request: unknown) => boolean | Promise<boolean>
+  /** Status code returned when a stats route request is unauthorized. Defaults to 403. */
   unauthorizedStatusCode?: number
 }
 
+/**
+ * Fastify plugin that decorates the server with `cache` and can expose a protected stats route.
+ */
 export function createFastifyLayercachePlugin(cache: CacheStack, options: FastifyLayercachePluginOptions = {}) {
   if (options.exposeStatsRoute === true && options.allowPublicStatsRoute === true) {
     console.warn(

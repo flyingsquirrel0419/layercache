@@ -3,8 +3,11 @@ import type Redis from 'ioredis'
 import type { CacheSingleFlightCoordinator, CacheSingleFlightExecutionOptions } from '../types'
 
 interface RedisSingleFlightCoordinatorOptions {
+  /** Redis client used for lock acquisition, renewal, and release. */
   client: Redis
+  /** Redis key prefix for single-flight locks. Defaults to `layercache:singleflight`. */
   prefix?: string
+  /** Per-command timeout in milliseconds for Redis operations. */
   commandTimeoutMs?: number
 }
 
@@ -33,6 +36,10 @@ export class RedisSingleFlightCoordinator implements CacheSingleFlightCoordinato
     this.commandTimeoutMs = this.normalizeCommandTimeoutMs(options.commandTimeoutMs)
   }
 
+  /**
+   * Executes `worker` when this process acquires the Redis lock; otherwise runs
+   * `waiter` while another process owns the work.
+   */
   async execute<T>(
     key: string,
     options: CacheSingleFlightExecutionOptions,

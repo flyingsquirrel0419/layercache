@@ -2,10 +2,15 @@ import type { CacheStack } from '../CacheStack'
 import type { CacheWrapOptions } from '../types'
 
 interface CachedMethodDecoratorOptions<TArgs extends unknown[]> extends CacheWrapOptions<TArgs> {
+  /** Returns the CacheStack instance used for the decorated object instance. */
   cache: (instance: unknown) => CacheStack
+  /** Cache key prefix for the method. Defaults to the decorated property name. */
   prefix?: string
 }
 
+/**
+ * Creates a method decorator that caches async method results per instance.
+ */
 export function createCachedMethodDecorator<TArgs extends unknown[] = unknown[]>(
   options: CachedMethodDecoratorOptions<TArgs>
 ): MethodDecorator {
