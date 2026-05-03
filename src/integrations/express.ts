@@ -1,5 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
+import { normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface ExpressLikeRequest {
   method?: string
@@ -19,22 +20,6 @@ interface ExpressLikeResponse {
 }
 
 type NextFunction = (error?: unknown) => void
-
-const SENSITIVE_QUERY_PARAMETERS = new Set([
-  'access_token',
-  'auth',
-  'authorization',
-  'code',
-  'id_token',
-  'jwt',
-  'password',
-  'refresh_token',
-  'secret',
-  'session',
-  'sessionid',
-  'session_id',
-  'token'
-])
 
 interface ExpressCacheMiddlewareOptions extends CacheGetOptions {
   /**
@@ -82,7 +67,7 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       }
 
       const rawUrl = req.originalUrl ?? req.url ?? '/'
-      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeUrl(rawUrl)}`
+      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeHttpCacheUrl(rawUrl)}`
 
       const cached = await cache.get<unknown>(key, undefined, options)
       if (cached !== null) {
@@ -116,20 +101,5 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
     } catch (error) {
       next(error)
     }
-  }
-}
-
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url, 'http://localhost')
-    for (const name of [...parsed.searchParams.keys()]) {
-      if (SENSITIVE_QUERY_PARAMETERS.has(name.toLowerCase())) {
-        parsed.searchParams.delete(name)
-      }
-    }
-    parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
-  } catch {
-    return url
   }
 }

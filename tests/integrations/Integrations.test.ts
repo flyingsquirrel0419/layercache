@@ -542,9 +542,16 @@ describe('createExpressCacheMiddleware', () => {
       json: vi.fn((body: unknown) => body)
     }
 
-    await middleware({ method: 'GET', url: '/users?token=secret&b=2&code=oauth&a=1&session=abc' }, response, () => {
-      response.json({ ok: true })
-    })
+    await middleware(
+      {
+        method: 'GET',
+        url: '/users?token=secret&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc'
+      },
+      response,
+      () => {
+        response.json({ ok: true })
+      }
+    )
 
     expect(setSpy).toHaveBeenCalledWith('GET:/users?a=1&b=2', { ok: true }, expect.any(Object))
   })
@@ -810,7 +817,10 @@ describe('createHonoCacheMiddleware', () => {
     const setSpy = vi.spyOn(cache, 'set')
     const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
     const context = {
-      req: { method: 'GET', path: '/users?token=secret&b=2&code=oauth&a=1&session=abc' },
+      req: {
+        method: 'GET',
+        path: '/users?token=secret&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc'
+      },
       header: vi.fn(),
       json: vi.fn((body) => body)
     }

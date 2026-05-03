@@ -1,21 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
-
-const SENSITIVE_QUERY_PARAMETERS = new Set([
-  'access_token',
-  'auth',
-  'authorization',
-  'code',
-  'id_token',
-  'jwt',
-  'password',
-  'refresh_token',
-  'secret',
-  'session',
-  'sessionid',
-  'session_id',
-  'token'
-])
+import { normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface HonoLikeRequest {
   method?: string
@@ -63,7 +48,7 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     }
 
     const rawPath = context.req.path ?? context.req.url ?? '/'
-    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeUrl(rawPath)}`
+    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeHttpCacheUrl(rawPath)}`
 
     const cached = await cache.get(key, undefined, options)
     if (cached !== null) {
@@ -85,20 +70,5 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     }
 
     await next()
-  }
-}
-
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url, 'http://localhost')
-    for (const name of [...parsed.searchParams.keys()]) {
-      if (SENSITIVE_QUERY_PARAMETERS.has(name.toLowerCase())) {
-        parsed.searchParams.delete(name)
-      }
-    }
-    parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
-  } catch {
-    return url
   }
 }
