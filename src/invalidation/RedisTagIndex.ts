@@ -1,5 +1,5 @@
 import type Redis from 'ioredis'
-import type { CacheTagIndex } from '../types'
+import type { CacheLogger, CacheTagIndex } from '../types'
 import { PatternMatcher } from './PatternMatcher'
 
 const DEFAULT_KNOWN_KEYS_SHARDS = 16
@@ -13,6 +13,12 @@ interface RedisTagIndexOptions {
   scanCount?: number
   /** Number of shards for known-key sets. Defaults to 16. */
   knownKeysShards?: number
+  /** Optional logger for legacy index warnings. */
+  logger?: CacheLogger
+}
+
+interface RedisTagIndexMigrationResult {
+  migratedKeys: number
 }
 
 export class RedisTagIndex implements CacheTagIndex {
@@ -20,12 +26,15 @@ export class RedisTagIndex implements CacheTagIndex {
   private readonly prefix: string
   private readonly scanCount: number
   private readonly knownKeysShards: number
+  private readonly logger?: CacheLogger
+  private warnedLegacyKnownKeys = false
 
   constructor(options: RedisTagIndexOptions) {
     this.client = options.client
     this.prefix = options.prefix ?? 'layercache:tag-index'
     this.scanCount = options.scanCount ?? 100
     this.knownKeysShards = normalizeKnownKeysShards(options.knownKeysShards)
+    this.logger = options.logger
   }
 
   /**
@@ -70,6 +79,9 @@ export class RedisTagIndex implements CacheTagIndex {
     const pipeline = this.client.pipeline()
 
     pipeline.srem(this.knownKeysKeyFor(key), key)
+    if (this.knownKeysShards > 1) {
+      pipeline.srem(this.legacyKnownKeysKey(), key)
+    }
     pipeline.del(keyTagsKey)
 
     for (const tag of existingTags) {
@@ -106,25 +118,8 @@ export class RedisTagIndex implements CacheTagIndex {
    * Returns known keys that start with a prefix.
    */
   async keysForPrefix(prefix: string): Promise<string[]> {
-    const matches: string[] = []
-    for (const knownKeysKey of this.knownKeysKeys()) {
-      let cursor = '0'
-
-      do {
-        const [nextCursor, keys] = await this.client.sscan(knownKeysKey, cursor, 'COUNT', this.scanCount)
-        cursor = nextCursor
-        matches.push(...keys.filter((key) => key.startsWith(prefix)))
-      } while (cursor !== '0')
-    }
-
-    return matches
-  }
-
-  /**
-   * Visits known keys that start with a prefix.
-   */
-  async forEachKeyForPrefix(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
-    for (const knownKeysKey of this.knownKeysKeys()) {
+    const matches = new Set<string>()
+    for (const knownKeysKey of await this.knownKeysKeysForRead()) {
       let cursor = '0'
 
       do {
@@ -132,6 +127,29 @@ export class RedisTagIndex implements CacheTagIndex {
         cursor = nextCursor
         for (const key of keys) {
           if (key.startsWith(prefix)) {
+            matches.add(key)
+          }
+        }
+      } while (cursor !== '0')
+    }
+
+    return [...matches]
+  }
+
+  /**
+   * Visits known keys that start with a prefix.
+   */
+  async forEachKeyForPrefix(prefix: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    const visited = new Set<string>()
+    for (const knownKeysKey of await this.knownKeysKeysForRead()) {
+      let cursor = '0'
+
+      do {
+        const [nextCursor, keys] = await this.client.sscan(knownKeysKey, cursor, 'COUNT', this.scanCount)
+        cursor = nextCursor
+        for (const key of keys) {
+          if (key.startsWith(prefix) && !visited.has(key)) {
+            visited.add(key)
             await visitor(key)
           }
         }
@@ -150,32 +168,8 @@ export class RedisTagIndex implements CacheTagIndex {
    * Returns known keys matching a wildcard pattern.
    */
   async matchPattern(pattern: string): Promise<string[]> {
-    const matches: string[] = []
-    for (const knownKeysKey of this.knownKeysKeys()) {
-      let cursor = '0'
-
-      do {
-        const [nextCursor, keys] = await this.client.sscan(
-          knownKeysKey,
-          cursor,
-          'MATCH',
-          pattern,
-          'COUNT',
-          this.scanCount
-        )
-        cursor = nextCursor
-        matches.push(...keys.filter((key) => PatternMatcher.matches(pattern, key)))
-      } while (cursor !== '0')
-    }
-
-    return matches
-  }
-
-  /**
-   * Visits known keys matching a wildcard pattern.
-   */
-  async forEachKeyMatchingPattern(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
-    for (const knownKeysKey of this.knownKeysKeys()) {
+    const matches = new Set<string>()
+    for (const knownKeysKey of await this.knownKeysKeysForRead()) {
       let cursor = '0'
 
       do {
@@ -190,6 +184,36 @@ export class RedisTagIndex implements CacheTagIndex {
         cursor = nextCursor
         for (const key of keys) {
           if (PatternMatcher.matches(pattern, key)) {
+            matches.add(key)
+          }
+        }
+      } while (cursor !== '0')
+    }
+
+    return [...matches]
+  }
+
+  /**
+   * Visits known keys matching a wildcard pattern.
+   */
+  async forEachKeyMatchingPattern(pattern: string, visitor: (key: string) => void | Promise<void>): Promise<void> {
+    const visited = new Set<string>()
+    for (const knownKeysKey of await this.knownKeysKeysForRead()) {
+      let cursor = '0'
+
+      do {
+        const [nextCursor, keys] = await this.client.sscan(
+          knownKeysKey,
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          this.scanCount
+        )
+        cursor = nextCursor
+        for (const key of keys) {
+          if (PatternMatcher.matches(pattern, key) && !visited.has(key)) {
+            visited.add(key)
             await visitor(key)
           }
         }
@@ -207,6 +231,37 @@ export class RedisTagIndex implements CacheTagIndex {
     }
 
     await this.client.del(...indexKeys)
+  }
+
+  async migrateLegacyKnownKeys(): Promise<RedisTagIndexMigrationResult> {
+    if (this.knownKeysShards === 1) {
+      return { migratedKeys: 0 }
+    }
+
+    const legacyKey = this.legacyKnownKeysKey()
+    let cursor = '0'
+    let migratedKeys = 0
+
+    do {
+      const [nextCursor, keys] = await this.client.sscan(legacyKey, cursor, 'COUNT', this.scanCount)
+      cursor = nextCursor
+      if (keys.length === 0) {
+        continue
+      }
+
+      const pipeline = this.client.pipeline()
+      for (const key of keys) {
+        pipeline.sadd(this.knownKeysKeyFor(key), key)
+      }
+      await pipeline.exec()
+      migratedKeys += keys.length
+    } while (cursor !== '0')
+
+    if (migratedKeys > 0) {
+      await this.client.del(legacyKey)
+    }
+
+    return { migratedKeys }
   }
 
   private async scanIndexKeys(): Promise<string[]> {
@@ -231,12 +286,47 @@ export class RedisTagIndex implements CacheTagIndex {
     return `${this.prefix}:keys:${simpleHash(key) % this.knownKeysShards}`
   }
 
+  private async knownKeysKeysForRead(): Promise<string[]> {
+    if (this.knownKeysShards === 1) {
+      return [this.legacyKnownKeysKey()]
+    }
+
+    const shardedKeys = this.knownKeysKeys()
+    const legacyKey = this.legacyKnownKeysKey()
+    const legacyExists = (await this.client.exists(legacyKey)) > 0
+    if (!legacyExists) {
+      return shardedKeys
+    }
+
+    this.warnLegacyKnownKeys(legacyKey)
+    return [legacyKey, ...shardedKeys]
+  }
+
   private knownKeysKeys(): string[] {
     if (this.knownKeysShards === 1) {
       return [`${this.prefix}:keys`]
     }
 
     return Array.from({ length: this.knownKeysShards }, (_, index) => `${this.prefix}:keys:${index}`)
+  }
+
+  private legacyKnownKeysKey(): string {
+    return `${this.prefix}:keys`
+  }
+
+  private warnLegacyKnownKeys(legacyKey: string): void {
+    if (this.warnedLegacyKnownKeys) {
+      return
+    }
+
+    this.warnedLegacyKnownKeys = true
+    const message =
+      'RedisTagIndex detected a legacy RedisTagIndex known-key set. Run `layercache migrate-tag-index` to migrate keys into the sharded layout.'
+    if (this.logger?.warn) {
+      this.logger.warn(message, { legacyKey, knownKeysShards: this.knownKeysShards })
+      return
+    }
+    console.warn(`[layercache] ${message}`, { legacyKey, knownKeysShards: this.knownKeysShards })
   }
 
   private keyTagsKey(key: string): string {

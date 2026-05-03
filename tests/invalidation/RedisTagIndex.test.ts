@@ -1,5 +1,5 @@
 import Redis from 'ioredis-mock'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RedisTagIndex } from '../../src/invalidation/RedisTagIndex'
 
 describe('RedisTagIndex', () => {
@@ -80,6 +80,32 @@ describe('RedisTagIndex', () => {
 
     expect(indexKeys).toEqual(expect.arrayContaining([expect.stringMatching(/^tags:default-shards:keys:\d+$/)]))
     expect(indexKeys).not.toContain('tags:default-shards:keys')
+    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+  })
+
+  it('reads and warns about legacy unsharded known-key sets after the default shard upgrade', async () => {
+    const redis = new Redis()
+    const logger = { warn: vi.fn() }
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:legacy', logger })
+
+    await redis.sadd('tags:legacy:keys', 'user:legacy', 'post:legacy')
+    await index.touch('user:sharded')
+
+    await expect(index.keysForPrefix('user:')).resolves.toEqual(expect.arrayContaining(['user:legacy', 'user:sharded']))
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('legacy RedisTagIndex known-key set'),
+      expect.objectContaining({ legacyKey: 'tags:legacy:keys' })
+    )
+  })
+
+  it('migrates legacy known keys into the configured shard layout', async () => {
+    const redis = new Redis()
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:migrate' })
+
+    await redis.sadd('tags:migrate:keys', 'user:1', 'user:2', 'post:1')
+
+    await expect(index.migrateLegacyKnownKeys()).resolves.toEqual({ migratedKeys: 3 })
+    await expect(redis.smembers('tags:migrate:keys')).resolves.toEqual([])
     await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
   })
 

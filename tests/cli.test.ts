@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // We test the exported `main` function with mocked ioredis
 let connectImpl = async () => undefined
+let migrateCalls = 0
 
 vi.mock('ioredis', () => {
   function makeClient() {
@@ -27,7 +28,11 @@ vi.mock('ioredis', () => {
 vi.mock('../src/invalidation/RedisTagIndex', () => ({
   RedisTagIndex: function RedisTagIndex() {
     return {
-      keysForTag: async () => ['tag:key:1', 'tag:key:2']
+      keysForTag: async () => ['tag:key:1', 'tag:key:2'],
+      migrateLegacyKnownKeys: async () => {
+        migrateCalls += 1
+        return { migratedKeys: 2 }
+      }
     }
   }
 }))
@@ -38,6 +43,7 @@ describe('CLI — main()', () => {
 
   beforeEach(() => {
     connectImpl = async () => undefined
+    migrateCalls = 0
     stdoutOutput = []
     stderrOutput = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -144,5 +150,13 @@ describe('CLI — main()', () => {
     await main(['stats', '--redis', 'redis://localhost:6379'])
     expect(stderrOutput.join('')).toContain('Warning')
     expect(stderrOutput.join('')).toContain('redis://')
+  })
+
+  it('runs RedisTagIndex legacy known-key migrations', async () => {
+    const { main } = await import('../src/cli')
+    await main(['migrate-tag-index', '--redis', 'redis://localhost:6379', '--tag-index-prefix', 'tags:migrate'])
+
+    expect(migrateCalls).toBe(1)
+    expect(stdoutOutput.join('')).toContain('"migratedKeys": 2')
   })
 })
