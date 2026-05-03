@@ -179,4 +179,19 @@ describe('CLI — main()', () => {
     expect(output).toContain('"totalKeys": 3')
     expect(stderrOutput.join('')).toContain('stopped scanning after 3 keys')
   })
+
+  it('does not let one parse error block a later exported main() call', async () => {
+    const { main } = await import('../src/cli')
+
+    await main(['stats', '--redis', 'redis://localhost:6379', '--limit', 'nope'])
+    expect(process.exitCode).toBe(1)
+
+    stdoutOutput = []
+    stderrOutput = []
+    await main(['stats', '--redis', 'redis://localhost:6379', '--limit', '2'])
+
+    expect(process.exitCode).toBeUndefined()
+    expect(stdoutOutput.join('')).toContain('"totalKeys": 2')
+    expect(stderrOutput.join('')).toContain('stopped scanning after 2 keys')
+  })
 })

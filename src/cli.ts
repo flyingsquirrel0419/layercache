@@ -16,11 +16,13 @@ interface ParsedArgs {
   scanLimit?: number
   requireTls?: boolean
   force?: boolean
+  parseError?: boolean
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  process.exitCode = undefined
   const args = parseArgs(argv)
-  if (process.exitCode === 1) {
+  if (args.parseError) {
     return
   }
   if (!args.command || !args.redisUrl) {
@@ -182,6 +184,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       if (!value || value.startsWith('--')) {
         process.stderr.write('Error: --redis requires a value (e.g. redis://localhost:6379)\n')
         process.exitCode = 1
+        parsed.parseError = true
         return parsed
       }
       parsed.redisUrl = value
@@ -202,12 +205,14 @@ function parseArgs(argv: string[]): ParsedArgs {
       if (!value || value.startsWith('--')) {
         process.stderr.write('Error: --limit requires a positive integer value.\n')
         process.exitCode = 1
+        parsed.parseError = true
         return parsed
       }
       const limit = Number(value)
       if (!Number.isSafeInteger(limit) || limit <= 0) {
         process.stderr.write('Error: --limit requires a positive integer value.\n')
         process.exitCode = 1
+        parsed.parseError = true
         return parsed
       }
       parsed.scanLimit = limit
