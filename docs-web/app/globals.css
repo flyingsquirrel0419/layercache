@@ -1,45 +1,69 @@
 @import "tailwindcss";
 
 :root {
-  --color-background: #fafafa;
+  --color-background: #ffffff;
   --color-surface: #ffffff;
-  --color-border: #e5e5e5;
-  --color-text-primary: #1a1a2e;
-  --color-text-secondary: #6b7280;
-  --color-accent: #4f46e5;
-  --color-accent-light: #6366f1;
+  --color-border: #000000;
+  --color-text-primary: #000000;
+  --color-text-secondary: #4b4b4b;
+  --color-muted: #afafaf;
+  --color-chip: #efefef;
+  --color-hover: #e2e2e2;
+  --color-accent: #000000;
+  --color-accent-light: #000000;
+  --shadow-card: rgba(0, 0, 0, 0.12) 0px 4px 16px 0px;
+  --shadow-float: rgba(0, 0, 0, 0.16) 0px 2px 8px 0px;
 }
 
 .dark {
-  --color-background: #0a0a0f;
-  --color-surface: #141420;
-  --color-border: #1e1e35;
-  --color-text-primary: #e4e4ef;
-  --color-text-secondary: #8888a8;
-  --color-accent: #6366f1;
-  --color-accent-light: #818cf8;
+  --color-background: #000000;
+  --color-surface: #0f0f0f;
+  --color-border: #ffffff;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #c7c7c7;
+  --color-muted: #8a8a8a;
+  --color-chip: #1f1f1f;
+  --color-hover: #2a2a2a;
+  --color-accent: #ffffff;
+  --color-accent-light: #ffffff;
+  --shadow-card: rgba(255, 255, 255, 0.14) 0px 4px 16px 0px;
+  --shadow-float: rgba(255, 255, 255, 0.18) 0px 2px 8px 0px;
 }
 
-@keyframes pulse-slow {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+html {
+  background: var(--color-background);
 }
 
-.animate-pulse-slow {
-  animation: pulse-slow 6s ease-in-out infinite;
+body {
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
-.animation-delay-2000 {
-  animation-delay: 2s;
+::selection {
+  background: var(--color-text-primary);
+  color: var(--color-background);
+}
+
+.uber-card {
+  background: var(--color-surface);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
+
+.uber-pill {
+  border-radius: 999px;
+}
+
+.uber-container {
+  max-width: 1136px;
+  margin-inline: auto;
 }
 
 .prose-custom h2 {
-  font-size: 1.5rem;
+  font-size: 2.25rem;
   font-weight: 700;
+  line-height: 1.22;
   margin-top: 2.5rem;
   margin-bottom: 1rem;
   padding-bottom: 0.5rem;
@@ -47,15 +71,17 @@
 }
 
 .prose-custom h3 {
-  font-size: 1.25rem;
-  font-weight: 600;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.33;
   margin-top: 2rem;
   margin-bottom: 0.75rem;
 }
 
 .prose-custom p {
   margin-bottom: 1rem;
-  line-height: 1.75;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
 }
 
 .prose-custom ul, .prose-custom ol {
@@ -76,17 +102,17 @@
 }
 
 .prose-custom a {
-  color: var(--color-accent);
+  color: var(--color-text-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .prose-custom a:hover {
-  color: var(--color-accent-light);
+  color: var(--color-text-secondary);
 }
 
 .prose-custom blockquote {
-  border-left: 4px solid var(--color-accent);
+  border-left: 4px solid var(--color-text-primary);
   padding-left: 1rem;
   margin: 1.5rem 0;
   color: var(--color-text-secondary);
@@ -96,4 +122,45 @@
 .prose-custom hr {
   border-color: var(--color-border);
   margin: 2rem 0;
+}
+
+.dark .bg-white,
+.dark .bg-white\/95 {
+  background-color: var(--color-background) !important;
+}
+
+.dark .bg-\[\#fbfbfb\],
+.dark .bg-\[\#f3f3f3\] {
+  background-color: var(--color-surface) !important;
+}
+
+.dark .bg-\[\#efefef\] {
+  background-color: var(--color-chip) !important;
+}
+
+.dark .text-black {
+  color: var(--color-text-primary) !important;
+}
+
+.dark .text-\[\#4b4b4b\] {
+  color: var(--color-text-secondary) !important;
+}
+
+.dark .text-\[\#afafaf\] {
+  color: var(--color-muted) !important;
+}
+
+.dark .border-black {
+  border-color: var(--color-border) !important;
+}
+
+.dark .border-\[\#e2e2e2\],
+.dark .border-\[\#afafaf\] {
+  border-color: var(--color-hover) !important;
+}
+
+.dark .hover\:bg-\[\#e2e2e2\]:hover,
+.dark .hover\:bg-\[\#f3f3f3\]:hover,
+.dark .hover\:bg-\[\#2a2a2a\]:hover {
+  background-color: var(--color-hover) !important;
 }

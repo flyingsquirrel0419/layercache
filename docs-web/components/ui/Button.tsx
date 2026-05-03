@@ -9,11 +9,11 @@ type ButtonProps = {
 
 const variantClasses = {
   primary:
-    "bg-accent text-white hover:bg-accent-light shadow-sm",
+    "bg-black text-white hover:bg-[#2a2a2a] focus-visible:shadow-[inset_0_0_0_2px_rgb(255,255,255)]",
   secondary:
-    "border border-border text-text-primary hover:bg-surface",
+    "bg-white text-black hover:bg-[#e2e2e2] shadow-[rgba(0,0,0,0.16)_0px_2px_8px_0px]",
   ghost:
-    "text-text-secondary hover:text-text-primary",
+    "bg-[#efefef] text-black hover:bg-[#e2e2e2]",
 };
 
 export default function Button({
@@ -24,7 +24,7 @@ export default function Button({
   ...props
 }: ButtonProps) {
   const baseClasses =
-    "inline-flex items-center justify-center px-5 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150";
+    "inline-flex min-h-11 items-center justify-center px-4 py-2.5 rounded-full text-sm font-medium transition-colors duration-150";
   const classes = `${baseClasses} ${variantClasses[variant]} ${className}`.trim();
 
   if (href) {
