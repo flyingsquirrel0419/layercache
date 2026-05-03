@@ -6,7 +6,7 @@ import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
 
-interface DiskLayerOptions {
+export interface DiskLayerOptions {
   /** Directory where cache entry files are stored. */
   directory: string
   /** Default TTL in milliseconds for writes that do not provide an explicit TTL. */

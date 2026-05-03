@@ -6,14 +6,14 @@ import { unwrapStoredValue } from '../internal/StoredValue'
 import { JsonSerializer } from '../serialization/JsonSerializer'
 import type { CacheLayer, CacheLayerSetManyEntry, CacheSerializer } from '../types'
 
-type CompressionAlgorithm = 'gzip' | 'brotli'
+export type CompressionAlgorithm = 'gzip' | 'brotli'
 
 const BATCH_DELETE_SIZE = 500
 
 const gzipAsync = promisify(gzip)
 const brotliCompressAsync = promisify(brotliCompress)
 
-interface RedisLayerOptions {
+export interface RedisLayerOptions {
   /** ioredis client used for all Redis commands. */
   client: Redis
   /** Default TTL in milliseconds for writes that do not provide an explicit TTL. */

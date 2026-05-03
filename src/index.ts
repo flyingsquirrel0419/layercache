@@ -15,9 +15,11 @@ export { createTrpcCacheMiddleware } from './integrations/trpc'
 export { MemoryLayer } from './layers/MemoryLayer'
 export type { EvictionPolicy, MemoryLayerOptions, MemoryLayerSnapshotEntry } from './layers/MemoryLayer'
 export { RedisLayer } from './layers/RedisLayer'
+export type { CompressionAlgorithm, RedisLayerOptions } from './layers/RedisLayer'
 export { DiskLayer } from './layers/DiskLayer'
+export type { DiskLayerOptions } from './layers/DiskLayer'
 export { MemcachedLayer } from './layers/MemcachedLayer'
-export type { MemcachedClient } from './layers/MemcachedLayer'
+export type { MemcachedClient, MemcachedLayerOptions } from './layers/MemcachedLayer'
 export { JsonSerializer } from './serialization/JsonSerializer'
 export { MsgpackSerializer } from './serialization/MsgpackSerializer'
 export { RedisSingleFlightCoordinator } from './singleflight/RedisSingleFlightCoordinator'
@@ -32,6 +34,7 @@ export {
   type CacheContextOptionsContext,
   type CacheEntryWriteKind,
   type CacheEntryWriteOptions,
+  type CacheGenerationCleanupOptions,
   type CacheDegradationOptions,
   type CacheFetcher,
   type CacheFetcherContext,

@@ -19,7 +19,7 @@ export interface MemcachedClient {
   delete(key: string): Promise<boolean | undefined>
 }
 
-interface MemcachedLayerOptions {
+export interface MemcachedLayerOptions {
   /** Memcached-compatible client implementation. */
   client: MemcachedClient
   /** Default TTL in milliseconds for writes that do not provide an explicit TTL. */
