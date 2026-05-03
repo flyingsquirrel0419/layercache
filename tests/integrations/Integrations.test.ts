@@ -533,6 +533,38 @@ describe('createExpressCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
+  it('does not serve a cached express error response after a later successful response', async () => {
+    const cache = makeCache()
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async (statusCode: number, body: unknown) => {
+      const json = vi.fn((payload: unknown) => payload)
+      const response = {
+        statusCode,
+        setHeader: vi.fn(),
+        json
+      }
+
+      await middleware({ method: 'GET', url: '/users' }, response, () => {
+        calls += 1
+        response.json(body)
+      })
+      await Promise.resolve()
+
+      return { response, json }
+    }
+
+    const errorResponse = await run(500, { error: 'temporary' })
+    const successResponse = await run(200, { ok: true })
+    const hitResponse = await run(200, { ok: 'cached' })
+
+    expect(errorResponse.json).toHaveBeenCalledWith({ error: 'temporary' })
+    expect(successResponse.json).toHaveBeenCalledWith({ ok: true })
+    expect(hitResponse.json).toHaveBeenCalledWith({ ok: true })
+    expect(calls).toBe(2)
+  })
+
   it('falls back to res.end on cached hits when res.json is unavailable', async () => {
     const cache = makeCache()
     const middleware = createExpressCacheMiddleware(cache, {
@@ -787,6 +819,38 @@ describe('createHonoCacheMiddleware', () => {
     await run()
 
     expect(calls).toBe(1)
+  })
+
+  it('does not serve a cached hono error response after a later successful response', async () => {
+    const cache = makeCache()
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async (status: number, body: unknown) => {
+      const json = vi.fn((payload: unknown, responseStatus?: number) => ({ body: payload, status: responseStatus }))
+      const context = {
+        req: { method: 'GET', path: '/users' },
+        header: vi.fn(),
+        json
+      }
+
+      const result = await middleware(context, async () => {
+        calls += 1
+        context.json(body, status)
+      })
+      await Promise.resolve()
+
+      return { context, json, result }
+    }
+
+    const errorResponse = await run(500, { error: 'temporary' })
+    const successResponse = await run(200, { ok: true })
+    const hitResponse = await run(200, { ok: 'cached' })
+
+    expect(errorResponse.json).toHaveBeenCalledWith({ error: 'temporary' }, 500)
+    expect(successResponse.json).toHaveBeenCalledWith({ ok: true }, 200)
+    expect(hitResponse.result).toEqual({ body: { ok: true }, status: undefined })
+    expect(calls).toBe(2)
   })
 
   it('defaults hono requests without a method to GET and falls back to req.url when path is missing', async () => {
