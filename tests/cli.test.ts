@@ -2,13 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // We test the exported `main` function with mocked ioredis
 let connectImpl = async () => undefined
+let scanImpl = async () => ['0', ['key:1', 'key:2']] as [string, string[]]
+let connectCalls = 0
 let migrateCalls = 0
+let tagIndexOptions: unknown[] = []
 
 vi.mock('ioredis', () => {
   function makeClient() {
     return {
-      connect: async () => connectImpl(),
-      scan: async () => ['0', ['key:1', 'key:2']],
+      connect: async () => {
+        connectCalls += 1
+        return connectImpl()
+      },
+      scan: async () => scanImpl(),
       del: async () => 2,
       getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
       ttl: async () => 42,
@@ -26,7 +32,8 @@ vi.mock('ioredis', () => {
 
 // Mock RedisTagIndex to avoid complex setup
 vi.mock('../src/invalidation/RedisTagIndex', () => ({
-  RedisTagIndex: function RedisTagIndex() {
+  RedisTagIndex: function RedisTagIndex(options: unknown) {
+    tagIndexOptions.push(options)
     return {
       keysForTag: async () => ['tag:key:1', 'tag:key:2'],
       migrateLegacyKnownKeys: async () => {
@@ -40,10 +47,15 @@ vi.mock('../src/invalidation/RedisTagIndex', () => ({
 describe('CLI — main()', () => {
   let stdoutOutput: string[]
   let stderrOutput: string[]
+  let originalNodeEnv: string | undefined
 
   beforeEach(() => {
     connectImpl = async () => undefined
+    scanImpl = async () => ['0', ['key:1', 'key:2']]
+    connectCalls = 0
     migrateCalls = 0
+    tagIndexOptions = []
+    originalNodeEnv = process.env.NODE_ENV
     stdoutOutput = []
     stderrOutput = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -60,6 +72,7 @@ describe('CLI — main()', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     process.exitCode = undefined
+    process.env.NODE_ENV = originalNodeEnv
   })
 
   it('prints usage and sets exitCode=1 when no arguments', async () => {
@@ -152,11 +165,91 @@ describe('CLI — main()', () => {
     expect(stderrOutput.join('')).toContain('redis://')
   })
 
+  it('limits Redis scans to 100000 keys by default and warns when truncated', async () => {
+    const firstBatch = Array.from({ length: 60_000 }, (_, index) => `key:${index}`)
+    const secondBatch = Array.from({ length: 60_000 }, (_, index) => `key:${index + firstBatch.length}`)
+    let scanCalls = 0
+    scanImpl = async () => {
+      scanCalls += 1
+      return scanCalls === 1 ? ['1', firstBatch] : ['0', secondBatch]
+    }
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379'])
+
+    const output = stdoutOutput.join('')
+    expect(output).toContain('"totalKeys": 100000')
+    expect(stderrOutput.join('')).toContain('stopped scanning after 100000 keys')
+  })
+
+  it('supports a custom Redis scan limit', async () => {
+    let scanCalls = 0
+    scanImpl = async () => {
+      scanCalls += 1
+      return scanCalls === 1 ? ['1', ['key:1', 'key:2']] : ['0', ['key:3', 'key:4']]
+    }
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379', '--limit', '3'])
+
+    const output = stdoutOutput.join('')
+    expect(output).toContain('"totalKeys": 3')
+    expect(stderrOutput.join('')).toContain('stopped scanning after 3 keys')
+  })
+
+  it('does not let one parse error block a later exported main() call', async () => {
+    const { main } = await import('../src/cli')
+
+    await main(['stats', '--redis', 'redis://localhost:6379', '--limit', 'nope'])
+    expect(process.exitCode).toBe(1)
+
+    stdoutOutput = []
+    stderrOutput = []
+    await main(['stats', '--redis', 'redis://localhost:6379', '--limit', '2'])
+
+    expect(process.exitCode).toBeUndefined()
+    expect(stdoutOutput.join('')).toContain('"totalKeys": 2')
+    expect(stderrOutput.join('')).toContain('stopped scanning after 2 keys')
+  })
+
+  it('rejects plaintext redis:// in production before connecting', async () => {
+    process.env.NODE_ENV = 'production'
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379'])
+
+    expect(process.exitCode).toBe(1)
+    expect(connectCalls).toBe(0)
+    expect(stderrOutput.join('')).toContain('NODE_ENV=production')
+    expect(stderrOutput.join('')).toContain('--allow-plaintext')
+  })
+
+  it('allows plaintext redis:// in production when explicitly overridden', async () => {
+    process.env.NODE_ENV = 'production'
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://localhost:6379', '--allow-plaintext'])
+
+    expect(process.exitCode).toBeUndefined()
+    expect(connectCalls).toBe(1)
+    expect(stderrOutput.join('')).toContain('Warning')
+    expect(stdoutOutput.join('')).toContain('totalKeys')
+  })
+
   it('runs RedisTagIndex legacy known-key migrations', async () => {
     const { main } = await import('../src/cli')
-    await main(['migrate-tag-index', '--redis', 'redis://localhost:6379', '--tag-index-prefix', 'tags:migrate'])
+    await main([
+      'migrate-tag-index',
+      '--redis',
+      'redis://localhost:6379',
+      '--tag-index-prefix',
+      'tags:migrate',
+      '--known-key-shards',
+      '8'
+    ])
 
     expect(migrateCalls).toBe(1)
+    expect(tagIndexOptions).toEqual([expect.objectContaining({ prefix: 'tags:migrate', knownKeysShards: 8 })])
     expect(stdoutOutput.join('')).toContain('"migratedKeys": 2')
   })
 })
