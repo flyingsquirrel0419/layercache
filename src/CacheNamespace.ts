@@ -67,18 +67,30 @@ export class CacheNamespace {
     await this.trackMetrics(() => this.cache.mdelete(keys.map((k) => this.qualify(k))))
   }
 
+  /**
+   * Alias for `delete(key)` scoped to this namespace.
+   */
   async invalidateByKey(key: string): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByKey(this.qualify(key)))
   }
 
+  /**
+   * Alias for `mdelete(keys)` scoped to this namespace.
+   */
   async invalidateByKeys(keys: string[]): Promise<void> {
     await this.trackMetrics(() => this.cache.invalidateByKeys(keys.map((k) => this.qualify(k))))
   }
 
+  /**
+   * Marks one exact namespaced key expired without deleting its stale value.
+   */
   async expireByKey(key: string): Promise<void> {
     await this.trackMetrics(() => this.cache.expireByKey(this.qualify(key)))
   }
 
+  /**
+   * Marks multiple exact namespaced keys expired without deleting their stale values.
+   */
   async expireByKeys(keys: string[]): Promise<void> {
     await this.trackMetrics(() => this.cache.expireByKeys(keys.map((k) => this.qualify(k))))
   }
