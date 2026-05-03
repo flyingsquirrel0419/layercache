@@ -65,6 +65,15 @@ export class MockCacheLayer {
     return this.store.delete(key);
   }
 
+  async expire(key: string): Promise<boolean> {
+    await this.simulateLatency();
+    const entry = this.store.get(key);
+    if (!entry) return false;
+
+    this.store.set(key, { ...entry, freshUntil: Date.now() - 1 });
+    return true;
+  }
+
   async clear(): Promise<void> {
     await this.simulateLatency();
     this.store.clear();
@@ -167,6 +176,29 @@ export class MockCacheStack {
       this.keyTags.delete(key);
     }
     this.log(`[DELETE] Removed "${key}" from all layers`);
+  }
+
+  async invalidateByKey(key: string): Promise<void> {
+    await this.delete(key);
+  }
+
+  async invalidateByKeys(keys: string[]): Promise<void> {
+    for (const key of keys) {
+      await this.delete(key);
+    }
+  }
+
+  async expireByKey(key: string): Promise<void> {
+    for (const layer of this.layers) {
+      await layer.expire(key);
+    }
+    this.log(`[EXPIRE] Marked "${key}" stale in all layers`);
+  }
+
+  async expireByKeys(keys: string[]): Promise<void> {
+    for (const key of keys) {
+      await this.expireByKey(key);
+    }
   }
 
   async invalidateByTag(tag: string): Promise<number> {

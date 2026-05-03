@@ -112,6 +112,38 @@ console.log("Stats:", JSON.stringify(cache.getStats()));
 console.log("Layer info:", JSON.stringify(cache.getLayerInfo()));`,
   },
   {
+    id: "exact-key-apis",
+    title: "Exact-Key APIs",
+    description: "Invalidate or expire individual keys without pattern matching",
+    code: `// Exact-key invalidation and expiration
+const { cache } = createPlaygroundCache();
+
+await cache.set("user:1", { name: "Alice" });
+await cache.set("user:1:posts", [{ id: 1, title: "Hello" }]);
+await cache.set("user:2", { name: "Bob" });
+
+await cache.invalidateByKey("user:1");
+console.log("user:1 after invalidateByKey:", await cache.get("user:1"));
+console.log("user:1:posts stays:", JSON.stringify(await cache.get("user:1:posts")));
+
+await cache.invalidateByKeys(["user:1:posts", "user:2"]);
+console.log("Keys after invalidateByKeys:", JSON.stringify(cache.getLayerInfo()[0].keys));
+
+await cache.set("profile:1", { version: 1 }, { ttl: 60_000, staleWhileRevalidate: 60_000 });
+await cache.expireByKey("profile:1");
+
+const stale = await cache.get("profile:1", async () => {
+  console.log("Refreshing profile:1 in background");
+  return { version: 2 };
+}, { ttl: 60_000, staleWhileRevalidate: 60_000 });
+console.log("expireByKey served stale:", JSON.stringify(stale));
+
+await cache.set("profile:2", { version: 1 }, { ttl: 60_000, staleWhileRevalidate: 60_000 });
+await cache.set("profile:3", { version: 1 }, { ttl: 60_000, staleWhileRevalidate: 60_000 });
+await cache.expireByKeys(["profile:2", "profile:3"]);
+console.log("Expired multiple exact keys");`,
+  },
+  {
     id: "namespaces",
     title: "Namespaces",
     description: "Organize cache with key prefixes",

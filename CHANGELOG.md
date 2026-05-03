@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Version bumped from `2.0.0` to `2.1.0`.
 - Docs-web package metadata and landing page version badge now reflect `2.1.0`.
 - API docs now document exact-key invalidation aliases and stale-preserving expiration methods, including the relationship between `invalidateByKey()` / `invalidateByKeys()` and `delete()` / `mdelete()`.
+- The docs playground now supports and includes a preset for exact-key invalidation and stale-preserving expiration syntax.
 - The docs playground UI was refreshed with clearer light/dark/system theme behavior, visible controls, improved copy fallback behavior, and a clearer two-pane editor/result layout.
 
 ### Fixed
