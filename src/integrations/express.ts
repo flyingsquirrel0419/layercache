@@ -86,13 +86,15 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       if (originalJson) {
         res.json = (body: unknown) => {
           res.setHeader?.('x-cache', 'MISS')
-          // Fire and forget — don't delay the response
-          cache.set(key, body, options).catch((err: unknown) => {
-            cache.emit('error', {
-              operation: 'set',
-              error: err instanceof Error ? err.message : String(err)
+          if (isSuccessfulStatus(res.statusCode)) {
+            // Fire and forget — don't delay the response
+            cache.set(key, body, options).catch((err: unknown) => {
+              cache.emit('error', {
+                operation: 'set',
+                error: err instanceof Error ? err.message : String(err)
+              })
             })
-          })
+          }
           return originalJson(body)
         }
       }
@@ -102,4 +104,8 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       next(error)
     }
   }
+}
+
+function isSuccessfulStatus(statusCode: number | undefined): boolean {
+  return statusCode === undefined || (statusCode >= 200 && statusCode < 300)
 }
