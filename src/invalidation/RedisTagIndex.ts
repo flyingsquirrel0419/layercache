@@ -2,6 +2,8 @@ import type Redis from 'ioredis'
 import type { CacheTagIndex } from '../types'
 import { PatternMatcher } from './PatternMatcher'
 
+const DEFAULT_KNOWN_KEYS_SHARDS = 16
+
 interface RedisTagIndexOptions {
   /** Redis client used for tag and known-key sets. */
   client: Redis
@@ -248,7 +250,7 @@ export class RedisTagIndex implements CacheTagIndex {
 
 function normalizeKnownKeysShards(value: number | undefined): number {
   if (value === undefined) {
-    return 1
+    return DEFAULT_KNOWN_KEYS_SHARDS
   }
 
   if (!Number.isInteger(value) || value <= 0) {

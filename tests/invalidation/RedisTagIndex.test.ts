@@ -68,6 +68,21 @@ describe('RedisTagIndex', () => {
     await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
   })
 
+  it('defaults known-key tracking to 16 shards', async () => {
+    const redis = new Redis()
+    const index = new RedisTagIndex({ client: redis, prefix: 'tags:default-shards' })
+
+    await index.touch('user:1')
+    await index.touch('user:2')
+    await index.touch('post:1')
+
+    const indexKeys = await redis.keys('tags:default-shards:keys*')
+
+    expect(indexKeys).toEqual(expect.arrayContaining([expect.stringMatching(/^tags:default-shards:keys:\d+$/)]))
+    expect(indexKeys).not.toContain('tags:default-shards:keys')
+    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+  })
+
   it('supports pattern scans and async visitor helpers', async () => {
     const redis = new Redis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:visitors', scanCount: 1 })
