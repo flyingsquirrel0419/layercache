@@ -1,5 +1,6 @@
 export { CacheStack } from './CacheStack'
 export { CacheNamespace } from './CacheNamespace'
+export { RedisGenerationStore } from './generation/RedisGenerationStore'
 export { PatternMatcher } from './invalidation/PatternMatcher'
 export { RedisInvalidationBus } from './invalidation/RedisInvalidationBus'
 export { RedisTagIndex } from './invalidation/RedisTagIndex'
