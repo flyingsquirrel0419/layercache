@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { TagIndex } from '../../src/invalidation/TagIndex'
 
 describe('TagIndex', () => {
@@ -20,6 +20,18 @@ describe('TagIndex', () => {
     await index.touch('user:2:profile')
 
     expect(await index.keysForPrefix('user:1:')).toEqual(['user:1:profile', 'user:1:posts'])
+  })
+
+  it('prunes known keys without sorting the full index', async () => {
+    const index = new TagIndex({ maxKnownKeys: 2 })
+    const sort = vi.spyOn(Array.prototype, 'sort')
+
+    await index.touch('user:1')
+    await index.touch('user:2')
+    await index.touch('user:3')
+
+    expect(sort).not.toHaveBeenCalled()
+    sort.mockRestore()
   })
 
   it('matches wildcard patterns through the trie-backed known-key index', async () => {
