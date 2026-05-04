@@ -1,0 +1,45 @@
+{
+  "name": "Layercache Docs Agent",
+  "version": "1.3.2",
+  "description": "Documentation agent for Layercache, a production-grade multi-layer caching toolkit for Node.js. Answers questions about the API, layers, invalidation, resilience, and integrations.",
+  "url": "https://layercache.dev",
+  "provider": {
+    "organization": "Layercache",
+    "url": "https://github.com/flyingsquirrel0419/layercache"
+  },
+  "documentationUrl": "https://layercache.dev/docs",
+  "supportedInterfaces": [
+    {
+      "transport": "http+markdown",
+      "url": "https://layercache.dev/llms.txt",
+      "description": "Layercache documentation is published with Rspress LLMS output for AI agents."
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "defaultInputModes": ["text/plain", "text/markdown"],
+  "defaultOutputModes": ["text/markdown", "text/html"],
+  "skills": [
+    {
+      "id": "search-docs",
+      "name": "Search Docs",
+      "description": "Search the Layercache documentation for APIs, options, and usage patterns.",
+      "tags": ["docs", "search"]
+    },
+    {
+      "id": "get-started",
+      "name": "Get Started Guide",
+      "description": "Walk a developer through installing Layercache and configuring memory, Redis, and disk layers.",
+      "tags": ["tutorial", "install"]
+    },
+    {
+      "id": "api-reference",
+      "name": "API Reference Lookup",
+      "description": "Retrieve reference docs for CacheStack, MemoryLayer, RedisLayer, DiskLayer, invalidation, and resilience APIs.",
+      "tags": ["api", "reference"]
+    }
+  ]
+}

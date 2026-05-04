@@ -1,0 +1,9 @@
+{
+  "resource": "https://layercache.dev",
+  "authorization_servers": [],
+  "scopes_supported": [],
+  "bearer_methods_supported": ["header"],
+  "resource_documentation": "https://layercache.dev/docs/api",
+  "resource_name": "Layercache Documentation & MCP",
+  "resource_policy_uri": "https://layercache.dev/robots.txt"
+}

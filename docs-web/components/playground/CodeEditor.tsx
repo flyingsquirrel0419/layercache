@@ -1,25 +1,24 @@
 "use client";
 
-import { ComponentProps, forwardRef } from "react";
+import styles from "./PlaygroundClient.module.css";
 
-interface CodeEditorProps extends Omit<ComponentProps<"textarea">, "onChange"> {
+interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
+  className?: string;
 }
 
-export const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
-  ({ value, onChange, className = "", ...props }, ref) => {
-    return (
-      <textarea
-        ref={ref}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`h-full min-h-[520px] w-full resize-none border-0 bg-[#fbfbfb] p-5 font-mono text-sm leading-6 text-black outline-none focus:shadow-[inset_0_0_0_2px_rgb(0,0,0)] ${className}`}
-        spellCheck={false}
-        {...props}
-      />
-    );
-  }
-);
+export function CodeEditor({ value, onChange, className }: CodeEditorProps) {
+  const editorClassName = className
+    ? `${styles.codeEditor} ${className}`
+    : styles.codeEditor;
 
-CodeEditor.displayName = "CodeEditor";
+  return (
+    <textarea
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      spellCheck={false}
+      className={editorClassName}
+    />
+  );
+}

@@ -3,23 +3,21 @@ title: "CLI Tool"
 description: "Inspect and manage Redis-backed caches from the command line"
 ---
 
+import { PackageManagerTabs } from "@rspress/core/theme-original";
+
 Layercache provides a command-line interface for inspecting and managing Redis-backed caches. Use it to check statistics, list keys, inspect values, and invalidate data without writing code.
 
 ## Installation
 
 ### Global Install
 
-```bash
-npm install -g layercache
-```
+<PackageManagerTabs command="install -g layercache" />
 
 ### Using npx
 
 No installation required:
 
-```bash
-npx layercache stats --redis redis://localhost:6379
-```
+<PackageManagerTabs command="layercache stats --redis redis://localhost:6379" exec={true} />
 
 ## Commands
 

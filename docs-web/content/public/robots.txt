@@ -1,0 +1,9 @@
+# Layercache robots.txt
+# Content Signals (https://contentsignals.org, draft-romm-aipref-contentsignals)
+# Declares preferences for how this site's public content may be used.
+Content-Signal: search=yes, ai-input=yes, ai-train=no
+
+User-agent: *
+Allow: /
+
+Sitemap: https://layercache.flyingsquirrel.me/sitemap.xml
