@@ -191,6 +191,8 @@ export class CacheStackReader {
       return
     }
 
+    const operations: Array<Promise<void>> = []
+
     for (let index = 0; index <= upToIndex; index += 1) {
       const layer = this.options.layers[index]
       if (!layer || this.options.shouldSkipLayer(layer)) {
@@ -200,16 +202,22 @@ export class CacheStackReader {
       const ttl =
         remainingStoredTtlMs(stored) ??
         this.options.resolveLayerMs(layer.name, options?.ttl, undefined, layer.defaultTtl)
-      try {
-        await layer.set(key, stored, ttl)
-      } catch (error) {
-        await this.options.handleLayerFailure(layer, 'backfill', error)
-        continue
-      }
-      this.options.metricsCollector.increment('backfills')
-      this.options.logger.debug?.('backfill', { key, layer: layer.name })
-      this.options.emit('backfill', { key, layer: layer.name })
+      operations.push(
+        (async () => {
+          try {
+            await layer.set(key, stored, ttl)
+          } catch (error) {
+            await this.options.handleLayerFailure(layer, 'backfill', error)
+            return
+          }
+          this.options.metricsCollector.increment('backfills')
+          this.options.logger.debug?.('backfill', { key, layer: layer.name })
+          this.options.emit('backfill', { key, layer: layer.name })
+        })()
+      )
     }
+
+    await Promise.all(operations)
   }
 
   abortAllRefreshes(): void {
