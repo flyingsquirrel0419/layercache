@@ -411,6 +411,22 @@ const cache = new CacheStack([...], {
 })
 ```
 
+Persist the active generation outside the process when you deploy multiple
+instances or restart workers:
+
+```ts
+import { CacheStack, RedisGenerationStore } from 'layercache'
+
+const generations = new RedisGenerationStore({ client: redis })
+const generation = await generations.getOrInitialize(1)
+
+const cache = new CacheStack([...], { generation })
+
+// Later, rotate all future keys and persist that rotation.
+cache.bumpGeneration()
+await generations.set(cache.getGeneration())
+```
+
 #### `cache.bumpGeneration()`
 
 Rotate cache namespace by incrementing generation.
