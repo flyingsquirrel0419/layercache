@@ -373,7 +373,16 @@ export class CacheStackReader {
       await this.options.sleep(pollIntervalMs)
     }
 
-    return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
+    if (!this.options.singleFlightCoordinator) {
+      return this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
+    }
+
+    return this.options.singleFlightCoordinator.execute(
+      key,
+      this.resolveSingleFlightOptions(),
+      () => this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext),
+      () => this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
+    )
   }
 
   private async fetchAndPopulate<T>(
