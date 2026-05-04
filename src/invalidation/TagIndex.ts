@@ -292,7 +292,7 @@ export class TagIndex implements CacheTagIndex {
     for (let i = 0; i < toRemove && i < sorted.length; i += 1) {
       const entry = sorted[i]
       if (entry) {
-        this.removeKey(entry[0])
+        this.removeKnownKey(entry[0])
       }
     }
   }
