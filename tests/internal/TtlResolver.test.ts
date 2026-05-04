@@ -187,6 +187,18 @@ describe('TtlResolver', () => {
     }
   })
 
+  it('prunes access profiles without sorting the full profile map', () => {
+    const resolver = new TtlResolver({ maxProfileEntries: 2 })
+    const sort = vi.spyOn(Array.prototype, 'sort')
+
+    resolver.recordAccess('a')
+    resolver.recordAccess('b')
+    resolver.recordAccess('c')
+
+    expect(sort).not.toHaveBeenCalled()
+    sort.mockRestore()
+  })
+
   it('falls back across defaults and exercises function policy branches', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-05T10:05:10Z'))

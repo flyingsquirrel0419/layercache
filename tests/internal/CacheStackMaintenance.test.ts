@@ -268,6 +268,21 @@ describe('CacheStackMaintenance', () => {
         expect(keyEpochs.has(`new:${i}`)).toBe(true)
       }
     })
+
+    it('prunes key epochs without sorting the full epoch map', () => {
+      const maintenance = new CacheStackMaintenance()
+      const keyEpochs = (maintenance as unknown as { keyEpochs: Map<string, number> }).keyEpochs
+      const sort = vi.spyOn(Array.prototype, 'sort')
+
+      for (let i = 0; i < 50_001; i++) {
+        keyEpochs.set(`key:${i}`, i)
+      }
+
+      maintenance.bumpKeyEpochs(['trigger'])
+
+      expect(sort).not.toHaveBeenCalled()
+      sort.mockRestore()
+    })
   })
 
   it('starts and stops the write-behind timer only for write-behind mode with a positive interval', async () => {
