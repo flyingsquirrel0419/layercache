@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { createPlaygroundCache } from "../lib/playground/mock-layers";
+import { createPlaygroundCache } from "../lib/playground/mock-layers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

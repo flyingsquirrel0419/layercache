@@ -1,0 +1,56 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://layercache.dev/",
+      "service-desc": [
+        {
+          "href": "https://layercache.dev/.well-known/mcp/server-card.json",
+          "type": "application/json",
+          "title": "MCP Server Card"
+        },
+        {
+          "href": "https://layercache.dev/.well-known/agent-card.json",
+          "type": "application/json",
+          "title": "A2A Agent Card"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://layercache.dev/docs",
+          "type": "text/html",
+          "title": "Layercache Documentation"
+        },
+        {
+          "href": "https://layercache.dev/docs/api",
+          "type": "text/html",
+          "title": "Layercache API Reference"
+        }
+      ],
+      "service-meta": [
+        {
+          "href": "https://layercache.dev/.well-known/agent-skills/index.json",
+          "type": "application/json",
+          "title": "Agent Skills Discovery Index"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://layercache.dev/docs",
+          "type": "text/html"
+        }
+      ],
+      "author": [
+        {
+          "href": "https://github.com/flyingsquirrel0419/layercache",
+          "title": "Layercache on GitHub"
+        }
+      ],
+      "license": [
+        {
+          "href": "https://www.apache.org/licenses/LICENSE-2.0",
+          "title": "Apache License 2.0"
+        }
+      ]
+    }
+  ]
+}

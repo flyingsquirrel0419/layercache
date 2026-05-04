@@ -1,0 +1,337 @@
+.root {
+  color: var(--rp-c-text-1);
+}
+
+.toolbar {
+  align-items: center;
+  border-bottom: 1px solid var(--rp-c-divider);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+}
+
+.presetTabsWrap {
+  min-width: 0;
+  width: 100%;
+}
+
+.presetTabLabel {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.presetTabContent {
+  padding: 0;
+}
+
+.brand {
+  align-items: center;
+  color: inherit;
+  display: inline-flex;
+  gap: 12px;
+  text-decoration: none;
+}
+
+.brand img {
+  height: 28px;
+  object-fit: contain;
+  width: 96px;
+}
+
+.brandTitle {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.toolbarActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.linkButton {
+  align-items: center;
+  background: var(--rp-c-bg-soft);
+  border-radius: 999px;
+  color: var(--rp-c-text-1);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+.runButton {
+  align-items: center;
+  background: var(--rp-c-bg);
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: 8px;
+  color: var(--rp-c-text-2);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 500;
+  gap: 6px;
+  min-height: 36px;
+  overflow: hidden;
+  padding: 0 12px;
+  transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s,
+    transform 0.1s, opacity 0.2s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.runButton:hover {
+  background: var(--rp-c-bg-soft);
+  border-color: var(--rp-c-divider);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 4%);
+  color: var(--rp-c-text-1);
+}
+
+.runButton:active {
+  background: var(--rp-c-bg-soft);
+  box-shadow: none;
+}
+
+.runButtonLoading,
+.runButton:disabled {
+  border-color: var(--rp-c-divider-light);
+  background: var(--rp-c-bg-mute);
+  color: var(--rp-c-text-2);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.headerMeta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.title {
+  font-size: clamp(1.5rem, 3.2vw, 2.3rem);
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.workspace {
+  overflow: hidden;
+}
+
+.workspaceLayout {
+  display: grid;
+  height: 700px;
+  grid-template-columns: minmax(0, 58fr) minmax(0, 42fr);
+}
+
+.panel {
+  background: var(--rp-c-bg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.panel + .panel {
+  border-left: var(--rp-code-block-border)
+}
+
+.panelHeader {
+  align-items: center;
+  border-bottom: var(--rp-code-block-border);
+  display: flex;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 10px 14px;
+}
+
+.panelTitle {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.panelSub {
+  color: var(--rp-c-text-2);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.panelBody {
+  flex: 1;
+  min-height: 0;
+}
+
+.editorSurface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.editorArea {
+  background: var(--rp-c-bg);
+  flex: 1;
+  min-height: 0;
+}
+
+.codeEditor {
+  background: var(--rp-c-bg);
+  border: 0;
+  box-sizing: border-box;
+  color: var(--rp-c-text-1);
+  font-family: var(--rp-font-family-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 0;
+  outline: 0;
+  padding: 14px;
+  resize: none;
+  width: 100%;
+}
+
+.codeEditorFill {
+  height: 100%;
+}
+
+.resultRoot {
+  background: var(--rp-c-bg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.resultTabs {
+  border-bottom: var(--rp-code-block-border);
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.resultTabButton {
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
+.resultTabButtonActive {
+  background: var(--rp-c-bg-soft);
+  color: var(--rp-c-text-1);
+}
+
+.resultTabButtonInactive {
+  background: transparent;
+  color: var(--rp-c-text-2);
+}
+
+.resultBody {
+  background: var(--rp-c-bg-soft);
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.resultPlaceholder {
+  align-items: center;
+  background: var(--rp-c-bg);
+  border: 1px dashed var(--rp-c-divider);
+  border-radius: 8px;
+  color: var(--rp-c-text-2);
+  display: flex;
+  font-size: 14px;
+  justify-content: center;
+  min-height: 250px;
+}
+
+.logList {
+  display: block;
+}
+
+.logLine {
+  font-family: var(--rp-font-family-mono);
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.logLineLog {
+  color: var(--rp-c-text-1);
+}
+
+.logLineError {
+  color: var(--rp-c-danger);
+}
+
+.logLineCache {
+  color: var(--rp-c-brand);
+}
+
+.logTimestamp {
+  opacity: 0.55;
+}
+
+.layerGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.layerCard {
+  background: var(--rp-c-bg);
+  border: 1px solid var(--rp-c-divider);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.layerCardHeader {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.layerName {
+  font-size: 13px;
+}
+
+.layerMeta {
+  color: var(--rp-c-text-2);
+  font-size: 12px;
+}
+
+.layerMetaLine {
+  color: var(--rp-c-text-2);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.layerMetaLineKeys {
+  color: var(--rp-c-text-2);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+@media (max-width: 960px) {
+  .workspaceLayout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    height: 920px;
+  }
+
+  .panel + .panel {
+    border-left: none;
+    border-top: var(--rp-code-block-border);
+  }
+}

@@ -1,0 +1,26 @@
+---
+title: "Comparison"
+description: "Feature comparison across Layercache and alternative caching libraries"
+---
+
+| Feature | Layercache | BentoCache | node-cache-manager | keyv | cacheable |
+| --- | --- | --- | --- | --- | --- |
+| Multi-layer stacking | yes | partial | partial | partial | no |
+| Stampede prevention | yes | partial | no | no | yes |
+| Tag invalidation | yes | yes | no | no | yes |
+| Pattern invalidation | yes | no | no | no | no |
+| Stale-while-revalidate | yes | yes | yes | no | yes |
+| Circuit breaker | yes | yes | no | no | no |
+| Write-behind | yes | no | no | no | no |
+| Adaptive TTL | yes | no | no | no | no |
+| Generation versioning | yes | no | no | no | no |
+| Negative caching | yes | no | no | no | no |
+| Per-layer TTL | yes | yes | no | no | no |
+| Distributed single-flight | yes | no | no | no | no |
+| Cross-server invalidation | yes | yes | no | no | no |
+| Snapshot persistence | yes | no | no | no | no |
+| Memcached support | yes | no | yes | yes | no |
+| Disk layer | yes | yes | no | no | no |
+| Prometheus metrics | yes | yes | no | no | no |
+| OpenTelemetry | yes | no | no | no | no |
+| Admin CLI | yes | no | no | no | no |

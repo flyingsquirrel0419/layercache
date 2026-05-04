@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "./PlaygroundClient.module.css";
+
 interface LogEntry {
   type: "log" | "error" | "cache";
   message: string;
@@ -16,21 +18,30 @@ interface LayerInfo {
 interface ResultPanelProps {
   logs: LogEntry[];
   layerInfo?: LayerInfo[];
+  isRunning: boolean;
+  activeTab: "logs" | "layers";
+  onTabChange: (tab: "logs" | "layers") => void;
 }
 
-export function ResultPanel({ logs, layerInfo }: ResultPanelProps) {
+export function ResultPanel({
+  logs,
+  layerInfo,
+  isRunning,
+  activeTab,
+  onTabChange,
+}: ResultPanelProps) {
   const startTime = logs.length > 0 ? logs[0].timestamp : Date.now();
 
-  const getLogColor = (type: LogEntry["type"]): string => {
+  const getLogClassName = (type: LogEntry["type"]): string => {
     switch (type) {
       case "log":
-        return "text-text-primary";
+        return styles.logLineLog;
       case "error":
-        return "text-black";
+        return styles.logLineError;
       case "cache":
-        return "text-text-primary";
+        return styles.logLineCache;
       default:
-        return "text-text-primary";
+        return styles.logLineLog;
     }
   };
 
@@ -40,47 +51,81 @@ export function ResultPanel({ logs, layerInfo }: ResultPanelProps) {
   };
 
   return (
-    <div className="flex h-full min-h-[520px] flex-col bg-white">
-      {/* Console output */}
-      <div className="flex-1 overflow-y-auto bg-[#fbfbfb] p-5">
-        {logs.length === 0 ? (
-          <div className="flex h-full min-h-[320px] items-center justify-center rounded-lg border border-dashed border-[#afafaf] bg-white text-sm text-[#4b4b4b]">
-            Run code to see output here
+    <div className={styles.resultRoot}>
+      <div className={styles.resultTabs}>
+        <button
+          onClick={() => onTabChange("logs")}
+          className={`${styles.resultTabButton} ${
+            activeTab === "logs"
+              ? styles.resultTabButtonActive
+              : styles.resultTabButtonInactive
+          }`}
+        >
+          Logs
+        </button>
+        <button
+          onClick={() => onTabChange("layers")}
+          className={`${styles.resultTabButton} ${
+            activeTab === "layers"
+              ? styles.resultTabButtonActive
+              : styles.resultTabButtonInactive
+          }`}
+        >
+          Layers
+        </button>
+      </div>
+
+      <div className={styles.resultBody}>
+        {activeTab === "logs" ? (
+          logs.length === 0 ? (
+            <div className={styles.resultPlaceholder}>
+              {isRunning ? "Running..." : "Run code to see output here"}
+            </div>
+          ) : (
+            <div className={styles.logList}>
+              {logs.map((log, index) => (
+                <div
+                  key={index}
+                  className={`${styles.logLine} ${getLogClassName(log.type)}`}
+                >
+                  <span className={styles.logTimestamp}>
+                    {formatTimestamp(log.timestamp)}
+                  </span>{" "}
+                  {log.message}
+                </div>
+              ))}
+            </div>
+          )
+        ) : !layerInfo || layerInfo.length === 0 ? (
+          <div className={styles.resultPlaceholder}>
+            Run code to inspect layer states
           </div>
         ) : (
-          <div className="space-y-1">
-            {logs.map((log, index) => (
-              <div key={index} className={`font-mono text-sm py-0.5 ${getLogColor(log.type)}`}>
-                <span className="opacity-50">{formatTimestamp(log.timestamp)}</span> {log.message}
+          <div className={styles.layerGrid}>
+            {layerInfo.map((layer) => (
+              <div
+                key={layer.name}
+                className={styles.layerCard}
+              >
+                <div className={styles.layerCardHeader}>
+                  <strong className={styles.layerName}>{layer.name}</strong>
+                  <span className={styles.layerMeta}>
+                    {layer.size} {layer.size === 1 ? "item" : "items"}
+                  </span>
+                </div>
+                <div className={styles.layerMetaLine}>
+                  latency: {layer.latencyMs}ms
+                </div>
+                {layer.keys.length > 0 && (
+                  <div className={styles.layerMetaLineKeys}>
+                    keys: {layer.keys.join(", ")}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
-
-      {/* Layer status */}
-      {layerInfo && (
-        <div className="border-t border-black bg-white p-4">
-          <div className="flex flex-wrap gap-2">
-            {layerInfo.map((layer) => (
-              <div
-                key={layer.name}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 shadow-[rgba(0,0,0,0.12)_0px_4px_16px_0px]"
-              >
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    layer.size > 0 ? "bg-black" : "bg-[#afafaf]"
-                  }`}
-                />
-                <span className="text-sm font-medium text-text-primary">{layer.name}</span>
-                <span className="text-xs text-text-secondary">
-                  {layer.size} {layer.size === 1 ? "item" : "items"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
