@@ -296,7 +296,7 @@ export class TagIndex implements CacheTagIndex {
       if (oldestKey === undefined) {
         break
       }
-      this.removeKey(oldestKey)
+      this.removeKnownKey(oldestKey)
     }
   }
 

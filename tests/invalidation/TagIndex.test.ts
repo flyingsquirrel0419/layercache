@@ -2,14 +2,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { TagIndex } from '../../src/invalidation/TagIndex'
 
 describe('TagIndex', () => {
-  it('prunes tag reverse references when known keys are trimmed', async () => {
+  it('keeps tag mappings when known keys are trimmed', async () => {
     const index = new TagIndex({ maxKnownKeys: 2 })
 
     await index.track('user:1', ['users'])
     await index.track('user:2', ['users'])
     await index.track('user:3', ['users'])
 
-    expect(await index.keysForTag('users')).toEqual(['user:2', 'user:3'])
+    expect(await index.keysForTag('users')).toEqual(['user:1', 'user:2', 'user:3'])
+    expect(await index.keysForPrefix('user:')).toEqual(['user:2', 'user:3'])
   })
 
   it('returns prefix matches without scanning unrelated keys', async () => {

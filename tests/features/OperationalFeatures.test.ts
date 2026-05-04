@@ -91,14 +91,17 @@ class SharedCoordinator implements CacheSingleFlightCoordinator {
   }
 }
 
-class AlwaysWaitCoordinator implements CacheSingleFlightCoordinator {
+class WaitThenWorkerCoordinator implements CacheSingleFlightCoordinator {
+  calls = 0
+
   async execute<T>(
     _key: string,
     _options: CacheSingleFlightExecutionOptions,
-    _worker: () => Promise<T>,
+    worker: () => Promise<T>,
     waiter: () => Promise<T>
   ): Promise<T> {
-    return waiter()
+    this.calls += 1
+    return this.calls === 1 ? waiter() : worker()
   }
 }
 
@@ -878,14 +881,16 @@ describe('operational features', () => {
 
   it('falls back to fetching after single-flight waiting times out', async () => {
     const fetcher = vi.fn(async () => 'fresh')
+    const coordinator = new WaitThenWorkerCoordinator()
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
-      singleFlightCoordinator: new AlwaysWaitCoordinator(),
+      singleFlightCoordinator: coordinator,
       singleFlightTimeoutMs: 20,
       singleFlightPollMs: 5
     })
 
     await expect(cache.get('user:1', fetcher)).resolves.toBe('fresh')
 
+    expect(coordinator.calls).toBe(2)
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(cache.getMetrics().singleFlightWaits).toBe(1)
   })

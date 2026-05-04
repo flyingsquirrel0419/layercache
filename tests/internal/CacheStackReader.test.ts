@@ -664,17 +664,18 @@ describe('CacheStackReader', () => {
         get: vi.fn(async () => null)
       })
       options.layers = [layer]
+      const execute = vi.fn(
+        async (
+          _key: string,
+          _opts: unknown,
+          worker: () => Promise<string | null>,
+          waiter: () => Promise<string | null>
+        ) => {
+          return execute.mock.calls.length === 1 ? waiter() : worker()
+        }
+      )
       options.singleFlightCoordinator = {
-        execute: vi.fn(
-          async (
-            _key: string,
-            _opts: unknown,
-            worker: () => Promise<string | null>,
-            waiter: () => Promise<string | null>
-          ) => {
-            return waiter()
-          }
-        )
+        execute
       }
       options.singleFlightTimeoutMs = 100
       options.singleFlightPollMs = 50
@@ -686,6 +687,7 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBe('timeout-fetch')
+      expect(execute).toHaveBeenCalledTimes(2)
     })
   })
 
