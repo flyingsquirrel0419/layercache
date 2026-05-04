@@ -42,3 +42,11 @@ test("integration docs describe HTTP cache safety behavior", async () => {
   assert.match(source, /private_key/);
   assert.match(source, /credentials/);
 });
+
+test("API docs describe adaptive TTL process-local counters", async () => {
+  const source = await readDoc("content/docs/api.mdx");
+
+  assert.match(source, /Adaptive TTL counters are process-local/);
+  assert.match(source, /multi-instance deployments/);
+  assert.match(source, /shared Redis counter/);
+});

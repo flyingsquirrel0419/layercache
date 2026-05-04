@@ -690,6 +690,10 @@ await cache.get('popular-post', fetchPost, {
 })
 ```
 
+Adaptive TTL counters are process-local. In multi-instance deployments, each
+Node.js process ramps TTLs from its own observed hits, so use explicit TTLs or a
+shared Redis counter when every instance must make the same TTL decision.
+
 ### Refresh-Ahead
 
 ```ts
