@@ -4,6 +4,7 @@ import { pluginSitemap } from "@rspress/plugin-sitemap";
 const IS_GITHUB_PAGES = process.env.GITHUB_PAGES === "true";
 const BASE_PATH = process.env.RSPRESS_BASE ?? (IS_GITHUB_PAGES ? "/layercache/" : "/");
 const SITE_URL = (process.env.SITE_URL ?? "https://flyingsquirrel0419.github.io/layercache").replace(/\/+$/, "");
+const withBase = (path: string) => `${BASE_PATH.replace(/\/$/, "")}${path}`;
 
 export default defineConfig({
   root: "content",
@@ -21,22 +22,27 @@ export default defineConfig({
   },
   head: [
     ["meta", { name: "ai-content-declaration", content: "Content-Signal: search=yes, ai-input=yes, ai-train=no" }],
-    ["link", { rel: "api-catalog", href: "/.well-known/api-catalog", type: "application/linkset+json" }],
-    ["link", { rel: "service-desc", href: "/.well-known/mcp/server-card.json", type: "application/json", title: "MCP Server Card" }],
-    ["link", { rel: "service-desc", href: "/.well-known/agent-card.json", type: "application/json", title: "A2A Agent Card" }],
-    ["link", { rel: "agent-skills", href: "/.well-known/agent-skills/index.json", type: "application/json" }],
-    ["link", { rel: "service-doc", href: "/docs/api", type: "text/html", title: "Layercache API Reference" }],
+    ["link", { rel: "api-catalog", href: withBase("/.well-known/api-catalog"), type: "application/linkset+json" }],
+    ["link", { rel: "service-desc", href: withBase("/.well-known/mcp/server-card.json"), type: "application/json", title: "MCP Server Card" }],
+    ["link", { rel: "service-desc", href: withBase("/.well-known/agent-card.json"), type: "application/json", title: "A2A Agent Card" }],
+    ["link", { rel: "agent-skills", href: withBase("/.well-known/agent-skills/index.json"), type: "application/json" }],
+    ["link", { rel: "service-doc", href: withBase("/docs/api"), type: "text/html", title: "Layercache API Reference" }],
   ],
+  builderConfig: {
+    output: {
+      assetPrefix: BASE_PATH,
+    },
+  },
   themeConfig: {
     llmsUI: false,
     nav: [
       {
         text: "Docs",
-        link: "/docs/",
+        link: withBase("/docs/"),
       },
       {
         text: "Playground",
-        link: "/playground",
+        link: withBase("/playground"),
       },
     ],
     sidebar: {
@@ -46,15 +52,15 @@ export default defineConfig({
           items: [
             {
               text: "Overview",
-              link: "/docs/",
+              link: withBase("/docs/"),
             },
             {
               text: "Getting Started",
-              link: "/docs/getting-started",
+              link: withBase("/docs/getting-started"),
             },
             {
               text: "Comparison",
-              link: "/docs/comparison",
+              link: withBase("/docs/comparison"),
             },
           ],
         },
@@ -64,15 +70,15 @@ export default defineConfig({
           items: [
             {
               text: "Tutorial",
-              link: "/docs/tutorial",
+              link: withBase("/docs/tutorial"),
             },
             {
               text: "Migration Guide",
-              link: "/docs/migration",
+              link: withBase("/docs/migration"),
             },
             {
               text: "CLI Tool",
-              link: "/docs/cli",
+              link: withBase("/docs/cli"),
             },
           ],
         },
@@ -82,23 +88,23 @@ export default defineConfig({
           items: [
             {
               text: "CacheStack",
-              link: "/docs/api",
+              link: withBase("/docs/api"),
             },
             {
               text: "Cache Layers",
-              link: "/docs/layers",
+              link: withBase("/docs/layers"),
             },
             {
               text: "Invalidation",
-              link: "/docs/invalidation",
+              link: withBase("/docs/invalidation"),
             },
             {
               text: "Resilience",
-              link: "/docs/resilience",
+              link: withBase("/docs/resilience"),
             },
             {
               text: "Serialization",
-              link: "/docs/serialization",
+              link: withBase("/docs/serialization"),
             },
           ],
         },
@@ -108,15 +114,15 @@ export default defineConfig({
           items: [
             {
               text: "Frameworks",
-              link: "/docs/integrations",
+              link: withBase("/docs/integrations"),
             },
             {
               text: "Observability",
-              link: "/docs/observability",
+              link: withBase("/docs/observability"),
             },
             {
               text: "Distributed",
-              link: "/docs/distributed",
+              link: withBase("/docs/distributed"),
             },
           ],
         },
