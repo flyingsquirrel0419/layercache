@@ -421,9 +421,9 @@ const generation = await generations.getOrInitialize(1)
 
 const cache = new CacheStack([...], { generation })
 
-// Later, rotate all future keys and persist that rotation.
-const nextGeneration = cache.bumpGeneration()
-await generations.set(nextGeneration)
+// Later, atomically rotate all future keys and apply that generation locally.
+const nextGeneration = await generations.bump()
+cache.bumpGeneration(nextGeneration)
 ```
 
 #### `cache.bumpGeneration()`

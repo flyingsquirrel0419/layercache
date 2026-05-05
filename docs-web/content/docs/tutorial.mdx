@@ -167,7 +167,7 @@ For multi-instance deployments, use `RedisTagIndex` so all servers share the sam
 ```ts
 import { RedisTagIndex } from 'layercache'
 
-const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags' })
+const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags', knownKeysShards: 16 })
 const cache = new CacheStack([...], { tagIndex })
 ```
 

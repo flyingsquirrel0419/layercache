@@ -27,6 +27,14 @@ npm test            # Vitest test suite
 npm run build:all   # ESM + CJS build
 ```
 
+Documentation changes should also be checked from the docs app:
+
+```bash
+cd docs-web
+npm run lint        # Type-check Rspress docs and playground code
+npm run build       # Build the GitHub Pages docs output
+```
+
 Run tests in watch mode during development:
 
 ```bash
@@ -38,7 +46,9 @@ npm run test:watch
 - **Formatting** - Use [Biome](https://biomejs.dev/) formatting and lint rules. Run `npm run lint:fix` to auto-fix.
 - **Testing** - Add or update tests whenever behavior changes. We use [Vitest](https://vitest.dev/).
 - **Focus** - Keep changes focused. Avoid mixing unrelated work in one PR.
-- **Documentation** - Keep `README.md`, `docs/`, and `CHANGELOG.md` in sync with user-facing changes.
+- **Documentation** - Keep `README.md`, `docs/`, `docs-web/content/`, and `CHANGELOG.md` in sync with user-facing changes.
+- **Release scope** - Update `package.json`, `package-lock.json`, `docs-web/package.json`, `docs-web/package-lock.json`, and `CHANGELOG.md` together when a PR changes the next release version.
+- **Breaking changes** - Call out migration steps for runtime defaults, CLI behavior, cache-key semantics, Redis data layout, and framework middleware behavior.
 - **Types** - This is a TypeScript-first project. Maintain strong typing.
 
 ## Project Structure
@@ -62,6 +72,8 @@ tests/                  # Mirror of src/ structure
 examples/               # Ready-to-run example projects
 benchmarks/             # Performance benchmarks
 docs/                   # Documentation
+docs-web/               # Rspress documentation site and browser playground
+.github/workflows/      # Validation, release, and GitHub Pages deployment
 ```
 
 ## What to Contribute

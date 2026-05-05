@@ -69,10 +69,10 @@ console.log("First load:", JSON.stringify(data1));
 await new Promise(r => setTimeout(r, 1100));
 
 // This returns stale data immediately while the refresh runs
-const stale = await cache.get("dashboard:metrics", async () => {
+const stale = await cache.get("dashboard:metrics", async ({ state, currentValue }) => {
   await new Promise(r => setTimeout(r, 150));
   fetchCount++;
-  console.log(\`Fetch #\${fetchCount}: Refreshing metrics...\`);
+  console.log(\`Fetch #\${fetchCount}: Refreshing from \${state} value \${JSON.stringify(currentValue)}...\`);
   return { views: 1300, users: 92, revenue: 47000 };
 }, cacheOptions);
 console.log("Stale hit while refresh runs:", JSON.stringify(stale));
@@ -186,7 +186,8 @@ console.log("Expired multiple exact keys");`,
     id: "generation",
     title: "Generation Rotation",
     description: "Rotate cache generations and persist the active generation",
-    code: `// Generation-based invalidation with a persisted generation value
+    code: `// Generation-based invalidation with a persisted generation value.
+// In production, store this with RedisGenerationStore.
 const persistedGeneration = { value: 1 };
 const { cache } = createPlaygroundCache({ generation: persistedGeneration.value });
 

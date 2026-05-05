@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [3.0.0] — 2026-05-05
+
+### Breaking
+
+- `RedisTagIndex` now defaults `knownKeysShards` to 16 instead of the legacy single known-key set. Current releases still read the legacy `<prefix>:keys` set with a warning, but existing Redis tag indexes should be migrated with `layercache migrate-tag-index` before mixed-version or long-lived deployments rely on the sharded layout.
+- Production CLI runs now reject plaintext `redis://` URLs unless `--allow-plaintext` is explicitly passed. Use `rediss://` for production Redis endpoints, or pass the override only for trusted private networks.
+- Implicit Express/Hono URL cache keys now omit sensitive query parameters such as `api_key`, `apikey`, `private_key`, and `credentials`. Existing entries keyed with those parameters included will not be reused by the normalized key path.
+
 ### Added
 
 - CLI `migrate-tag-index` migrates legacy RedisTagIndex known-key sets into the current sharded layout.
@@ -20,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RedisTagIndex` now defaults `knownKeysShards` to 16 and reads the legacy single-set layout with a warning until migrated.
 - Docs-web CLI, distributed deployment, invalidation, API, and framework integration docs now reflect current Redis TLS, scan-limit, signed invalidation, tag-index migration, and HTTP cache-key behavior.
 - Docs playground examples now use current write-option syntax for tags, millisecond TTL option objects, `null` cache misses, and `shouldCache` examples.
-- Docs-web migrated from Next.js to Rspress while preserving generated `.well-known` metadata, robots.txt, sitemap, markdown output, and the interactive playground.
+- Docs-web migrated from Next.js to Rspress while preserving robots.txt, sitemap output, markdown-oriented content, and the interactive playground.
 - Docs deployment now targets GitHub Pages with the Rspress base path and sitemap configured for `https://flyingsquirrel0419.github.io/layercache`.
 - Cache backfill writes now start eligible upper-layer writes in parallel while preserving per-layer failure handling, metrics, and events.
 - Pruning hot paths now avoid full-map sorting for cache maintenance, TTL access profiles, and TagIndex known-key tracking.
@@ -29,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Express and Hono cache middleware now avoid storing non-2xx JSON responses.
 - Hono cache middleware now respects status set via `context.status(status)` before `context.json(body)`.
-- Implicit Express/Hono URL cache keys now omit sensitive query parameters such as `api_key`, `apikey`, `private_key`, and `credentials`.
-- Production CLI runs now reject plaintext `redis://` URLs unless `--allow-plaintext` is explicitly passed.
 - CLI Redis scans now default to 100,000 keys instead of 1,000,000 to reduce memory exposure.
 - TagIndex known-key pruning no longer removes tag mappings, preserving tag-based invalidation even when `maxKnownKeys` trims prefix/pattern indexes.
 - Distributed single-flight waiters that time out now re-enter the coordinator so only a new lock winner fetches after leader failure.

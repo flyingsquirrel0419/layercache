@@ -48,6 +48,8 @@ const cache = new CacheStack([
 ])
 ```
 
+Use `rediss://` Redis URLs for production CLI operations and hosted Redis endpoints. The CLI rejects plaintext `redis://` URLs under `NODE_ENV=production` unless you explicitly pass `--allow-plaintext`.
+
 ### How Layered Reads Work
 
 When you call `cache.get()`:

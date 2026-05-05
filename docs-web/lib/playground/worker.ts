@@ -34,8 +34,11 @@ ctx.onmessage = async (event: MessageEvent) => {
 
       const sandbox = {
         cache,
-        createPlaygroundCache: () => {
-          const instance = createPlaygroundCache((msg: string) => postLog("cache", msg));
+        createPlaygroundCache: (options = {}) => {
+          const instance = createPlaygroundCache({
+            ...options,
+            onLog: (msg: string) => postLog("cache", msg),
+          });
           activeCache = instance.cache;
           return instance;
         },

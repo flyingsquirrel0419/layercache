@@ -19,6 +19,18 @@ Every read follows the same path:
 
 Layercache keeps responses stable under pressure with stale serving, circuit breakers, and timeout guards.
 
+## Version 3.0 Highlights
+
+Layercache 3.0 tightens production defaults and updates the docs/runtime surface for distributed deployments:
+
+- `RedisTagIndex` now uses 16 known-key shards by default, with a `migrate-tag-index` CLI command for older single-set indexes.
+- Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed.
+- Express and Hono implicit URL cache keys strip sensitive query parameters, and non-2xx JSON responses are skipped by default.
+- `RedisInvalidationBus` supports signed invalidation messages, and `RedisGenerationStore` persists generation rotations across instances.
+- The documentation site now runs on Rspress and deploys through GitHub Pages.
+
+Read the [migration guide](./migration#upgrading-to-30) before upgrading an existing Redis-backed deployment.
+
 ## Quick Links
 
 - **[Getting Started](./getting-started)** — Install and configure your first cache stack
