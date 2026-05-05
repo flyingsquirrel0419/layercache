@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="./logo.png" width="520" alt="layercache logo">
+  <img src="./layercache-stampede.gif" width="930" alt="layercache stampede prevention demo">
 </p>
 
 <h1 align="center">layercache</h1>
