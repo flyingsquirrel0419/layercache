@@ -1,10 +1,35 @@
-import { defineConfig } from "@rspress/core";
+import { defineConfig, type UserConfig } from "@rspress/core";
 import { pluginSitemap } from "@rspress/plugin-sitemap";
 
 const IS_GITHUB_PAGES = process.env.GITHUB_PAGES === "true";
-const BASE_PATH = process.env.RSPRESS_BASE ?? (IS_GITHUB_PAGES ? "/layercache/" : "/");
-const SITE_URL = (process.env.SITE_URL ?? "https://flyingsquirrel0419.github.io/layercache").replace(/\/+$/, "");
+const LAYERCACHE_DOMAIN = "layercache.flyingsquirrel.me";
+const CUSTOM_DOMAIN = (process.env.CUSTOM_DOMAIN ?? (IS_GITHUB_PAGES ? LAYERCACHE_DOMAIN : undefined))
+  ?.replace(/^https?:\/\//, "")
+  .replace(/\/+$/, "");
+const DEFAULT_SITE_URL = CUSTOM_DOMAIN
+  ? `https://${CUSTOM_DOMAIN}`
+  : "https://flyingsquirrel0419.github.io/layercache";
+const BASE_PATH = process.env.RSPRESS_BASE ?? (CUSTOM_DOMAIN ? "/" : IS_GITHUB_PAGES ? "/layercache/" : "/");
+const SITE_URL = (process.env.SITE_URL ?? DEFAULT_SITE_URL).replace(/\/+$/, "");
+const GOOGLE_ANALYTICS_ID = process.env.GOOGLE_ANALYTICS_ID;
 const withBase = (path: string) => `${BASE_PATH.replace(/\/$/, "")}${path}`;
+const googleAnalyticsHead: NonNullable<UserConfig["head"]> = GOOGLE_ANALYTICS_ID
+  ? [
+      [
+        "script",
+        {
+          async: "",
+          src: `https://www.googletagmanager.com/gtag/js?id=${GOOGLE_ANALYTICS_ID}`,
+        },
+      ],
+      `\n<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', '${GOOGLE_ANALYTICS_ID}');
+</script>`,
+    ]
+  : [];
 
 export default defineConfig({
   root: "content",
@@ -23,6 +48,7 @@ export default defineConfig({
   head: [
     ["meta", { name: "ai-content-declaration", content: "Content-Signal: search=yes, ai-input=yes, ai-train=no" }],
     ["link", { rel: "service-doc", href: withBase("/docs/api"), type: "text/html", title: "Layercache API Reference" }],
+    ...googleAnalyticsHead,
   ],
   builderConfig: {
     output: {

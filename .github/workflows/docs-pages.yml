@@ -37,8 +37,45 @@ jobs:
         working-directory: docs-web
         env:
           GITHUB_PAGES: "true"
-          SITE_URL: https://flyingsquirrel0419.github.io/layercache
+          CUSTOM_DOMAIN: layercache.flyingsquirrel.me
+          GOOGLE_ANALYTICS_ID: ${{ vars.GOOGLE_ANALYTICS_ID }}
+          SITE_URL: https://layercache.flyingsquirrel.me
         run: npm run build
+
+      - name: Write Pages metadata
+        working-directory: docs-web
+        env:
+          CUSTOM_DOMAIN: layercache.flyingsquirrel.me
+          SITE_URL: https://layercache.flyingsquirrel.me
+        run: |
+          set -eu
+
+          default_site_url="https://flyingsquirrel0419.github.io/layercache"
+          if [ -n "${CUSTOM_DOMAIN:-}" ]; then
+            clean_domain="${CUSTOM_DOMAIN#http://}"
+            clean_domain="${clean_domain#https://}"
+            clean_domain="${clean_domain%/}"
+            printf '%s\n' "${clean_domain}" > doc_build/CNAME
+            site_url="https://${clean_domain}"
+          else
+            site_url="${default_site_url}"
+          fi
+
+          if [ -n "${SITE_URL:-}" ]; then
+            site_url="${SITE_URL%/}"
+          fi
+
+          {
+            printf '%s\n' '# Layercache robots.txt'
+            printf '%s\n' '# Content Signals (https://contentsignals.org, draft-romm-aipref-contentsignals)'
+            printf '%s\n' '# Declares preferences for how this site'\''s public content may be used.'
+            printf '%s\n' 'Content-Signal: search=yes, ai-input=yes, ai-train=no'
+            printf '\n'
+            printf '%s\n' 'User-agent: *'
+            printf '%s\n' 'Allow: /'
+            printf '\n'
+            printf 'Sitemap: %s/sitemap.xml\n' "${site_url}"
+          } > doc_build/robots.txt
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
