@@ -3,7 +3,7 @@ name: Docs Pages
 on:
   push:
     branches:
-      - Merge
+      - main
   workflow_dispatch:
 
 permissions:

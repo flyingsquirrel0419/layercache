@@ -22,10 +22,6 @@ export default defineConfig({
   },
   head: [
     ["meta", { name: "ai-content-declaration", content: "Content-Signal: search=yes, ai-input=yes, ai-train=no" }],
-    ["link", { rel: "api-catalog", href: withBase("/.well-known/api-catalog"), type: "application/linkset+json" }],
-    ["link", { rel: "service-desc", href: withBase("/.well-known/mcp/server-card.json"), type: "application/json", title: "MCP Server Card" }],
-    ["link", { rel: "service-desc", href: withBase("/.well-known/agent-card.json"), type: "application/json", title: "A2A Agent Card" }],
-    ["link", { rel: "agent-skills", href: withBase("/.well-known/agent-skills/index.json"), type: "application/json" }],
     ["link", { rel: "service-doc", href: withBase("/docs/api"), type: "text/html", title: "Layercache API Reference" }],
   ],
   builderConfig: {
