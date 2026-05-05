@@ -6,4 +6,4 @@ Content-Signal: search=yes, ai-input=yes, ai-train=no
 User-agent: *
 Allow: /
 
-Sitemap: https://layercache.flyingsquirrel.me/sitemap.xml
+Sitemap: https://flyingsquirrel0419.github.io/layercache/sitemap.xml

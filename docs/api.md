@@ -114,7 +114,7 @@ Check if a key exists in any layer.
 
 #### `cache.ttl(key): Promise<number | null>`
 
-Get the remaining TTL in milliseconds.
+Get the remaining TTL in milliseconds for a key in the first layer that has it. Returns `null` if the key doesn't exist.
 
 #### `cache.inspect(key): Promise<CacheInspectResult | null>`
 
@@ -145,8 +145,8 @@ Writes to all layers simultaneously.
 await cache.set('user:123', user, {
   ttl: { memory: 60_000, redis: 600_000 },
   tags: ['user', 'user:123'],
-  staleWhileRevalidate: { redis: 30 },
-  staleIfError: { redis: 120 },
+  staleWhileRevalidate: { redis: 30_000 },
+  staleIfError: { redis: 120_000 },
   ttlJitter: { redis: 5_000 }
 })
 
@@ -422,8 +422,8 @@ const generation = await generations.getOrInitialize(1)
 const cache = new CacheStack([...], { generation })
 
 // Later, rotate all future keys and persist that rotation.
-cache.bumpGeneration()
-await generations.set(cache.getGeneration())
+const nextGeneration = cache.bumpGeneration()
+await generations.set(nextGeneration)
 ```
 
 #### `cache.bumpGeneration()`
@@ -451,8 +451,8 @@ All layers implement the `CacheLayer` interface:
 ```ts
 interface CacheLayer {
   readonly name: string
-  readonly defaultTtl: number
-  readonly isLocal: boolean
+  readonly defaultTtl?: number
+  readonly isLocal?: boolean
 
   get<T>(key: string): Promise<T | null>
   getEntry?<T>(key: string): Promise<unknown | null>
@@ -463,6 +463,7 @@ interface CacheLayer {
   deleteMany?(keys: string[]): Promise<void>
   clear(): Promise<void>
   keys?(): Promise<string[]>
+  forEachKey?(visitor: (key: string) => void | Promise<void>): Promise<void>
   has?(key: string): Promise<boolean>
   ttl?(key: string): Promise<number | null>
   size?(): Promise<number>
@@ -505,17 +506,32 @@ new RedisLayer({
 
 ### DiskLayer
 
-Persistent file-based caching with atomic writes.
+Persistent file-based caching with atomic writes and optional at-rest protection.
 
 ```ts
 import { resolve } from 'node:path'
 
 new DiskLayer({
   directory: resolve('./var/cache/layercache'),
-  maxFiles: 10_000,
+  maxFiles: 50_000,
   name: 'disk'
 })
 ```
+
+#### At-Rest Protection
+
+DiskLayer supports AES-256-GCM encryption or HMAC-SHA256 signing to protect cached data on disk:
+
+```ts
+new DiskLayer({
+  directory: resolve('./var/cache/layercache'),
+  encryptionKey: process.env.CACHE_ENCRYPTION_KEY,  // AES-256-GCM encryption
+  signingKey: process.env.CACHE_SIGNING_KEY,         // HMAC-SHA256 signing (ignored if encryptionKey is set)
+  name: 'disk'
+})
+```
+
+Encryption also provides authenticated integrity — a separate `signingKey` is unnecessary when `encryptionKey` is provided.
 
 ### MemcachedLayer
 
@@ -536,7 +552,7 @@ Implement `CacheLayer` to plug in any backend:
 ```ts
 class MyCustomLayer implements CacheLayer {
   readonly name = 'custom'
-  readonly defaultTtl = 300
+  readonly defaultTtl = 300_000
   readonly isLocal = false
 
   async get<T>(key: string): Promise<T | null> { /* ... */ }
@@ -557,17 +573,22 @@ class MyCustomLayer implements CacheLayer {
 | `logger` | `Logger \| boolean` | `false` | Pluggable logger interface or boolean |
 | `metrics` | `boolean` | `true` | Enable/disable metrics collection |
 | `stampedePrevention` | `boolean` | `true` | In-process request deduplication |
+| `stampedeMaxInFlight` | `number` | - | Max concurrent in-flight deduplicated requests |
+| `stampedeEntryTimeoutMs` | `number` | - | Per-entry timeout for stampede guard |
 | `invalidationBus` | `RedisInvalidationBus` | - | Distributed L1 invalidation |
 | `tagIndex` | `TagIndex \| RedisTagIndex` | in-memory | Custom tag tracking |
 | `generation` | `number` | - | Generation prefix for bulk invalidation |
-| `generationCleanup` | `{ batchSize: number }` | - | Auto-prune stale generation keys |
+| `generationCleanup` | `boolean \| { batchSize: number }` | - | Auto-prune stale generation keys |
 | `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
 | `negativeCaching` | `boolean` | `false` | Cache nulls globally |
-| `staleWhileRevalidate` | `number` | - | Global stale-while-revalidate window (milliseconds) |
-| `staleIfError` | `number` | - | Global stale-if-error window (milliseconds) |
-| `adaptiveTtl` | `AdaptiveTtlOptions` | - | Auto-ramp TTLs for hot keys |
+| `negativeTtl` | `number \| LayerTtlMap` | - | Global TTL for negative cache entries |
+| `staleWhileRevalidate` | `number \| LayerTtlMap` | - | Global stale-while-revalidate window (milliseconds) |
+| `staleIfError` | `number \| LayerTtlMap` | - | Global stale-if-error window (milliseconds) |
+| `ttlJitter` | `number \| LayerTtlMap` | - | Global TTL jitter (milliseconds) |
+| `refreshAhead` | `number \| LayerTtlMap` | - | Global refresh-ahead threshold (milliseconds) |
+| `adaptiveTtl` | `boolean \| AdaptiveTtlOptions` | - | Auto-ramp TTLs for hot keys |
 | `circuitBreaker` | `CircuitBreakerOptions` | - | Per-fetcher failure tracking |
-| `gracefulDegradation` | `{ retryAfterMs: number }` | - | Skip failed layers temporarily |
+| `gracefulDegradation` | `boolean \| { retryAfterMs: number }` | - | Skip failed layers temporarily |
 | `writePolicy` | `'strict' \| 'best-effort'` | `'strict'` | Write failure behavior |
 | `writeStrategy` | `'write-through' \| 'write-behind'` | `'write-through'` | Write batching strategy |
 | `writeBehind` | `WriteBehindOptions` | - | Batch size, flush interval, max queue |
@@ -579,6 +600,9 @@ class MyCustomLayer implements CacheLayer {
 | `singleFlightPollMs` | `number` | `50` | Polling interval |
 | `singleFlightRenewIntervalMs` | `number` | - | Lease renewal cadence |
 | `snapshotBaseDir` | `string \| false` | `process.cwd()` | Base directory for file snapshots |
+| `snapshotMaxBytes` | `number \| false` | - | Max snapshot file size |
+| `snapshotMaxEntries` | `number \| false` | - | Max entries in a snapshot |
+| `invalidationMaxKeys` | `number \| false` | - | Safety limit for invalidation scans |
 | `maxProfileEntries` | `number` | `100000` | Max size before pruning internal maps |
 
 ### Per-Operation Options
@@ -733,7 +757,7 @@ entry settings on the same call. Use it for value-dependent `ttl`,
 
 ```ts
 await cache.set('session:abc', data, {
-  ttl: { memory: 30, redis: 3600 }
+  ttl: { memory: 30_000, redis: 3_600_000 }
 })
 ```
 
@@ -826,10 +850,7 @@ new RedisLayer({
 ```ts
 import { RedisSingleFlightCoordinator } from 'layercache'
 
-const coordinator = new RedisSingleFlightCoordinator({
-  client: redis,
-  commandTimeoutMs: 200
-})
+const coordinator = new RedisSingleFlightCoordinator({ client: redis })
 
 new CacheStack([...], {
   singleFlightCoordinator: coordinator,
@@ -843,7 +864,11 @@ new CacheStack([...], {
 ```ts
 import { RedisInvalidationBus } from 'layercache'
 
-const bus = new RedisInvalidationBus({ publisher: redis, subscriber: new Redis() })
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(),
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+})
 
 new CacheStack([...], {
   invalidationBus: bus,
@@ -859,7 +884,7 @@ import { RedisTagIndex } from 'layercache'
 const tagIndex = new RedisTagIndex({
   client: redis,
   prefix: 'myapp:tag-index',
-  knownKeysShards: 8
+  knownKeysShards: 16
 })
 
 new CacheStack([...], { tagIndex })
@@ -946,6 +971,31 @@ const resolvers = {
   }
 }
 ```
+
+### NestJS
+
+Use `CacheStack` directly in your NestJS modules:
+
+```ts
+import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
+import Redis from 'ioredis'
+
+@Module({
+  providers: [
+    {
+      provide: 'CACHE',
+      useFactory: () => new CacheStack([
+        new MemoryLayer({ ttl: 60_000 }),
+        new RedisLayer({ client: new Redis(), ttl: 300_000 })
+      ])
+    }
+  ],
+  exports: ['CACHE']
+})
+export class CacheModule {}
+```
+
+> **Note:** The separate `@cachestack/nestjs` package was removed in v1.3.2. Import directly from `layercache` instead.
 
 ### OpenTelemetry
 

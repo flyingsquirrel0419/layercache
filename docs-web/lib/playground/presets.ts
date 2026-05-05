@@ -183,6 +183,47 @@ await cache.expireByKeys(["profile:2", "profile:3"]);
 console.log("Expired multiple exact keys");`,
   },
   {
+    id: "generation",
+    title: "Generation Rotation",
+    description: "Rotate cache generations and persist the active generation",
+    code: `// Generation-based invalidation with a persisted generation value
+const persistedGeneration = { value: 1 };
+const { cache } = createPlaygroundCache({ generation: persistedGeneration.value });
+
+await cache.set("user:1", { version: 1 });
+console.log("Current generation:", cache.getGeneration());
+console.log("v1 read:", JSON.stringify(await cache.get("user:1")));
+
+const nextGeneration = cache.bumpGeneration();
+persistedGeneration.value = nextGeneration;
+console.log("Persisted generation:", persistedGeneration.value);
+
+console.log("After rotation, same logical key misses:", await cache.get("user:1"));
+
+await cache.set("user:1", { version: 2 });
+console.log("v2 read:", JSON.stringify(await cache.get("user:1")));
+console.log("Layer keys:", JSON.stringify(cache.getLayerInfo()[0].keys));`,
+  },
+  {
+    id: "parallel-backfill",
+    title: "Parallel Backfill",
+    description: "Fill missed upper layers from a lower-layer hit",
+    code: `// Parallel backfill from a lower layer into faster upper layers
+const { cache, layers } = createPlaygroundCache();
+
+await layers.redis.set("catalog:item:1", { id: 1, name: "Widget" }, 120_000);
+console.log("Seeded Redis only");
+console.log("Before read:", JSON.stringify(cache.getLayerInfo(), null, 2));
+
+const item = await cache.get("catalog:item:1", async () => {
+  throw new Error("Fetcher should not run when Redis has the value");
+}, { ttl: 120_000 });
+
+console.log("Read result:", JSON.stringify(item));
+console.log("After read:", JSON.stringify(cache.getLayerInfo(), null, 2));
+console.log("Backfills:", cache.getStats().backfills);`,
+  },
+  {
     id: "namespaces",
     title: "Namespaces",
     description: "Organize cache with key prefixes",

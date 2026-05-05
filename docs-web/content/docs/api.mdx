@@ -72,13 +72,13 @@ const user = await cache.get<User>('user:123', () => db.findUser(123))
 
 // With full options
 const user = await cache.get<User>('user:123', () => db.findUser(123), {
-  ttl: { memory: 30, redis: 600 },
+  ttl: { memory: 30_000, redis: 600_000 },
   tags: ['user', 'user:123'],
   negativeCache: true,
   negativeTtl: 15_000,
   staleWhileRevalidate: 30_000,
   staleIfError: 300_000,
-  ttlJitter: 5
+  ttlJitter: 5_000
 })
 ```
 
@@ -423,8 +423,8 @@ const generation = await generations.getOrInitialize(1)
 const cache = new CacheStack([...], { generation })
 
 // Later, rotate all future keys and persist that rotation.
-cache.bumpGeneration()
-await generations.set(cache.getGeneration())
+const nextGeneration = cache.bumpGeneration()
+await generations.set(nextGeneration)
 ```
 
 #### `cache.bumpGeneration()`
@@ -496,11 +496,14 @@ new RedisLayer({
   prefix: 'myapp:cache:',
   compression: 'gzip',
   compressionThreshold: 1_024,
+  commandTimeoutMs: 200,
   serializer: new MsgpackSerializer(),
   name: 'redis',
   allowUnprefixedClear: false
 })
 ```
+
+`commandTimeoutMs` applies a per-command timeout to Redis round-trips. When a Redis command exceeds this threshold, the layer surfaces an error so `CacheStack` can trigger graceful degradation instead of waiting on a slow dependency indefinitely.
 
 ### DiskLayer
 
@@ -550,7 +553,7 @@ Implement `CacheLayer` to plug in any backend:
 ```ts
 class MyCustomLayer implements CacheLayer {
   readonly name = 'custom'
-  readonly defaultTtl = 300
+  readonly defaultTtl = 300_000
   readonly isLocal = false
 
   async get<T>(key: string): Promise<T | null> { /* ... */ }
@@ -620,6 +623,7 @@ class MyCustomLayer implements CacheLayer {
 | `adaptiveTtl` | `AdaptiveTtlOptions` | Auto-ramp TTL for hot keys |
 | `circuitBreaker` | `CircuitBreakerOptions` | Per-operation circuit breaker |
 | `fetcherRateLimit` | `RateLimitOptions` | Per-operation rate limiting |
+| `contextOptions` | `(context) => CacheEntryWriteOptions` | Override stored entry TTLs/tags from `{ key, value, kind }` right before write |
 | `shouldCache` | `(value: T) => boolean` | Predicate to skip caching specific results |
 
 ---
@@ -730,11 +734,31 @@ await cache.set('custom', value, {
 })
 ```
 
+### Context-Aware Entry Options
+
+```ts
+await cache.get('oauth:token', fetchToken, {
+  ttl: 300_000,
+  contextOptions: ({ value }) => {
+    const token = value as { refreshExpiresInMs: number; tenantId: string }
+    return {
+      ttl: Math.max(1, token.refreshExpiresInMs),
+      tags: ['oauth', `tenant:${token.tenantId}`]
+    }
+  }
+})
+```
+
+`contextOptions()` runs immediately before a cache write and overrides static
+entry settings on the same call. Use it for value-dependent `ttl`,
+`negativeTtl`, `staleWhileRevalidate`, `staleIfError`, `ttlJitter`,
+`adaptiveTtl`, or `tags`.
+
 ### Per-Layer TTL Overrides
 
 ```ts
 await cache.set('session:abc', data, {
-  ttl: { memory: 30, redis: 3600 }
+  ttl: { memory: 30_000, redis: 3_600_000 }
 })
 ```
 
@@ -803,6 +827,8 @@ new RedisLayer({
   compressionThreshold: 1_024  // skip compression for small values
 })
 ```
+
+For large payloads such as HTML fragments, denormalized API responses, or MB-scale documents, prefer `compression: 'brotli'` with a threshold around `1_024 * 1_024` so small values avoid compression overhead while large values pay less network cost.
 
 ### MessagePack Serializer
 

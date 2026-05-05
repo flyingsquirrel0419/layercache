@@ -158,3 +158,43 @@ test("playground cache supports shouldCache and null misses", async () => {
   assert.deepEqual(await cache.get("http:profile"), { ok: true });
   assert.equal(attempts, 2);
 });
+
+test("playground cache supports generation rotation", async () => {
+  const { cache } = createPlaygroundCache({ generation: 1 });
+
+  await cache.set("user:1", { version: 1 });
+  assert.equal(cache.getGeneration(), 1);
+  assert.deepEqual(await cache.get("user:1"), { version: 1 });
+
+  const nextGeneration = cache.bumpGeneration();
+
+  assert.equal(nextGeneration, 2);
+  assert.equal(cache.getGeneration(), 2);
+  assert.equal(await cache.get("user:1"), null);
+
+  await cache.set("user:1", { version: 2 });
+  assert.deepEqual(await cache.get("user:1"), { version: 2 });
+});
+
+test("playground cache backfills missed upper layers from a lower-layer hit", async () => {
+  const logs: string[] = [];
+  const { cache, layers } = createPlaygroundCache({ onLog: (message) => logs.push(message) });
+
+  await layers.redis.set("catalog:item:1", { id: 1 }, 1_000);
+
+  assert.equal(await layers.memory.get("catalog:item:1"), undefined);
+  assert.deepEqual(await cache.get("catalog:item:1"), { id: 1 });
+  assert.deepEqual(await layers.memory.get("catalog:item:1"), { id: 1 });
+  assert.ok(logs.some((message) => message.includes("Filled 1 upper layer")));
+});
+
+test("playground presets include generation and parallel backfill examples", async () => {
+  const presetsPath = resolve(__dirname, "../lib/playground/presets.ts");
+  const source = await readFile(presetsPath, "utf8");
+
+  assert.match(source, /id: "generation"/);
+  assert.match(source, /cache\.getGeneration\(\)/);
+  assert.match(source, /cache\.bumpGeneration\(\)/);
+  assert.match(source, /id: "parallel-backfill"/);
+  assert.match(source, /layers\.redis\.set\("catalog:item:1"/);
+});

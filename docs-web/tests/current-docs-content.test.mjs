@@ -50,3 +50,22 @@ test("API docs describe adaptive TTL process-local counters", async () => {
   assert.match(source, /multi-instance deployments/);
   assert.match(source, /shared Redis counter/);
 });
+
+test("API docs describe generation persistence and context-aware entry options", async () => {
+  const source = await readDoc("content/docs/api.mdx");
+
+  assert.match(source, /RedisGenerationStore/);
+  assert.match(source, /const nextGeneration = cache\.bumpGeneration\(\)/);
+  assert.match(source, /await generations\.set\(nextGeneration\)/);
+  assert.match(source, /Context-Aware Entry Options/);
+  assert.match(source, /contextOptions: \(\{ value \}\)/);
+});
+
+test("docs are configured for GitHub Pages deployment", async () => {
+  const robots = await readDoc("content/public/robots.txt");
+  const config = await readFile(resolve(__dirname, "../rspress.config.ts"), "utf8");
+
+  assert.match(robots, /https:\/\/flyingsquirrel0419\.github\.io\/layercache\/sitemap\.xml/);
+  assert.match(config, /GITHUB_PAGES/);
+  assert.match(config, /\/layercache\//);
+});

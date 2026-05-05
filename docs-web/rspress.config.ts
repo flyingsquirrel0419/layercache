@@ -1,10 +1,13 @@
 import { defineConfig } from "@rspress/core";
 import { pluginSitemap } from "@rspress/plugin-sitemap";
 
-const SITE_URL = (process.env.SITE_URL ?? "https://layercache.flyingsquirrel.me").replace(/\/+$/, "");
+const IS_GITHUB_PAGES = process.env.GITHUB_PAGES === "true";
+const BASE_PATH = process.env.RSPRESS_BASE ?? (IS_GITHUB_PAGES ? "/layercache/" : "/");
+const SITE_URL = (process.env.SITE_URL ?? "https://flyingsquirrel0419.github.io/layercache").replace(/\/+$/, "");
 
 export default defineConfig({
   root: "content",
+  base: BASE_PATH,
   title: "Layercache",
   description: "Production-ready multi-layer caching for Node.js",
   icon: "/logo.png",
