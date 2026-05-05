@@ -61,7 +61,9 @@ export class CacheStackMaintenance {
 
   bumpKeyEpochs(keys: string[]): void {
     for (const key of keys) {
-      this.keyEpochs.set(key, this.currentKeyEpoch(key) + 1)
+      const nextEpoch = this.currentKeyEpoch(key) + 1
+      this.keyEpochs.delete(key)
+      this.keyEpochs.set(key, nextEpoch)
     }
     this.pruneKeyEpochsIfNeeded()
   }
@@ -148,10 +150,13 @@ export class CacheStackMaintenance {
       return
     }
 
-    const sorted = [...this.keyEpochs.entries()].sort((a, b) => a[1] - b[1])
-    const toDelete = Math.ceil(sorted.length * 0.1)
+    const toDelete = Math.ceil(this.keyEpochs.size * 0.1)
     for (let i = 0; i < toDelete; i++) {
-      this.keyEpochs.delete(sorted[i][0])
+      const oldestKey = this.keyEpochs.keys().next().value
+      if (oldestKey === undefined) {
+        break
+      }
+      this.keyEpochs.delete(oldestKey)
     }
   }
 }

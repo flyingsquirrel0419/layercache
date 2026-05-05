@@ -1,5 +1,6 @@
 node_modules/
 .next/
+doc_build/
 .vercel/
 out/
 .vercel

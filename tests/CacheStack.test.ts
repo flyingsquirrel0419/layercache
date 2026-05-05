@@ -451,6 +451,16 @@ describe('CacheStack', () => {
     await expect(redisLayer.get('v1:user:1')).resolves.toBeNull()
   })
 
+  it('reports the active generation number', () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], { generation: 1 })
+
+    expect(cache.getGeneration()).toBe(1)
+    expect(cache.bumpGeneration()).toBe(2)
+    expect(cache.getGeneration()).toBe(2)
+    expect(cache.bumpGeneration(7)).toBe(7)
+    expect(cache.getGeneration()).toBe(7)
+  })
+
   it('reports generation cleanup failures through the public generation bump flow', async () => {
     const warn = vi.fn()
     const brokenCleanupLayer: CacheLayer = {

@@ -1,5 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
+import { normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface HonoLikeRequest {
   method?: string
@@ -13,6 +14,7 @@ interface HonoLikeRequest {
 interface HonoLikeContext {
   req: HonoLikeRequest
   header?: (name: string, value: string) => void
+  status?: (status: number) => unknown
   json: (body: unknown, status?: number) => Response | Promise<Response> | unknown
 }
 
@@ -47,7 +49,7 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     }
 
     const rawPath = context.req.path ?? context.req.url ?? '/'
-    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeUrl(rawPath)}`
+    const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeHttpCacheUrl(rawPath)}`
 
     const cached = await cache.get(key, undefined, options)
     if (cached !== null) {
@@ -56,15 +58,26 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
       return context.json(cached)
     }
 
+    let currentStatus: number | undefined
+    const originalStatus = context.status?.bind(context)
+    if (originalStatus) {
+      context.status = (status: number) => {
+        currentStatus = status
+        return originalStatus(status)
+      }
+    }
+
     const originalJson = context.json.bind(context)
     context.json = (body: unknown, status?: number) => {
       context.header?.('x-cache', 'MISS')
-      cache.set(key, body, options).catch((err: unknown) => {
-        cache.emit('error', {
-          operation: 'set',
-          error: err instanceof Error ? err.message : String(err)
+      if (isSuccessfulStatus(status ?? currentStatus)) {
+        cache.set(key, body, options).catch((err: unknown) => {
+          cache.emit('error', {
+            operation: 'set',
+            error: err instanceof Error ? err.message : String(err)
+          })
         })
-      })
+      }
       return originalJson(body, status)
     }
 
@@ -72,12 +85,6 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
   }
 }
 
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url, 'http://localhost')
-    parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
-  } catch {
-    return url
-  }
+function isSuccessfulStatus(statusCode: number | undefined): boolean {
+  return statusCode === undefined || (statusCode >= 200 && statusCode < 300)
 }

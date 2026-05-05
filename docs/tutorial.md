@@ -69,7 +69,7 @@ With options:
 const user = await cache.get<User>('user:123', () => db.findUser(123), {
   ttl: { memory: 30_000, redis: 600_000 },  // short L1, longer L2
   tags: ['user', 'user:123'],       // for bulk invalidation later
-  ttlJitter: 5                      // prevent synchronized expiry
+  ttlJitter: 5_000                  // prevent synchronized expiry
 })
 ```
 
@@ -166,7 +166,7 @@ For multi-instance deployments, use `RedisTagIndex` so all servers share the sam
 ```ts
 import { RedisTagIndex } from 'layercache'
 
-const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags' })
+const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags', knownKeysShards: 16 })
 const cache = new CacheStack([...], { tagIndex })
 ```
 

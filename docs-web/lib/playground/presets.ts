@@ -31,11 +31,13 @@ console.log("Stats:", JSON.stringify(cache.getStats()));`,
     code: `// Multi-layer cache with backfill
 const { cache, layers } = createPlaygroundCache();
 
+const cacheOptions = { ttl: 120_000 };
+
 // First request - cache miss, fetcher runs
 const data = await cache.get("api:products", async () => {
   console.log("Fetcher called - fetching from database...");
   return [{ id: 1, name: "Widget" }, { id: 2, name: "Gadget" }];
-}, 120);
+}, cacheOptions);
 
 console.log("Result:", JSON.stringify(data));
 
@@ -67,10 +69,10 @@ console.log("First load:", JSON.stringify(data1));
 await new Promise(r => setTimeout(r, 1100));
 
 // This returns stale data immediately while the refresh runs
-const stale = await cache.get("dashboard:metrics", async () => {
+const stale = await cache.get("dashboard:metrics", async ({ state, currentValue }) => {
   await new Promise(r => setTimeout(r, 150));
   fetchCount++;
-  console.log(\`Fetch #\${fetchCount}: Refreshing metrics...\`);
+  console.log(\`Fetch #\${fetchCount}: Refreshing from \${state} value \${JSON.stringify(currentValue)}...\`);
   return { views: 1300, users: 92, revenue: 47000 };
 }, cacheOptions);
 console.log("Stale hit while refresh runs:", JSON.stringify(stale));
@@ -90,15 +92,21 @@ console.log("Stats:", JSON.stringify(cache.getStats()));`,
     code: `// Tag-based cache invalidation
 const { cache } = createPlaygroundCache();
 
-// Set values with tags
-await cache.set("product:1", { name: "Widget", price: 9.99 });
-await cache.tag("product:1", "products", "catalog");
+// Set values with write-time tags
+await cache.set("product:1", { name: "Widget", price: 9.99 }, {
+  ttl: 300_000,
+  tags: ["products", "catalog"],
+});
 
-await cache.set("product:2", { name: "Gadget", price: 19.99 });
-await cache.tag("product:2", "products", "catalog");
+await cache.set("product:2", { name: "Gadget", price: 19.99 }, {
+  ttl: 300_000,
+  tags: ["products", "catalog"],
+});
 
-await cache.set("page:home", { title: "Home", layout: "full" });
-await cache.tag("page:home", "pages", "catalog");
+await cache.set("page:home", { title: "Home", layout: "full" }, {
+  ttl: 300_000,
+  tags: ["pages", "catalog"],
+});
 
 console.log("Before invalidation:");
 console.log("Stats:", JSON.stringify(cache.getStats()));
@@ -110,6 +118,37 @@ console.log(\`\\nInvalidated \${removed} entries with tag "products"\`);
 console.log("\\nAfter invalidation:");
 console.log("Stats:", JSON.stringify(cache.getStats()));
 console.log("Layer info:", JSON.stringify(cache.getLayerInfo()));`,
+  },
+  {
+    id: "cache-policy",
+    title: "Cache Policy",
+    description: "Use shouldCache and fetcher context to avoid caching failed values",
+    code: `// Conditional caching with current fetcher context
+const { cache } = createPlaygroundCache();
+let attempts = 0;
+
+const options = {
+  ttl: 30_000,
+  shouldCache: (value) => value.ok === true,
+};
+
+const first = await cache.get("http:api:profile", async ({ key, state }) => {
+  attempts++;
+  console.log(\`Fetch #\${attempts} for \${key} after \${state}\`);
+  return { ok: false, status: 500 };
+}, options);
+
+console.log("First result returned but not cached:", JSON.stringify(first));
+console.log("Cached value after failed result:", await cache.get("http:api:profile"));
+
+const second = await cache.get("http:api:profile", async ({ key }) => {
+  attempts++;
+  console.log(\`Fetch #\${attempts} for \${key}\`);
+  return { ok: true, status: 200, name: "Alice" };
+}, options);
+
+console.log("Second result cached:", JSON.stringify(second));
+console.log("Cached value now:", JSON.stringify(await cache.get("http:api:profile")));`,
   },
   {
     id: "exact-key-apis",
@@ -142,6 +181,48 @@ await cache.set("profile:2", { version: 1 }, { ttl: 60_000, staleWhileRevalidate
 await cache.set("profile:3", { version: 1 }, { ttl: 60_000, staleWhileRevalidate: 60_000 });
 await cache.expireByKeys(["profile:2", "profile:3"]);
 console.log("Expired multiple exact keys");`,
+  },
+  {
+    id: "generation",
+    title: "Generation Rotation",
+    description: "Rotate cache generations and persist the active generation",
+    code: `// Generation-based invalidation with a persisted generation value.
+// In production, store this with RedisGenerationStore.
+const persistedGeneration = { value: 1 };
+const { cache } = createPlaygroundCache({ generation: persistedGeneration.value });
+
+await cache.set("user:1", { version: 1 });
+console.log("Current generation:", cache.getGeneration());
+console.log("v1 read:", JSON.stringify(await cache.get("user:1")));
+
+const nextGeneration = cache.bumpGeneration();
+persistedGeneration.value = nextGeneration;
+console.log("Persisted generation:", persistedGeneration.value);
+
+console.log("After rotation, same logical key misses:", await cache.get("user:1"));
+
+await cache.set("user:1", { version: 2 });
+console.log("v2 read:", JSON.stringify(await cache.get("user:1")));
+console.log("Layer keys:", JSON.stringify(cache.getLayerInfo()[0].keys));`,
+  },
+  {
+    id: "parallel-backfill",
+    title: "Parallel Backfill",
+    description: "Fill missed upper layers from a lower-layer hit",
+    code: `// Parallel backfill from a lower layer into faster upper layers
+const { cache, layers } = createPlaygroundCache();
+
+await layers.redis.set("catalog:item:1", { id: 1, name: "Widget" }, 120_000);
+console.log("Seeded Redis only");
+console.log("Before read:", JSON.stringify(cache.getLayerInfo(), null, 2));
+
+const item = await cache.get("catalog:item:1", async () => {
+  throw new Error("Fetcher should not run when Redis has the value");
+}, { ttl: 120_000 });
+
+console.log("Read result:", JSON.stringify(item));
+console.log("After read:", JSON.stringify(cache.getLayerInfo(), null, 2));
+console.log("Backfills:", cache.getStats().backfills);`,
   },
   {
     id: "namespaces",
@@ -181,7 +262,7 @@ async function fetchData(key) {
     // Simulate slow fetch
     await new Promise(r => setTimeout(r, 100));
     return { data: \`Result for \${key}\`, fetchedAt: Date.now() };
-  }, 60);
+  }, { ttl: 60_000 });
 }
 
 // Fire 5 concurrent requests for the same key
@@ -220,7 +301,7 @@ for (let i = 0; i < 5; i++) {
       }
       console.log(\`  Attempt \${i + 1}: Fetcher succeeded\`);
       return { value: \`data-\${i}\` };
-    }, 30);
+    }, { ttl: 30_000 });
     successes++;
   } catch (e) {
     console.log(\`  -> Error caught (attempt \${i + 1})\`);

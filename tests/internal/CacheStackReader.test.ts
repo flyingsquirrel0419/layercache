@@ -196,6 +196,30 @@ describe('CacheStackReader', () => {
       expect(layer2.set).not.toHaveBeenCalled()
     })
 
+    it('starts eligible backfill writes in parallel', async () => {
+      const { reader, options } = createReader()
+      let releaseLayer0!: () => void
+      const layer0Pending = new Promise<void>((resolve) => {
+        releaseLayer0 = resolve
+      })
+      const layer0 = createMockLayer('L0', {
+        set: vi.fn(async () => {
+          await layer0Pending
+        })
+      })
+      const layer1 = createMockLayer('L1')
+      options.layers = [layer0, layer1]
+
+      const backfill = reader.backfill('key:1', 'stored', 1)
+      await Promise.resolve()
+
+      expect(layer0.set).toHaveBeenCalled()
+      expect(layer1.set).toHaveBeenCalled()
+
+      releaseLayer0()
+      await backfill
+    })
+
     it('handles layer.set error gracefully (calls handleLayerFailure)', async () => {
       const { reader, options } = createReader()
       const error = new Error('set fail')
@@ -664,17 +688,18 @@ describe('CacheStackReader', () => {
         get: vi.fn(async () => null)
       })
       options.layers = [layer]
+      const execute = vi.fn(
+        async (
+          _key: string,
+          _opts: unknown,
+          worker: () => Promise<string | null>,
+          waiter: () => Promise<string | null>
+        ) => {
+          return execute.mock.calls.length === 1 ? waiter() : worker()
+        }
+      )
       options.singleFlightCoordinator = {
-        execute: vi.fn(
-          async (
-            _key: string,
-            _opts: unknown,
-            worker: () => Promise<string | null>,
-            waiter: () => Promise<string | null>
-          ) => {
-            return waiter()
-          }
-        )
+        execute
       }
       options.singleFlightTimeoutMs = 100
       options.singleFlightPollMs = 50
@@ -686,6 +711,7 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBe('timeout-fetch')
+      expect(execute).toHaveBeenCalledTimes(2)
     })
   })
 

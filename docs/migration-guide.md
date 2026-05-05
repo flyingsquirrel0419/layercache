@@ -8,10 +8,58 @@ Step-by-step instructions for migrating to layercache from other caching librari
 
 ## Table of Contents
 
+- [Upgrading to 3.0](#upgrading-to-30)
 - [From node-cache-manager](#from-node-cache-manager)
 - [From keyv](#from-keyv)
 - [From cacheable](#from-cacheable)
 - [Operational Migration Tips](#operational-migration-tips)
+
+---
+
+## Upgrading to 3.0
+
+Layercache 3.0 is a major release because it changes a few operational defaults around Redis and HTTP cache keys.
+
+### RedisTagIndex known-key shards
+
+`RedisTagIndex` now defaults to 16 known-key shards. Existing deployments that used the older single-set layout at `<prefix>:keys` are still read for compatibility, but you should migrate before relying on the sharded layout in production:
+
+```bash
+npx layercache migrate-tag-index \
+  --redis rediss://redis.example.com:6379 \
+  --tag-index-prefix myapp:tag-index \
+  --known-key-shards 16
+```
+
+Use `knownKeysShards: 1` only when you intentionally need the legacy layout during a staged rollout.
+
+### Production Redis URLs in the CLI
+
+CLI commands now reject plaintext `redis://` URLs when `NODE_ENV=production`, unless `--allow-plaintext` is passed:
+
+```bash
+NODE_ENV=production npx layercache stats --redis rediss://redis.example.com:6379
+NODE_ENV=production npx layercache stats --redis redis://localhost:6379 --allow-plaintext
+```
+
+### Implicit HTTP cache keys
+
+Express and Hono middleware now remove common sensitive query parameters from implicit URL cache keys. This avoids storing secrets in cache keys, but entries written with older URL keys that included parameters such as `api_key`, `private_key`, or `credentials` will miss until refreshed.
+
+### Generation persistence
+
+Persist generation rotations when several instances share the same cache:
+
+```ts
+import { CacheStack, RedisGenerationStore } from 'layercache'
+
+const generations = new RedisGenerationStore({ client: redis })
+const generation = await generations.getOrInitialize(1)
+const cache = new CacheStack(layers, { generation })
+
+const nextGeneration = await generations.bump()
+cache.bumpGeneration(nextGeneration)
+```
 
 ---
 

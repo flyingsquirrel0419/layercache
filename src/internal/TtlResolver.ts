@@ -32,6 +32,7 @@ export class TtlResolver {
     const profile = this.accessProfiles.get(key) ?? { hits: 0, lastAccessAt: Date.now() }
     profile.hits += 1
     profile.lastAccessAt = Date.now()
+    this.accessProfiles.delete(key)
     this.accessProfiles.set(key, profile)
     this.pruneIfNeeded()
   }
@@ -164,14 +165,13 @@ export class TtlResolver {
       return
     }
 
-    // Remove least recently accessed 10% of entries
     const toRemove = Math.ceil(this.maxProfileEntries * 0.1)
-    const sorted = [...this.accessProfiles.entries()].sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt)
-    for (let i = 0; i < toRemove && i < sorted.length; i++) {
-      const entry = sorted[i]
-      if (entry) {
-        this.accessProfiles.delete(entry[0])
+    for (let i = 0; i < toRemove; i++) {
+      const oldestKey = this.accessProfiles.keys().next().value
+      if (oldestKey === undefined) {
+        break
       }
+      this.accessProfiles.delete(oldestKey)
     }
   }
 }

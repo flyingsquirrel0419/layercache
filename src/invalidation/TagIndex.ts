@@ -162,6 +162,9 @@ export class TagIndex implements CacheTagIndex {
 
   private insertKnownKey(key: string): void {
     const isNew = !this.knownKeys.has(key)
+    if (!isNew) {
+      this.knownKeys.delete(key)
+    }
     this.knownKeys.set(key, Date.now())
 
     if (!isNew) {
@@ -287,13 +290,13 @@ export class TagIndex implements CacheTagIndex {
       return
     }
 
-    const sorted = [...this.knownKeys.entries()].sort((a, b) => a[1] - b[1])
     const toRemove = Math.ceil(this.maxKnownKeys * 0.1)
-    for (let i = 0; i < toRemove && i < sorted.length; i += 1) {
-      const entry = sorted[i]
-      if (entry) {
-        this.removeKey(entry[0])
+    for (let i = 0; i < toRemove; i += 1) {
+      const oldestKey = this.knownKeys.keys().next().value
+      if (oldestKey === undefined) {
+        break
       }
+      this.removeKnownKey(oldestKey)
     }
   }
 

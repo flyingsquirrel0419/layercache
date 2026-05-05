@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <a href="https://layercache.flyingsquirrel.me">网站</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="https://flyingsquirrel0419.github.io/layercache">网站</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-快速开始">快速开始</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-性能">性能</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="../api.md">API 参考</a>&nbsp;&nbsp;|&nbsp;&nbsp;

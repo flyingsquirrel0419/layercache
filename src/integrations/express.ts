@@ -1,5 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
+import { normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface ExpressLikeRequest {
   method?: string
@@ -66,7 +67,7 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       }
 
       const rawUrl = req.originalUrl ?? req.url ?? '/'
-      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeUrl(rawUrl)}`
+      const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeHttpCacheUrl(rawUrl)}`
 
       const cached = await cache.get<unknown>(key, undefined, options)
       if (cached !== null) {
@@ -85,13 +86,15 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       if (originalJson) {
         res.json = (body: unknown) => {
           res.setHeader?.('x-cache', 'MISS')
-          // Fire and forget — don't delay the response
-          cache.set(key, body, options).catch((err: unknown) => {
-            cache.emit('error', {
-              operation: 'set',
-              error: err instanceof Error ? err.message : String(err)
+          if (isSuccessfulStatus(res.statusCode)) {
+            // Fire and forget — don't delay the response
+            cache.set(key, body, options).catch((err: unknown) => {
+              cache.emit('error', {
+                operation: 'set',
+                error: err instanceof Error ? err.message : String(err)
+              })
             })
-          })
+          }
           return originalJson(body)
         }
       }
@@ -103,12 +106,6 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
   }
 }
 
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url, 'http://localhost')
-    parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
-  } catch {
-    return url
-  }
+function isSuccessfulStatus(statusCode: number | undefined): boolean {
+  return statusCode === undefined || (statusCode >= 200 && statusCode < 300)
 }

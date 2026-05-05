@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { createPlaygroundCache } from "../lib/playground/mock-layers";
+import { createPlaygroundCache } from "../lib/playground/mock-layers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -56,14 +56,14 @@ test("playground cache supports exact-key invalidation aliases", async () => {
 
   await cache.invalidateByKey("user:1");
 
-  assert.equal(await cache.get("user:1"), undefined);
+  assert.equal(await cache.get("user:1"), null);
   assert.deepEqual(await cache.get("user:1:posts"), [{ id: 1 }]);
   assert.deepEqual(await cache.get("user:2"), { name: "Bob" });
 
   await cache.invalidateByKeys(["user:1:posts", "user:2"]);
 
-  assert.equal(await cache.get("user:1:posts"), undefined);
-  assert.equal(await cache.get("user:2"), undefined);
+  assert.equal(await cache.get("user:1:posts"), null);
+  assert.equal(await cache.get("user:2"), null);
 });
 
 test("playground cache supports exact-key expiration while serving stale values", async () => {
@@ -118,4 +118,83 @@ test("playground presets include exact-key invalidation and expiration syntax", 
   assert.match(source, /invalidateByKeys\(\["user:1:posts", "user:2"\]\)/);
   assert.match(source, /expireByKey\("profile:1"\)/);
   assert.match(source, /expireByKeys\(\["profile:2", "profile:3"\]\)/);
+});
+
+test("playground presets use current write options for tags instead of cache.tag()", async () => {
+  const presetsPath = resolve(__dirname, "../lib/playground/presets.ts");
+  const source = await readFile(presetsPath, "utf8");
+
+  assert.match(source, /tags:\s*\["products", "catalog"\]/);
+  assert.doesNotMatch(source, /cache\.tag\(/);
+});
+
+test("playground cache supports shouldCache and null misses", async () => {
+  const { cache } = createPlaygroundCache();
+  let attempts = 0;
+
+  const failed = await cache.get(
+    "http:profile",
+    async ({ state }) => {
+      attempts++;
+      assert.equal(state, "miss");
+      return { ok: false };
+    },
+    { ttl: 1_000, shouldCache: (value) => (value as { ok: boolean }).ok }
+  );
+
+  assert.deepEqual(failed, { ok: false });
+  assert.equal(await cache.get("http:profile"), null);
+
+  const successful = await cache.get(
+    "http:profile",
+    async () => {
+      attempts++;
+      return { ok: true };
+    },
+    { ttl: 1_000, shouldCache: (value) => (value as { ok: boolean }).ok }
+  );
+
+  assert.deepEqual(successful, { ok: true });
+  assert.deepEqual(await cache.get("http:profile"), { ok: true });
+  assert.equal(attempts, 2);
+});
+
+test("playground cache supports generation rotation", async () => {
+  const { cache } = createPlaygroundCache({ generation: 1 });
+
+  await cache.set("user:1", { version: 1 });
+  assert.equal(cache.getGeneration(), 1);
+  assert.deepEqual(await cache.get("user:1"), { version: 1 });
+
+  const nextGeneration = cache.bumpGeneration();
+
+  assert.equal(nextGeneration, 2);
+  assert.equal(cache.getGeneration(), 2);
+  assert.equal(await cache.get("user:1"), null);
+
+  await cache.set("user:1", { version: 2 });
+  assert.deepEqual(await cache.get("user:1"), { version: 2 });
+});
+
+test("playground cache backfills missed upper layers from a lower-layer hit", async () => {
+  const logs: string[] = [];
+  const { cache, layers } = createPlaygroundCache({ onLog: (message) => logs.push(message) });
+
+  await layers.redis.set("catalog:item:1", { id: 1 }, 1_000);
+
+  assert.equal(await layers.memory.get("catalog:item:1"), undefined);
+  assert.deepEqual(await cache.get("catalog:item:1"), { id: 1 });
+  assert.deepEqual(await layers.memory.get("catalog:item:1"), { id: 1 });
+  assert.ok(logs.some((message) => message.includes("Filled 1 upper layer")));
+});
+
+test("playground presets include generation and parallel backfill examples", async () => {
+  const presetsPath = resolve(__dirname, "../lib/playground/presets.ts");
+  const source = await readFile(presetsPath, "utf8");
+
+  assert.match(source, /id: "generation"/);
+  assert.match(source, /cache\.getGeneration\(\)/);
+  assert.match(source, /cache\.bumpGeneration\(\)/);
+  assert.match(source, /id: "parallel-backfill"/);
+  assert.match(source, /layers\.redis\.set\("catalog:item:1"/);
 });

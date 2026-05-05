@@ -3,11 +3,11 @@ title: "Getting Started"
 description: "Install and configure your first multi-layer cache stack"
 ---
 
+import { PackageManagerTabs } from "@rspress/core/theme-original";
+
 ## Installation
 
-```bash
-npm install layercache
-```
+<PackageManagerTabs command="install layercache" />
 
 ## Basic Setup
 
@@ -47,6 +47,8 @@ const cache = new CacheStack([
   new RedisLayer({ client: new Redis(), ttl: 3_600_000 }),  // L2: shared
 ])
 ```
+
+Use `rediss://` Redis URLs for production CLI operations and hosted Redis endpoints. The CLI rejects plaintext `redis://` URLs under `NODE_ENV=production` unless you explicitly pass `--allow-plaintext`.
 
 ### How Layered Reads Work
 
@@ -154,6 +156,6 @@ const users = await cache.getMany(['user:1', 'user:2'], (keys) =>
 
 ## Next Steps
 
-- **[Tutorial](/docs/tutorial)** — Learn stampede prevention, tag invalidation, and more
-- **[API Reference](/docs/api)** — Complete method documentation
-- **[Integrations](/docs/integrations)** — Use with Express, Fastify, NestJS, and more
+- **[Tutorial](./tutorial)** — Learn stampede prevention, tag invalidation, and more
+- **[API Reference](./api)** — Complete method documentation
+- **[Integrations](./integrations)** — Use with Express, Fastify, NestJS, and more

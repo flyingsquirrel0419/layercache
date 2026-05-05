@@ -949,6 +949,13 @@ export class CacheStack extends EventEmitter {
   }
 
   /**
+   * Returns the active generation prefix number used for future cache keys.
+   */
+  getGeneration(): number | undefined {
+    return this.currentGeneration
+  }
+
+  /**
    * Returns detailed metadata about a single cache key: which layers contain it,
    * remaining fresh/stale/error TTLs, and associated tags.
    * Returns `null` if the key does not exist in any layer.

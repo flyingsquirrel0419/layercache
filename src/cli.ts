@@ -13,12 +13,20 @@ interface ParsedArgs {
   tag?: string
   key?: string
   tagIndexPrefix?: string
+  knownKeysShards?: number
+  scanLimit?: number
   requireTls?: boolean
+  allowPlaintext?: boolean
   force?: boolean
+  parseError?: boolean
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  process.exitCode = undefined
   const args = parseArgs(argv)
+  if (args.parseError) {
+    return
+  }
   if (!args.command || !args.redisUrl) {
     printUsage()
     process.exitCode = 1
@@ -37,6 +45,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.stderr.write(
         'Error: --require-tls is set but the URL uses redis:// (plaintext). ' +
           'Use rediss:// for TLS-encrypted connections.\n'
+      )
+      process.exitCode = 1
+      return
+    }
+    if (process.env.NODE_ENV === 'production' && !args.allowPlaintext) {
+      process.stderr.write(
+        'Error: refusing plaintext redis:// connection because NODE_ENV=production. ' +
+          'Use rediss:// for TLS-encrypted connections, or pass --allow-plaintext to explicitly override.\n'
       )
       process.exitCode = 1
       return
@@ -62,7 +78,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (args.command === 'stats') {
       const pattern = args.pattern ?? '*'
       if (args.pattern && !validateCliInput(args.pattern, validatePattern)) return
-      const keys = await scanKeys(redis, pattern)
+      const keys = await scanKeys(redis, pattern, args.scanLimit ?? DEFAULT_SCAN_MAX_KEYS)
       process.stdout.write(`${JSON.stringify({ totalKeys: keys.length, pattern }, null, 2)}\n`)
       return
     }
@@ -70,7 +86,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (args.command === 'keys') {
       const pattern = args.pattern ?? '*'
       if (args.pattern && !validateCliInput(args.pattern, validatePattern)) return
-      const keys = await scanKeys(redis, pattern)
+      const keys = await scanKeys(redis, pattern, args.scanLimit ?? DEFAULT_SCAN_MAX_KEYS)
       if (keys.length > 0) {
         process.stdout.write(`${keys.join('\n')}\n`)
       }
@@ -93,7 +109,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       const effectivePattern = args.pattern ?? '*'
       if (args.pattern && !validateCliInput(args.pattern, validatePattern)) return
 
-      const keys = await scanKeys(redis, effectivePattern)
+      const keys = await scanKeys(redis, effectivePattern, args.scanLimit ?? DEFAULT_SCAN_MAX_KEYS)
 
       // Require --force for untargeted bulk invalidation (default * pattern with no --tag)
       if (!args.pattern && !args.force && keys.length > 0) {
@@ -105,6 +121,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         await batchDelete(redis, keys)
       }
       process.stdout.write(`${JSON.stringify({ deletedKeys: keys.length, pattern: effectivePattern }, null, 2)}\n`)
+      return
+    }
+
+    if (args.command === 'migrate-tag-index') {
+      const tagIndex = new RedisTagIndex({
+        client: redis,
+        prefix: args.tagIndexPrefix ?? 'layercache:tag-index',
+        knownKeysShards: args.knownKeysShards
+      })
+      const result = await tagIndex.migrateLegacyKnownKeys()
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
       return
     }
 
@@ -178,6 +205,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       if (!value || value.startsWith('--')) {
         process.stderr.write('Error: --redis requires a value (e.g. redis://localhost:6379)\n')
         process.exitCode = 1
+        parsed.parseError = true
         return parsed
       }
       parsed.redisUrl = value
@@ -194,8 +222,42 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (token === '--tag-index-prefix') {
       parsed.tagIndexPrefix = value
       index += 1
+    } else if (token === '--known-key-shards') {
+      if (!value || value.startsWith('--')) {
+        process.stderr.write('Error: --known-key-shards requires a positive integer value.\n')
+        process.exitCode = 1
+        parsed.parseError = true
+        return parsed
+      }
+      const knownKeysShards = Number(value)
+      if (!Number.isSafeInteger(knownKeysShards) || knownKeysShards <= 0) {
+        process.stderr.write('Error: --known-key-shards requires a positive integer value.\n')
+        process.exitCode = 1
+        parsed.parseError = true
+        return parsed
+      }
+      parsed.knownKeysShards = knownKeysShards
+      index += 1
+    } else if (token === '--limit') {
+      if (!value || value.startsWith('--')) {
+        process.stderr.write('Error: --limit requires a positive integer value.\n')
+        process.exitCode = 1
+        parsed.parseError = true
+        return parsed
+      }
+      const limit = Number(value)
+      if (!Number.isSafeInteger(limit) || limit <= 0) {
+        process.stderr.write('Error: --limit requires a positive integer value.\n')
+        process.exitCode = 1
+        parsed.parseError = true
+        return parsed
+      }
+      parsed.scanLimit = limit
+      index += 1
     } else if (token === '--require-tls') {
       parsed.requireTls = true
+    } else if (token === '--allow-plaintext') {
+      parsed.allowPlaintext = true
     } else if (token === '--force') {
       parsed.force = true
     }
@@ -205,7 +267,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 const BATCH_DELETE_SIZE = 500
-const SCAN_MAX_KEYS = 1_000_000
+const DEFAULT_SCAN_MAX_KEYS = 100_000
 
 async function batchDelete(redis: Redis, keys: string[]): Promise<void> {
   for (let i = 0; i < keys.length; i += BATCH_DELETE_SIZE) {
@@ -214,18 +276,17 @@ async function batchDelete(redis: Redis, keys: string[]): Promise<void> {
   }
 }
 
-async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {
+async function scanKeys(redis: Redis, pattern: string, limit: number): Promise<string[]> {
   const keys: string[] = []
   let cursor = '0'
 
   do {
     const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
     cursor = nextCursor
-    keys.push(...batch)
-    if (keys.length >= SCAN_MAX_KEYS) {
-      process.stderr.write(
-        `Warning: stopped scanning after ${SCAN_MAX_KEYS} keys. Use a more specific --pattern to narrow results.\n`
-      )
+    const remaining = limit - keys.length
+    keys.push(...batch.slice(0, remaining))
+    if (keys.length >= limit) {
+      process.stderr.write(`Warning: stopped scanning after ${limit} keys. Use --limit to raise the scan cap.\n`)
       return keys
     }
   } while (cursor !== '0')
@@ -240,6 +301,7 @@ function printUsage(): void {
       '  layercache keys --redis <url> [--pattern <glob>]\n' +
       '  layercache inspect --redis <url> --key <key>\n' +
       '  layercache invalidate --redis <url> [--pattern <glob> | --tag <tag>] [--tag-index-prefix <prefix>]\n' +
+      '  layercache migrate-tag-index --redis <url> [--tag-index-prefix <prefix>] [--known-key-shards <count>]\n' +
       '\n' +
       'Options:\n' +
       '  --redis <url>               Redis connection URL (e.g. redis://localhost:6379)\n' +
@@ -247,7 +309,10 @@ function printUsage(): void {
       '  --key <key>                 Exact cache key to inspect\n' +
       '  --tag <tag>                 Invalidate by tag name\n' +
       '  --tag-index-prefix <prefix> Redis key prefix for tag index (default: layercache:tag-index)\n' +
-      '  --require-tls               Reject non-TLS (redis://) connections\n'
+      '  --known-key-shards <count>  Shard count for RedisTagIndex migration (default: 16)\n' +
+      '  --limit <count>             Maximum Redis keys to scan (default: 100000)\n' +
+      '  --require-tls               Reject non-TLS (redis://) connections\n' +
+      '  --allow-plaintext          Explicitly allow redis:// when NODE_ENV=production\n'
   )
 }
 

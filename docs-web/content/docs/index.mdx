@@ -7,9 +7,33 @@ Welcome to the Layercache documentation.
 
 Layercache stacks memory, Redis, and disk behind a single API with stampede prevention, tag invalidation, stale-while-revalidate, and full observability.
 
+## How It Works
+
+Every read follows the same path:
+
+1. Check **L1 Memory** first (fastest, in-process).
+2. If miss, check **L2 Redis** (shared across instances).
+3. If miss, check **L3 Disk** (persistent fallback).
+4. If all miss, run the **origin fetcher** once (single-flight).
+5. Backfill upper layers so next reads return faster.
+
+Layercache keeps responses stable under pressure with stale serving, circuit breakers, and timeout guards.
+
+## Version 3.0 Highlights
+
+Layercache 3.0 tightens production defaults and updates the docs/runtime surface for distributed deployments:
+
+- `RedisTagIndex` now uses 16 known-key shards by default, with a `migrate-tag-index` CLI command for older single-set indexes.
+- Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed.
+- Express and Hono implicit URL cache keys strip sensitive query parameters, and non-2xx JSON responses are skipped by default.
+- `RedisInvalidationBus` supports signed invalidation messages, and `RedisGenerationStore` persists generation rotations across instances.
+- The documentation site now runs on Rspress and deploys through GitHub Pages.
+
+Read the [migration guide](./migration#upgrading-to-30) before upgrading an existing Redis-backed deployment.
+
 ## Quick Links
 
-- **[Getting Started](/docs/getting-started)** — Install and configure your first cache stack
-- **[Tutorial](/docs/tutorial)** — 10-step walkthrough of production features
-- **[API Reference](/docs/api)** — Complete method and option documentation
-- **[Integrations](/docs/integrations)** — Express, Fastify, NestJS, Hono, tRPC, GraphQL
+- **[Getting Started](./getting-started)** — Install and configure your first cache stack
+- **[Tutorial](./tutorial)** — 10-step walkthrough of production features
+- **[API Reference](./api)** — Complete method and option documentation
+- **[Integrations](./integrations)** — Express, Fastify, NestJS, Hono, tRPC, GraphQL

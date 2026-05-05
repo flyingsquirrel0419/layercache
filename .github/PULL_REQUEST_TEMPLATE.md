@@ -37,6 +37,7 @@ Link any related issues: Fixes #123, Addresses #456
 
 - [ ] My changes follow the existing code style (single quotes, no semicolons, 2-space indent)
 - [ ] I have updated documentation where applicable
+- [ ] I have updated `CHANGELOG.md` and package versions when the PR changes release scope
 - [ ] I have added tests that prove my fix/feature works
 - [ ] No type errors suppressed (`as any`, `@ts-ignore`, `@ts-expect-error`)
 

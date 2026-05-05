@@ -3,23 +3,21 @@ title: "CLI Tool"
 description: "Inspect and manage Redis-backed caches from the command line"
 ---
 
+import { PackageManagerTabs } from "@rspress/core/theme-original";
+
 Layercache provides a command-line interface for inspecting and managing Redis-backed caches. Use it to check statistics, list keys, inspect values, and invalidate data without writing code.
 
 ## Installation
 
 ### Global Install
 
-```bash
-npm install -g layercache
-```
+<PackageManagerTabs command="install -g layercache" />
 
 ### Using npx
 
 No installation required:
 
-```bash
-npx layercache stats --redis redis://localhost:6379
-```
+<PackageManagerTabs command="layercache stats --redis redis://localhost:6379" exec={true} />
 
 ## Commands
 
@@ -223,6 +221,37 @@ layercache invalidate \
 - Invalidate by entity type (e.g., all products)
 - Clear tenant-specific data
 
+### migrate-tag-index
+
+Migrate legacy RedisTagIndex known-key sets into the current sharded layout.
+
+#### Basic Usage
+
+```bash
+layercache migrate-tag-index \
+  --redis rediss://prod-redis.example.com:6380 \
+  --tag-index-prefix "myapp:tag-index"
+```
+
+#### Response
+
+```json
+{
+  "migratedKeys": 12500
+}
+```
+
+#### Custom Shard Count
+
+```bash
+layercache migrate-tag-index \
+  --redis rediss://prod-redis.example.com:6380 \
+  --tag-index-prefix "myapp:tag-index" \
+  --known-key-shards 16
+```
+
+Use this after upgrading an existing RedisTagIndex that previously stored known keys in a single `&lt;prefix&gt;:keys` set. New RedisTagIndex instances default to 16 known-key shards.
+
 ## Options
 
 ### Global Options
@@ -242,6 +271,13 @@ Supported formats:
 - `rediss://[user:pass@]host[:port][/db]` (TLS)
 - `host:port` (simplified)
 - `host` (defaults to port 6379)
+
+When `NODE_ENV=production`, plaintext `redis://` URLs are rejected before any Redis connection is attempted. Use `rediss://` for production Redis endpoints.
+
+```bash
+NODE_ENV=production layercache stats --redis redis://prod-redis.example.com:6379
+# Error: refusing plaintext redis:// connection because NODE_ENV=production.
+```
 
 ### Command-Specific Options
 
@@ -281,11 +317,30 @@ Tag for invalidation (used with `invalidate`).
 
 #### `--tag-index-prefix &lt;prefix&gt;`
 
-Redis key prefix for tag index (used with `invalidate`).
+Redis key prefix for tag index (used with `invalidate` and `migrate-tag-index`).
 
 ```bash
 --tag-index-prefix "layercache:tag-index"
 --tag-index-prefix "myapp:cache:tags"
+```
+
+#### `--known-key-shards &lt;count&gt;`
+
+Shard count for `migrate-tag-index`. Defaults to the RedisTagIndex default of 16 shards.
+
+```bash
+layercache migrate-tag-index \
+  --redis rediss://localhost:6380 \
+  --tag-index-prefix "myapp:tag-index" \
+  --known-key-shards 16
+```
+
+#### `--limit &lt;count&gt;`
+
+Maximum Redis keys to scan for `stats`, `keys`, and pattern-based `invalidate`. Defaults to 100,000.
+
+```bash
+layercache keys --redis redis://localhost:6379 --pattern "user:*" --limit 250000
 ```
 
 #### `--require-tls`
@@ -295,6 +350,14 @@ Require TLS connection. Fails if the Redis URL uses `redis://` (plaintext) inste
 ```bash
 layercache stats --redis redis://localhost:6379 --require-tls
 # Error: --require-tls is set but the URL uses redis:// (plaintext).
+```
+
+#### `--allow-plaintext`
+
+Explicitly allow `redis://` when `NODE_ENV=production`. Prefer `rediss://`; this flag is only for controlled environments where plaintext Redis is intentionally accepted.
+
+```bash
+NODE_ENV=production layercache stats --redis redis://localhost:6379 --allow-plaintext
 ```
 
 #### `--force`
@@ -358,19 +421,19 @@ layercache invalidate --redis redis://localhost:6379 --tag "tenant:abc"
 #!/bin/bash
 # deploy.sh - Clear caches before deployment
 
-REDIS_URL="redis://prod-redis.example.com:6379"
+REDIS_URL="rediss://prod-redis.example.com:6380"
 
 # Check current state
 echo "Current cache size:"
-layercache stats --redis "$REDIS_URL"
+layercache stats --redis "$REDIS_URL" --require-tls
 
 # Clear all application caches
 echo "Clearing application caches..."
-layercache invalidate --redis "$REDIS_URL" --pattern "app:*"
+layercache invalidate --redis "$REDIS_URL" --pattern "app:*" --require-tls
 
 # Verify cleared
 echo "After invalidation:"
-layercache stats --redis "$REDIS_URL" --pattern "app:*"
+layercache stats --redis "$REDIS_URL" --pattern "app:*" --require-tls
 ```
 
 ### Monitoring Scripts
@@ -420,11 +483,11 @@ Error: --redis requires a value (e.g. redis://localhost:6379)
 
 ### Scan Limits
 
-The CLI stops scanning after 1,000,000 keys to prevent runaway scans:
+The CLI stops scanning after 100,000 keys by default to prevent runaway scans. Raise the cap with `--limit` when you intentionally need a larger scan.
 
 ```bash
 $ layercache keys --redis redis://localhost:6379 --pattern "*"
-Warning: stopped scanning after 1000000 keys. Use a more specific --pattern to narrow results.
+Warning: stopped scanning after 100000 keys. Use --limit to raise the scan cap.
 ```
 
 ### Missing Keys

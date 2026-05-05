@@ -330,7 +330,7 @@ const tagIndex = new RedisTagIndex({
   client: redis,
   prefix: 'myapp:tag-index',
   scanCount: 100,
-  knownKeysShards: 8  // Distribute known keys across 8 shards
+  knownKeysShards: 16  // Default: distribute known keys across 16 shards
 })
 
 const cache = new CacheStack([
@@ -342,7 +342,7 @@ const cache = new CacheStack([
 
 // Any server can invalidate by tag
 await cache.invalidateByTag('user:123')
-// All servers' memory layers are notified
+// All servers use the same Redis-backed tag lookup
 ```
 
 ### Redis Invalidation Bus
@@ -354,7 +354,8 @@ import { RedisInvalidationBus } from 'layercache'
 
 const bus = new RedisInvalidationBus({
   publisher: redis,           // Use existing Redis connection
-  subscriber: new Redis()     // Separate connection for subscriptions
+  subscriber: new Redis(),    // Separate connection for subscriptions
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
 })
 
 const cache = new CacheStack([
@@ -387,12 +388,13 @@ import {
 const redis = new Redis()
 const bus = new RedisInvalidationBus({
   publisher: redis,
-  subscriber: new Redis()
+  subscriber: new Redis(),
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
 })
 const tagIndex = new RedisTagIndex({
   client: redis,
   prefix: 'myapp:tags',
-  knownKeysShards: 8
+  knownKeysShards: 16
 })
 const coordinator = new RedisSingleFlightCoordinator({
   client: redis
@@ -407,6 +409,33 @@ const cache = new CacheStack([
   singleFlightCoordinator: coordinator,
   gracefulDegradation: { retryAfterMs: 10_000 }
 })
+```
+
+### Signed Invalidation Messages
+
+Set `signingSecret` on every instance that shares a Redis invalidation channel. Messages are signed with HMAC-SHA256 and rejected when the signature does not match, which prevents unrelated publishers on the same Redis from spoofing invalidation messages.
+
+```ts
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(process.env.REDIS_URL),
+  channel: 'myapp:invalidation',
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+})
+```
+
+All producers and consumers on the same channel must use the same secret. Omit `signingSecret` only for trusted, isolated Redis channels or for compatibility with older deployments.
+
+### RedisTagIndex Shard Migration
+
+`RedisTagIndex` now defaults `knownKeysShards` to 16. Existing deployments that used the previous single-set layout (`&lt;prefix&gt;:keys`) are still read for compatibility and emit a warning, but you should migrate them into the sharded layout:
+
+```bash
+npx layercache migrate-tag-index \
+  --redis rediss://prod-redis.example.com:6380 \
+  --tag-index-prefix "myapp:tags" \
+  --known-key-shards 16 \
+  --require-tls
 ```
 
 ### Invalidation Flow

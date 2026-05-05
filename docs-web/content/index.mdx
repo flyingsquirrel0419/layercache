@@ -1,0 +1,46 @@
+---
+pageType: home
+title: Layercache
+titleSuffix: Production-Ready Multi-Layer Caching
+
+hero:
+  name: Layercache
+  text: Production-ready caching for Node.js
+  tagline: Stack memory, Redis, disk, and Memcached behind one compact API with single-flight fetches, tag invalidation, stale serving, and operational metrics.
+  image:
+    src: /logo.png
+    alt: Layercache
+  actions:
+    - theme: brand
+      text: Get Started
+      link: ./docs/getting-started
+    - theme: alt
+      text: Playground
+      link: ./playground
+
+features:
+  - title: Multi-layer stack
+    details: Memory, Redis, disk, and Memcached share one read-through interface with automatic backfill.
+    icon: 📚
+    link: ./docs/layers
+  - title: Single-flight fetches
+    details: Concurrent callers collapse into one fetch locally, with Redis leases for distributed coordination.
+    icon: 🚦
+    link: ./docs/resilience
+  - title: Precise invalidation
+    details: Expire by tag, prefix, pattern, or namespace without throwing away stale fallback state.
+    icon: 🎯
+    link: ./docs/invalidation
+  - title: Operational guardrails
+    details: Circuit breakers, timeout controls, Prometheus metrics, OpenTelemetry spans, and CLI inspection.
+    icon: 🛡️
+    link: ./docs/observability
+  - title: Framework integrations
+    details: Middleware and helpers for Express, Fastify, Hono, tRPC, GraphQL, and OpenTelemetry.
+    icon: 🔌
+    link: ./docs/integrations
+  - title: Browser playground
+    details: Try Layercache examples in an isolated worker sandbox directly in the documentation site.
+    icon: 🧪
+    link: ./playground
+---

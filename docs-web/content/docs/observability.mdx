@@ -149,7 +149,7 @@ import express from 'express'
 import { CacheStack, MemoryLayer, RedisLayer } from 'layercache'
 
 const cache = new CacheStack([
-  new MemoryLayer({ ttl: 20 }),
+  new MemoryLayer({ ttl: 60_000 }),
   new RedisLayer({ client: redis, ttl: 300_000 })
 ])
 

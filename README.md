@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="./logo.png" width="520" alt="layercache logo">
+  <img src="./layercache-stampede.gif" width="930" alt="layercache stampede prevention demo">
 </p>
 
 <h1 align="center">layercache</h1>
@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <a href="https://layercache.flyingsquirrel.me">Website</a>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="https://flyingsquirrel0419.github.io/layercache">Website</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-quick-start">Quick Start</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#-performance">Performance</a>&nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="./docs/api.md">API Reference</a>&nbsp;&nbsp;|&nbsp;&nbsp;
@@ -50,6 +50,18 @@ const results = await Promise.all(
 ```
 
 layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stampede prevention, tag invalidation, and distributed consistency are built in — no extra config required.
+
+---
+
+## What's New in 3.0
+
+- `RedisTagIndex` uses 16 known-key shards by default. Existing Redis tag indexes that still use the legacy `<prefix>:keys` set should be migrated with `npx layercache migrate-tag-index`.
+- Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed. Prefer `rediss://` for production Redis endpoints.
+- Express and Hono implicit URL cache keys now strip sensitive query parameters before caching, and non-2xx JSON responses are not cached by default.
+- Redis-backed generation persistence is available through `RedisGenerationStore`, and `CacheStack.getGeneration()` exposes the active generation.
+- The docs site now runs on Rspress and GitHub Pages.
+
+See the [changelog](./CHANGELOG.md) and [migration guide](./docs/migration-guide.md) before upgrading an existing deployment.
 
 ---
 
@@ -363,7 +375,7 @@ layercache is built for multi-instance production environments:
 
 - **Redis single-flight** - dedup misses across instances with distributed locks
 - **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency
-- **Redis tag index** - shared tag tracking with optional sharding
+- **Redis tag index** - shared tag tracking with 16 known-key shards by default
 - **Snapshot persistence** - export/import state between instances
 
 <details>
@@ -375,9 +387,13 @@ import {
   RedisInvalidationBus, RedisTagIndex, RedisSingleFlightCoordinator
 } from 'layercache'
 
-const redis = new Redis()
-const bus = new RedisInvalidationBus({ publisher: redis, subscriber: new Redis() })
-const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags' })
+const redis = new Redis(process.env.REDIS_URL)
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(process.env.REDIS_URL),
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+})
+const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags', knownKeysShards: 16 })
 const coordinator = new RedisSingleFlightCoordinator({ client: redis })
 
 const cache = new CacheStack(
