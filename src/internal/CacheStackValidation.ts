@@ -59,6 +59,10 @@ export function validateRateLimitOptions(name: string, options: CacheRateLimitOp
     throw new Error(`${name}.scope must be one of "global", "key", or "fetcher".`)
   }
 
+  if (options.queueOverflow && !['reject', 'bypass'].includes(options.queueOverflow)) {
+    throw new Error(`${name}.queueOverflow must be one of "reject" or "bypass".`)
+  }
+
   if (options.bucketKey !== undefined && options.bucketKey.length === 0) {
     throw new Error(`${name}.bucketKey must not be empty.`)
   }

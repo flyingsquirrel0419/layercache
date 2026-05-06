@@ -489,6 +489,11 @@ export interface CacheRateLimitOptions {
   scope?: 'global' | 'key' | 'fetcher'
   /** Custom bucket id used to group otherwise unrelated fetches. */
   bucketKey?: string
+  /**
+   * Behavior when a bucket queue reaches its internal safety limit.
+   * Defaults to `reject` so overflow is explicit instead of bypassing limits.
+   */
+  queueOverflow?: 'reject' | 'bypass'
 }
 
 /** Queue controls for write-behind mode. */

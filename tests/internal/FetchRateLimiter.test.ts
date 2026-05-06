@@ -286,7 +286,7 @@ describe('FetchRateLimiter', () => {
     }
   })
 
-  it('bypasses rate limiting when a bucket queue exceeds MAX_QUEUE_PER_BUCKET', async () => {
+  it('rejects by default when a bucket queue exceeds MAX_QUEUE_PER_BUCKET', async () => {
     const limiter = new FetchRateLimiter()
     const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
 
@@ -297,8 +297,27 @@ describe('FetchRateLimiter', () => {
 
     expect(limiter.rateLimitBypasses).toBe(0)
 
+    await expect(
+      limiter.schedule(
+        { maxConcurrent: 1, scope: 'key' },
+        { key: 'user:1', fetcher: async () => 'x' },
+        async () => 'rejected'
+      )
+    ).rejects.toThrow(/queue overflow/i)
+    expect(limiter.rateLimitBypasses).toBe(0)
+  })
+
+  it('bypasses rate limiting on queue overflow when explicitly configured', async () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+
+    queuesByBucket.set(
+      'key:user:1',
+      Array.from({ length: 10_000 }, () => ({}))
+    )
+
     const result = await limiter.schedule(
-      { maxConcurrent: 1, scope: 'key' },
+      { maxConcurrent: 1, scope: 'key', queueOverflow: 'bypass' },
       { key: 'user:1', fetcher: async () => 'x' },
       async () => 'bypassed'
     )
