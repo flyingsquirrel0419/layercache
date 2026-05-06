@@ -60,7 +60,12 @@ interface CacheStackReaderOptions {
   emitError: (operation: string, context: Record<string, unknown>) => void
   formatError: (error: unknown) => string
   storeEntry: (key: string, kind: CacheWriteKind, value: unknown, options?: CacheWriteOptions) => Promise<void>
-  recordCircuitFailure: (key: string, options: CacheCircuitBreakerOptions | undefined, error: unknown) => void
+  recordCircuitFailure: (
+    key: string,
+    breakerKey: string,
+    options: CacheCircuitBreakerOptions | undefined,
+    error: unknown
+  ) => void
   resolveLayerMs: (
     layerName: string,
     override: number | LayerTtlMap | undefined,
@@ -405,7 +410,9 @@ export class CacheStackReader {
       state: 'miss'
     }
   ): Promise<T | null> {
-    this.options.circuitBreakerManager.assertClosed(key, options?.circuitBreaker ?? this.options.circuitBreaker)
+    const circuitBreakerOptions = options?.circuitBreaker ?? this.options.circuitBreaker
+    const breakerKey = this.resolveCircuitBreakerKey(key, circuitBreakerOptions)
+    this.options.circuitBreakerManager.assertClosed(breakerKey, circuitBreakerOptions)
     this.options.metricsCollector.increment('fetches')
     const fetchStart = Date.now()
     let fetched: T
@@ -416,10 +423,10 @@ export class CacheStackReader {
         { key, fetcher },
         () => fetcher(fetcherContext)
       )
-      this.options.circuitBreakerManager.recordSuccess(key)
+      this.options.circuitBreakerManager.recordSuccess(breakerKey)
       this.options.logger.debug?.('fetch', { key, durationMs: Date.now() - fetchStart })
     } catch (error) {
-      this.options.recordCircuitFailure(key, options?.circuitBreaker ?? this.options.circuitBreaker, error)
+      this.options.recordCircuitFailure(key, breakerKey, circuitBreakerOptions, error)
       throw error
     }
 
@@ -470,6 +477,22 @@ export class CacheStackReader {
 
     await this.options.storeEntry(key, 'value', fetched, options)
     return fetched
+  }
+
+  private resolveCircuitBreakerKey(key: string, options: CacheCircuitBreakerOptions | undefined): string {
+    if (!options) {
+      return key
+    }
+
+    if (options.breakerKey) {
+      return `custom:${options.breakerKey}`
+    }
+
+    if (options.scope === 'shared') {
+      return 'shared'
+    }
+
+    return key
   }
 
   runScheduleBackgroundRefresh<T>(

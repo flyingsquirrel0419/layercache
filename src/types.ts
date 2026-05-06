@@ -469,6 +469,13 @@ export interface CacheCircuitBreakerOptions {
   failureThreshold?: number
   /** Milliseconds before an open circuit allows another attempt. */
   cooldownMs?: number
+  /**
+   * Failure scope. `key` preserves the historical per-cache-key behavior.
+   * `shared` uses one breaker for all fetches using these options.
+   */
+  scope?: 'key' | 'shared'
+  /** Custom breaker id for grouping related fetches, such as one backend dependency. */
+  breakerKey?: string
 }
 
 /** Graceful degradation settings for temporarily unhealthy layers. */

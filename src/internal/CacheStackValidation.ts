@@ -162,6 +162,14 @@ export function validateCircuitBreakerOptions(options: CacheCircuitBreakerOption
 
   validatePositiveNumber('circuitBreaker.failureThreshold', options.failureThreshold)
   validatePositiveNumber('circuitBreaker.cooldownMs', options.cooldownMs)
+
+  if (options.scope && !['key', 'shared'].includes(options.scope)) {
+    throw new Error('circuitBreaker.scope must be one of "key" or "shared".')
+  }
+
+  if (options.breakerKey !== undefined && options.breakerKey.length === 0) {
+    throw new Error('circuitBreaker.breakerKey must not be empty.')
+  }
 }
 
 export function validateContextEntryOptions(name: string, options: CacheEntryWriteOptions | undefined): void {

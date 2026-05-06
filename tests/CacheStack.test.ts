@@ -353,6 +353,20 @@ describe('CacheStack', () => {
     await expect(cache.getOrThrow('missing')).rejects.toMatchObject({ key: 'missing' })
   })
 
+  it('supports shared circuit breaker scope across different cache keys', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+      circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000, scope: 'shared', breakerKey: 'api' }
+    })
+    const firstFetcher = vi.fn(async () => {
+      throw new Error('backend down')
+    })
+    const secondFetcher = vi.fn(async () => 'should-not-run')
+
+    await expect(cache.get('user:1', firstFetcher)).rejects.toThrow(/backend down/i)
+    await expect(cache.get('user:2', secondFetcher)).rejects.toThrow(/Circuit breaker is open/i)
+    expect(secondFetcher).not.toHaveBeenCalled()
+  })
+
   it('continues has() checks when layer.has() fails or returns false', async () => {
     const warn = vi.fn()
     const flakyHasLayer: CacheLayer = {

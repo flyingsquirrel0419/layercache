@@ -66,8 +66,12 @@ describe('CacheStackValidation', () => {
     expect(() => validateContextEntryOptions('contextOptions', { ttl: -1 })).toThrow(/non-negative finite number/i)
 
     expect(() => validateCircuitBreakerOptions(undefined)).not.toThrow()
-    expect(() => validateCircuitBreakerOptions({ failureThreshold: 1, cooldownMs: 100 })).not.toThrow()
+    expect(() =>
+      validateCircuitBreakerOptions({ failureThreshold: 1, cooldownMs: 100, scope: 'shared', breakerKey: 'redis' })
+    ).not.toThrow()
     expect(() => validateCircuitBreakerOptions({ failureThreshold: 0 })).toThrow(/positive finite number/i)
+    expect(() => validateCircuitBreakerOptions({ scope: 'backend' as never })).toThrow(/must be one of/i)
+    expect(() => validateCircuitBreakerOptions({ breakerKey: '' })).toThrow(/must not be empty/i)
   })
 
   it('validates rate limit options', () => {
