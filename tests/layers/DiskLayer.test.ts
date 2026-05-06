@@ -164,6 +164,26 @@ describe('DiskLayer', () => {
     expect(await boundedLayer.size()).toBeLessThanOrEqual(2)
   })
 
+  it('rejects writes when the serialized write queue exceeds maxWriteQueueDepth', async () => {
+    const boundedLayer = new DiskLayer({ directory: dir, maxWriteQueueDepth: 1 })
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const enqueueWrite = (
+      boundedLayer as unknown as { enqueueWrite: (operation: () => Promise<void>) => Promise<void> }
+    ).enqueueWrite.bind(boundedLayer)
+
+    const first = enqueueWrite(async () => {
+      await blocked
+    })
+
+    await expect(boundedLayer.set('overflow', 1)).rejects.toThrow(/write queue limit/i)
+    release()
+    await expect(first).resolves.toBeUndefined()
+    await expect(boundedLayer.set('after-drain', 2)).resolves.toBeUndefined()
+  })
+
   it('supports getMany parallel reads', async () => {
     await layer.set('a', 1)
     await layer.set('b', 2)
@@ -238,6 +258,7 @@ describe('DiskLayer', () => {
   it('rejects invalid maxFiles and maxEntryBytes values early', () => {
     expect(() => new DiskLayer({ directory: dir, maxFiles: 0 })).toThrow(/positive integer/i)
     expect(() => new DiskLayer({ directory: dir, maxEntryBytes: 0 })).toThrow(/positive number/i)
+    expect(() => new DiskLayer({ directory: dir, maxWriteQueueDepth: 0 })).toThrow(/positive integer/i)
   })
 
   it('skips max-file enforcement when unlimited and tolerates readdir/stat failures', async () => {
