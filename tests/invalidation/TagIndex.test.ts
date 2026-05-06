@@ -45,6 +45,17 @@ describe('TagIndex', () => {
     expect((await index.matchPattern('user:*')).sort()).toEqual(['user:1', 'user:2'])
   })
 
+  it('matches long structured keys without recursive wildcard traversal limits', async () => {
+    const index = new TagIndex()
+    const longSegment = 'a'.repeat(600)
+    const key = `user:${longSegment}:profile`
+
+    await index.touch(key)
+    await index.touch(`post:${longSegment}:profile`)
+
+    expect(await index.matchPattern(`user:${longSegment}:*`)).toEqual([key])
+  })
+
   it('resets public key indexes when cleared', async () => {
     const index = new TagIndex()
 
