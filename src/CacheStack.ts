@@ -50,6 +50,7 @@ import {
   type CacheAdaptiveTtlOptions,
   type CacheCircuitBreakerOptions,
   type CacheContextOptionsContext,
+  type CacheEntryResult,
   type CacheEntryWriteKind,
   type CacheEntryWriteOptions,
   type CacheFetcher,
@@ -335,6 +336,42 @@ export class CacheStack extends EventEmitter {
    */
   async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.get(key, fetcher, options)
+  }
+
+  /**
+   * Returns a discriminated cache entry, or `null` on miss.
+   * Unlike `get()`, this distinguishes a stored `null` value from an absent key.
+   */
+  async getEntry<T>(key: string): Promise<CacheEntryResult<T> | null> {
+    const userKey = validateCacheKey(key)
+    const normalizedKey = this.qualifyKey(userKey)
+    await this.awaitStartup('getEntry')
+
+    for (const layer of this.layers) {
+      if (this.shouldSkipLayer(layer)) {
+        continue
+      }
+
+      const stored = await this.readLayerEntry(layer, normalizedKey)
+      if (stored === null) {
+        continue
+      }
+
+      const resolved = resolveStoredValue<T>(stored)
+      if (resolved.state === 'expired') {
+        continue
+      }
+
+      return {
+        key: userKey,
+        value: resolved.value,
+        kind: resolved.envelope?.kind ?? 'value',
+        state: resolved.state,
+        layer: layer.name
+      }
+    }
+
+    return null
   }
 
   /**

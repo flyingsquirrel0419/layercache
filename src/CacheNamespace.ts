@@ -8,6 +8,7 @@ import {
   diffNamespaceMetrics
 } from './internal/CacheNamespaceMetrics'
 import type {
+  CacheEntryResult,
   CacheFetcher,
   CacheGetOptions,
   CacheHitRateSnapshot,
@@ -54,6 +55,22 @@ export class CacheNamespace {
    */
   async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
     return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
+  }
+
+  /**
+   * Returns a namespaced cache entry, or `null` on miss.
+   * Unlike `get()`, this distinguishes a stored `null` value from an absent key.
+   */
+  async getEntry<T>(key: string): Promise<CacheEntryResult<T> | null> {
+    const entry = await this.trackMetrics(() => this.cache.getEntry<T>(this.qualify(key)))
+    if (entry === null) {
+      return null
+    }
+
+    return {
+      ...entry,
+      key
+    }
   }
 
   /**
