@@ -7,6 +7,11 @@ interface TagIndexOptions {
    * Defaults to 100,000.
    */
   maxKnownKeys?: number
+  /**
+   * Minimum age before an existing key touch refreshes LRU order.
+   * Defaults to 1000ms to avoid delete/set churn on cache-hit hot paths.
+   */
+  touchRefreshIntervalMs?: number
 }
 
 interface TrieNode {
@@ -16,33 +21,38 @@ interface TrieNode {
 }
 
 const MAX_PATTERN_RECURSION_DEPTH = 500
+const DEFAULT_TOUCH_REFRESH_INTERVAL_MS = 1_000
 
 export class TagIndex implements CacheTagIndex {
   private readonly tagToKeys = new Map<string, Set<string>>()
   private readonly keyToTags = new Map<string, Set<string>>()
   private readonly knownKeys = new Map<string, number>()
   private readonly maxKnownKeys: number | undefined
+  private readonly touchRefreshIntervalMs: number
   private nextNodeId = 1
   private readonly root = this.createTrieNode()
 
   constructor(options: TagIndexOptions = {}) {
     this.maxKnownKeys = options.maxKnownKeys ?? 100_000
+    this.touchRefreshIntervalMs = options.touchRefreshIntervalMs ?? DEFAULT_TOUCH_REFRESH_INTERVAL_MS
   }
 
   /**
    * Records a key as known without changing tag assignments.
    */
   async touch(key: string): Promise<void> {
-    this.insertKnownKey(key)
-    this.pruneKnownKeysIfNeeded()
+    if (this.insertKnownKey(key)) {
+      this.pruneKnownKeysIfNeeded()
+    }
   }
 
   /**
    * Replaces the tags associated with a key and records the key as known.
    */
   async track(key: string, tags: string[]): Promise<void> {
-    this.insertKnownKey(key)
-    this.pruneKnownKeysIfNeeded()
+    if (this.insertKnownKey(key)) {
+      this.pruneKnownKeysIfNeeded()
+    }
 
     if (tags.length === 0) {
       return
@@ -160,15 +170,21 @@ export class TagIndex implements CacheTagIndex {
     }
   }
 
-  private insertKnownKey(key: string): void {
-    const isNew = !this.knownKeys.has(key)
+  private insertKnownKey(key: string): boolean {
+    const previousTouch = this.knownKeys.get(key)
+    const isNew = previousTouch === undefined
+    const now = Date.now()
+    if (!isNew && now - previousTouch < this.touchRefreshIntervalMs) {
+      return false
+    }
+
     if (!isNew) {
       this.knownKeys.delete(key)
     }
-    this.knownKeys.set(key, Date.now())
+    this.knownKeys.set(key, now)
 
     if (!isNew) {
-      return
+      return true
     }
 
     let node = this.root
@@ -181,6 +197,7 @@ export class TagIndex implements CacheTagIndex {
       node = child
     }
     node.terminal = true
+    return true
   }
 
   private findNode(prefix: string): TrieNode | undefined {
