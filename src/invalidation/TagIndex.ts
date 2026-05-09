@@ -1,4 +1,5 @@
 import type { CacheTagIndex } from '../types'
+import { PatternMatcher } from './PatternMatcher'
 
 interface TagIndexOptions {
   /**
@@ -20,9 +21,7 @@ interface TrieNode {
   children: Map<string, TrieNode>
 }
 
-const MAX_PATTERN_RECURSION_DEPTH = 500
 const DEFAULT_TOUCH_REFRESH_INTERVAL_MS = 1_000
-
 export class TagIndex implements CacheTagIndex {
   private readonly tagToKeys = new Map<string, Set<string>>()
   private readonly keyToTags = new Map<string, Set<string>>()
@@ -135,9 +134,15 @@ export class TagIndex implements CacheTagIndex {
    * Returns known keys matching a wildcard pattern.
    */
   async matchPattern(pattern: string): Promise<string[]> {
-    const matches = new Set<string>()
-    this.collectPatternMatches(this.root, '', pattern, 0, matches, new Set<string>(), 0)
-    return [...matches]
+    const literalPrefix = this.literalPrefix(pattern)
+    const node = this.findNode(literalPrefix)
+    if (!node) {
+      return []
+    }
+
+    const candidates: string[] = []
+    this.collectFromNode(node, literalPrefix, candidates)
+    return candidates.filter((key) => PatternMatcher.matches(pattern, key))
   }
 
   /**
@@ -212,12 +217,20 @@ export class TagIndex implements CacheTagIndex {
   }
 
   private collectFromNode(node: TrieNode, prefix: string, matches: string[]): void {
-    if (node.terminal) {
-      matches.push(prefix)
-    }
+    const stack: Array<{ node: TrieNode; prefix: string }> = [{ node, prefix }]
+    while (stack.length > 0) {
+      const current = stack.pop()
+      if (!current) {
+        continue
+      }
+      if (current.node.terminal) {
+        matches.push(current.prefix)
+      }
 
-    for (const [character, child] of node.children) {
-      this.collectFromNode(child, `${prefix}${character}`, matches)
+      const children = [...current.node.children].reverse()
+      for (const [character, child] of children) {
+        stack.push({ node: child, prefix: `${current.prefix}${character}` })
+      }
     }
   }
 
@@ -226,80 +239,16 @@ export class TagIndex implements CacheTagIndex {
     prefix: string,
     visitor: (key: string) => void | Promise<void>
   ): Promise<void> {
-    if (node.terminal) {
-      await visitor(prefix)
-    }
-
-    for (const [character, child] of node.children) {
-      await this.visitFromNode(child, `${prefix}${character}`, visitor)
+    const matches: string[] = []
+    this.collectFromNode(node, prefix, matches)
+    for (const key of matches) {
+      await visitor(key)
     }
   }
 
-  private collectPatternMatches(
-    node: TrieNode,
-    prefix: string,
-    pattern: string,
-    patternIndex: number,
-    matches: Set<string>,
-    visited: Set<string>,
-    depth: number
-  ): void {
-    if (depth > MAX_PATTERN_RECURSION_DEPTH) {
-      return
-    }
-
-    const stateKey = `${node.id}:${patternIndex}`
-    if (visited.has(stateKey)) {
-      return
-    }
-    visited.add(stateKey)
-
-    if (patternIndex === pattern.length) {
-      if (node.terminal) {
-        matches.add(prefix)
-      }
-      return
-    }
-
-    const patternChar = pattern[patternIndex]
-    if (patternChar === undefined) {
-      return
-    }
-    if (patternChar === '*') {
-      this.collectPatternMatches(node, prefix, pattern, patternIndex + 1, matches, visited, depth + 1)
-      for (const [character, child] of node.children) {
-        this.collectPatternMatches(child, `${prefix}${character}`, pattern, patternIndex, matches, visited, depth + 1)
-      }
-      return
-    }
-
-    if (patternChar === '?') {
-      for (const [character, child] of node.children) {
-        this.collectPatternMatches(
-          child,
-          `${prefix}${character}`,
-          pattern,
-          patternIndex + 1,
-          matches,
-          visited,
-          depth + 1
-        )
-      }
-      return
-    }
-
-    const child = node.children.get(patternChar)
-    if (child) {
-      this.collectPatternMatches(
-        child,
-        `${prefix}${patternChar}`,
-        pattern,
-        patternIndex + 1,
-        matches,
-        visited,
-        depth + 1
-      )
-    }
+  private literalPrefix(pattern: string): string {
+    const wildcardIndex = pattern.search(/[*?]/)
+    return wildcardIndex === -1 ? pattern : pattern.slice(0, wildcardIndex)
   }
 
   private pruneKnownKeysIfNeeded(): void {
