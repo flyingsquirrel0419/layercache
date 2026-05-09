@@ -61,6 +61,7 @@ interface MockOptions {
   singleFlightRenewIntervalMs?: number
   backgroundRefreshTimeoutMs?: number
   negativeCaching?: boolean
+  cacheNullValues?: boolean
   refreshAhead?: number
   circuitBreaker?: unknown
   fetcherRateLimit?: unknown
@@ -542,6 +543,49 @@ describe('CacheStackReader', () => {
       options.negativeCaching = true
       options.storeEntry = vi.fn(async () => {})
       const fetcher = vi.fn(async () => null)
+
+      const result = await reader.getPrepared('key:1', fetcher)
+      expect(result).toBeNull()
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined)
+    })
+
+    it('null fetch result stores a value when cacheNullValues is enabled globally', async () => {
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0')]
+      options.negativeCaching = true
+      options.cacheNullValues = true
+      options.storeEntry = vi.fn(async () => {})
+      const fetcher = vi.fn(async () => null)
+
+      const result = await reader.getPrepared('key:1', fetcher)
+      expect(result).toBeNull()
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', null, undefined)
+    })
+
+    it('null fetch result stores a value when cacheNullValues is enabled per operation', async () => {
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0')]
+      options.negativeCaching = true
+      options.storeEntry = vi.fn(async () => {})
+      const fetcher = vi.fn(async () => null)
+
+      const result = await reader.getPrepared('key:1', fetcher, { cacheNullValues: true })
+      expect(result).toBeNull()
+      expect(options.storeEntry).toHaveBeenCalledWith(
+        'key:1',
+        'value',
+        null,
+        expect.objectContaining({ cacheNullValues: true })
+      )
+    })
+
+    it('undefined fetch result remains a negative-cache entry when negative caching is enabled', async () => {
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0')]
+      options.negativeCaching = true
+      options.cacheNullValues = true
+      options.storeEntry = vi.fn(async () => {})
+      const fetcher = vi.fn(async () => undefined)
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBeNull()

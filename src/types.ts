@@ -65,6 +65,8 @@ export interface CacheContextOptionsContext {
 export interface CacheWriteOptions extends CacheEntryWriteOptions {
   /** Cache `null` fetcher results using `negativeTtl` instead of treating them as misses. */
   negativeCache?: boolean
+  /** Cache `null` fetcher results as regular values instead of negative/empty entries. */
+  cacheNullValues?: boolean
   /** Extend a key's TTL on fresh reads. */
   slidingTtl?: boolean
   /** Refresh in the background when the remaining TTL is at or below this threshold in milliseconds. */
@@ -89,6 +91,7 @@ export interface CacheWriteOptions extends CacheEntryWriteOptions {
    *
    * Returned values override any static entry options already present on the
    * same object. Fetch controls like `shouldCache`, `negativeCache`,
+   * `cacheNullValues`,
    * `refreshAhead`, or `circuitBreaker` are not affected.
    *
    * @example
@@ -380,6 +383,8 @@ export interface CacheStackOptions {
   publishSetInvalidation?: boolean
   /** Cache null fetcher results as negative entries. */
   negativeCaching?: boolean
+  /** Cache null fetcher results as regular values instead of negative/empty entries. */
+  cacheNullValues?: boolean
   /** Default negative-cache TTL in milliseconds. */
   negativeTtl?: number | LayerTtlMap
   /** Default stale-while-revalidate window in milliseconds. */

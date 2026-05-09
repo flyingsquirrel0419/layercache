@@ -306,6 +306,7 @@ export class CacheStack extends EventEmitter {
       singleFlightRenewIntervalMs: options.singleFlightRenewIntervalMs,
       backgroundRefreshTimeoutMs: options.backgroundRefreshTimeoutMs,
       negativeCaching: options.negativeCaching,
+      cacheNullValues: options.cacheNullValues,
       refreshAhead: options.refreshAhead,
       circuitBreaker: options.circuitBreaker,
       fetcherRateLimit: options.fetcherRateLimit

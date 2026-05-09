@@ -87,6 +87,7 @@ interface CacheStackReaderOptions {
   singleFlightRenewIntervalMs?: number
   backgroundRefreshTimeoutMs?: number
   negativeCaching?: boolean
+  cacheNullValues?: boolean
   refreshAhead?: number | LayerTtlMap
   circuitBreaker?: CacheCircuitBreakerOptions
   fetcherRateLimit?: CacheRateLimitOptions
@@ -423,7 +424,7 @@ export class CacheStackReader {
       throw error
     }
 
-    if (fetched === null || fetched === undefined) {
+    if (fetched === undefined || (fetched === null && !this.shouldCacheNullValues(options))) {
       if (!this.shouldNegativeCache(options)) {
         return null
       }
@@ -621,6 +622,10 @@ export class CacheStackReader {
 
   private shouldNegativeCache(options?: CacheGetOptions): boolean {
     return options?.negativeCache ?? this.options.negativeCaching ?? false
+  }
+
+  private shouldCacheNullValues(options?: CacheGetOptions): boolean {
+    return options?.cacheNullValues ?? this.options.cacheNullValues ?? false
   }
 
   private isNegativeStoredValue(stored: unknown): boolean {
