@@ -25,6 +25,7 @@ interface NormalizedRateLimitOptions extends CacheRateLimitOptions {
 
 const MAX_BUCKETS = 10_000
 const MAX_QUEUE_PER_BUCKET = 10_000
+const DEFAULT_QUEUE_OVERFLOW_POLICY: NonNullable<CacheRateLimitOptions['queueOverflow']> = 'reject'
 
 export class FetchRateLimiter {
   private readonly buckets = new Map<string, BucketState>()
@@ -58,8 +59,12 @@ export class FetchRateLimiter {
       const bucketKey = this.resolveBucketKey(normalized, context)
       const queue = this.queuesByBucket.get(bucketKey) ?? []
       if (queue.length >= MAX_QUEUE_PER_BUCKET) {
-        this.rateLimitBypasses += 1
-        task().then(resolve, reject)
+        if ((normalized.queueOverflow ?? DEFAULT_QUEUE_OVERFLOW_POLICY) === 'bypass') {
+          this.rateLimitBypasses += 1
+          task().then(resolve, reject)
+          return
+        }
+        reject(new Error(`FetchRateLimiter queue overflow for bucket "${bucketKey}".`))
         return
       }
       queue.push({
@@ -114,7 +119,8 @@ export class FetchRateLimiter {
       intervalMs,
       maxPerInterval,
       scope: options.scope ?? 'global',
-      bucketKey: options.bucketKey
+      bucketKey: options.bucketKey,
+      queueOverflow: options.queueOverflow
     }
   }
 
