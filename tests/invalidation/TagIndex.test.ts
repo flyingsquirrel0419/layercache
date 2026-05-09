@@ -36,7 +36,7 @@ describe('TagIndex', () => {
   })
 
   it('does not refresh LRU order on every repeated touch', async () => {
-    const index = new TagIndex()
+    const index = new TagIndex({ touchRefreshIntervalMs: 60_000 })
     const mapDelete = vi.spyOn(Map.prototype, 'delete')
 
     try {

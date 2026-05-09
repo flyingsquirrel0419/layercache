@@ -1286,7 +1286,7 @@ export class CacheStack extends EventEmitter {
     for (const key of keys) {
       await this.tagIndex.remove(key)
       this.ttlResolver.deleteProfile(key)
-      this.circuitBreakerManager.delete(key)
+      this.circuitBreakerManager.delete(`key:${key}`)
     }
 
     this.metricsCollector.increment('deletes', keys.length)
@@ -1310,7 +1310,7 @@ export class CacheStack extends EventEmitter {
 
       await this.tagIndex.remove(key)
       this.ttlResolver.deleteProfile(key)
-      this.circuitBreakerManager.delete(key)
+      this.circuitBreakerManager.delete(`key:${key}`)
     }
 
     this.metricsCollector.increment('invalidations')
@@ -1362,7 +1362,7 @@ export class CacheStack extends EventEmitter {
       for (const key of keys) {
         await this.tagIndex.remove(key)
         this.ttlResolver.deleteProfile(key)
-        this.circuitBreakerManager.delete(key)
+        this.circuitBreakerManager.delete(`key:${key}`)
       }
     }
   }

@@ -367,6 +367,34 @@ describe('CacheStack', () => {
     expect(secondFetcher).not.toHaveBeenCalled()
   })
 
+  it('keeps circuit breaker buckets disjoint for key, shared, and custom scopes', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const failingFetcher = vi.fn(async () => {
+      throw new Error('backend down')
+    })
+    const sharedFetcher = vi.fn(async () => 'shared-ok')
+    const customFetcher = vi.fn(async () => 'custom-ok')
+
+    await expect(
+      cache.get('shared', failingFetcher, {
+        circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000 }
+      })
+    ).rejects.toThrow(/backend down/i)
+    await expect(
+      cache.get('other', sharedFetcher, {
+        circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000, scope: 'shared' }
+      })
+    ).resolves.toBe('shared-ok')
+    await expect(
+      cache.get('custom:api', customFetcher, {
+        circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000, breakerKey: 'api' }
+      })
+    ).resolves.toBe('custom-ok')
+
+    expect(sharedFetcher).toHaveBeenCalledOnce()
+    expect(customFetcher).toHaveBeenCalledOnce()
+  })
+
   it('getEntry distinguishes stored null values and negative-cache entries from misses', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 

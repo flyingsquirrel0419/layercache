@@ -46,8 +46,15 @@ export class MetricsCollector {
     const metrics = this.empty()
     const activeCaptures = this.captures.getStore()
     const captures = activeCaptures ? [...activeCaptures, metrics] : [metrics]
-    const result = await this.captures.run(captures, operation)
-    return { result, metrics }
+    try {
+      const result = await this.captures.run(captures, operation)
+      return { result, metrics }
+    } catch (error) {
+      if ((typeof error === 'object' || typeof error === 'function') && error !== null) {
+        ;(error as { metrics?: CacheMetricsSnapshot }).metrics = metrics
+      }
+      throw error
+    }
   }
 
   private recordLatencySample(metrics: CacheMetricsSnapshot, layerName: string, durationMs: number): void {

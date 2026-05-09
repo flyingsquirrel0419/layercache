@@ -78,7 +78,7 @@ export class DiskLayer implements CacheLayer {
   private readonly serializer: CacheSerializer
   private readonly maxFiles: number | undefined
   private readonly maxEntryBytes: number | false
-  private readonly maxWriteQueueDepth: number | undefined
+  private readonly maxWriteQueueDepth: number | false
   private readonly protection: PayloadProtection
   private writeQueue = Promise.resolve()
   private writeQueueDepth = 0
@@ -344,9 +344,9 @@ export class DiskLayer implements CacheLayer {
     return normalized
   }
 
-  private normalizeMaxWriteQueueDepth(maxWriteQueueDepth: number | false | undefined): number | undefined {
+  private normalizeMaxWriteQueueDepth(maxWriteQueueDepth: number | false | undefined): number | false {
     if (maxWriteQueueDepth === false) {
-      return undefined
+      return false
     }
 
     const normalized = maxWriteQueueDepth ?? DEFAULT_MAX_WRITE_QUEUE_DEPTH
@@ -491,7 +491,7 @@ export class DiskLayer implements CacheLayer {
   }
 
   private enqueueWrite(operation: () => Promise<void>): Promise<void> {
-    if (this.maxWriteQueueDepth !== undefined && this.writeQueueDepth >= this.maxWriteQueueDepth) {
+    if (this.maxWriteQueueDepth !== false && this.writeQueueDepth >= this.maxWriteQueueDepth) {
       return Promise.reject(new Error(`DiskLayer write queue limit (${this.maxWriteQueueDepth}) exceeded.`))
     }
 

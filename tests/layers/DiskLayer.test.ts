@@ -184,6 +184,27 @@ describe('DiskLayer', () => {
     await expect(boundedLayer.set('after-drain', 2)).resolves.toBeUndefined()
   })
 
+  it('allows disabling the serialized write queue depth guard', async () => {
+    const unboundedLayer = new DiskLayer({ directory: dir, maxWriteQueueDepth: false })
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const enqueueWrite = (
+      unboundedLayer as unknown as { enqueueWrite: (operation: () => Promise<void>) => Promise<void> }
+    ).enqueueWrite.bind(unboundedLayer)
+
+    const first = enqueueWrite(async () => {
+      await blocked
+    })
+    const second = unboundedLayer.set('queued', 1)
+
+    release()
+    await expect(first).resolves.toBeUndefined()
+    await expect(second).resolves.toBeUndefined()
+    await expect(unboundedLayer.get('queued')).resolves.toBe(1)
+  })
+
   it('supports getMany parallel reads', async () => {
     await layer.set('a', 1)
     await layer.set('b', 2)

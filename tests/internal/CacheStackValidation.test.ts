@@ -71,6 +71,7 @@ describe('CacheStackValidation', () => {
     ).not.toThrow()
     expect(() => validateCircuitBreakerOptions({ failureThreshold: 0 })).toThrow(/positive finite number/i)
     expect(() => validateCircuitBreakerOptions({ scope: 'backend' as never })).toThrow(/must be one of/i)
+    expect(() => validateCircuitBreakerOptions({ scope: '' as never })).toThrow(/must be one of/i)
     expect(() => validateCircuitBreakerOptions({ breakerKey: '' })).toThrow(/must not be empty/i)
   })
 
@@ -80,7 +81,9 @@ describe('CacheStackValidation', () => {
       validateRateLimitOptions('rate', { maxConcurrent: 1, intervalMs: 10, maxPerInterval: 2, scope: 'fetcher' })
     ).not.toThrow()
     expect(() => validateRateLimitOptions('rate', { scope: 'tenant' as never })).toThrow(/must be one of/i)
+    expect(() => validateRateLimitOptions('rate', { scope: '' as never })).toThrow(/must be one of/i)
     expect(() => validateRateLimitOptions('rate', { queueOverflow: 'drop' as never })).toThrow(/must be one of/i)
+    expect(() => validateRateLimitOptions('rate', { queueOverflow: '' as never })).toThrow(/must be one of/i)
     expect(() => validateRateLimitOptions('rate', { bucketKey: '' })).toThrow(/must not be empty/i)
     expect(() => validateRateLimitOptions('rate', { maxConcurrent: 0 })).toThrow(/positive finite number/i)
   })

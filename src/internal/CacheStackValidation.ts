@@ -55,11 +55,11 @@ export function validateRateLimitOptions(name: string, options: CacheRateLimitOp
   validatePositiveNumber(`${name}.intervalMs`, options.intervalMs)
   validatePositiveNumber(`${name}.maxPerInterval`, options.maxPerInterval)
 
-  if (options.scope && !['global', 'key', 'fetcher'].includes(options.scope)) {
+  if (options.scope !== undefined && !['global', 'key', 'fetcher'].includes(options.scope)) {
     throw new Error(`${name}.scope must be one of "global", "key", or "fetcher".`)
   }
 
-  if (options.queueOverflow && !['reject', 'bypass'].includes(options.queueOverflow)) {
+  if (options.queueOverflow !== undefined && !['reject', 'bypass'].includes(options.queueOverflow)) {
     throw new Error(`${name}.queueOverflow must be one of "reject" or "bypass".`)
   }
 
@@ -167,7 +167,7 @@ export function validateCircuitBreakerOptions(options: CacheCircuitBreakerOption
   validatePositiveNumber('circuitBreaker.failureThreshold', options.failureThreshold)
   validatePositiveNumber('circuitBreaker.cooldownMs', options.cooldownMs)
 
-  if (options.scope && !['key', 'shared'].includes(options.scope)) {
+  if (options.scope !== undefined && !['key', 'shared'].includes(options.scope)) {
     throw new Error('circuitBreaker.scope must be one of "key" or "shared".')
   }
 

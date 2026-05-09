@@ -50,4 +50,28 @@ describe('MetricsCollector', () => {
       vi.useRealTimers()
     }
   })
+
+  it('attaches captured metrics to thrown errors', async () => {
+    const collector = new MetricsCollector()
+    const error = new Error('operation failed')
+
+    await expect(
+      collector.capture(async () => {
+        collector.increment('misses')
+        collector.increment('fetches')
+        collector.incrementLayer('missesByLayer', 'memory')
+        collector.recordLatency('memory', 12)
+        throw error
+      })
+    ).rejects.toBe(error)
+
+    expect((error as { metrics?: unknown }).metrics).toEqual(
+      expect.objectContaining({
+        misses: 1,
+        fetches: 1,
+        missesByLayer: { memory: 1 },
+        latencyByLayer: { memory: { avgMs: 12, maxMs: 12, count: 1 } }
+      })
+    )
+  })
 })

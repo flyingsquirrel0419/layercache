@@ -348,7 +348,20 @@ export class CacheNamespace {
   }
 
   private async trackMetrics<T>(operation: () => Promise<T>): Promise<T> {
-    const { result, metrics } = await this.cache.captureMetrics(operation)
+    let result: T
+    let metrics: CacheMetricsSnapshot
+
+    try {
+      ;({ result, metrics } = await this.cache.captureMetrics(operation))
+    } catch (error) {
+      const capturedMetrics = (error as { metrics?: CacheMetricsSnapshot }).metrics
+      if (capturedMetrics) {
+        await this.getMetricsMutex().runExclusive(() => {
+          this.metrics = addNamespaceMetrics(this.metrics, capturedMetrics)
+        })
+      }
+      throw error
+    }
 
     await this.getMetricsMutex().runExclusive(() => {
       this.metrics = addNamespaceMetrics(this.metrics, metrics)

@@ -497,7 +497,7 @@ export class CacheStackReader {
 
   private resolveCircuitBreakerKey(key: string, options: CacheCircuitBreakerOptions | undefined): string {
     if (!options) {
-      return key
+      return `key:${key}`
     }
 
     if (options.breakerKey) {
@@ -505,10 +505,10 @@ export class CacheStackReader {
     }
 
     if (options.scope === 'shared') {
-      return 'shared'
+      return 'scope:shared'
     }
 
-    return key
+    return `key:${key}`
   }
 
   runScheduleBackgroundRefresh<T>(

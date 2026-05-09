@@ -436,6 +436,23 @@ describe('CacheNamespace', () => {
     })
   })
 
+  it('keeps captured namespace metrics when an operation fails', async () => {
+    const cache = makeCache()
+    const ns = cache.namespace('tenant')
+
+    await expect(
+      ns.get('key', async () => {
+        throw new Error('backend failed')
+      })
+    ).rejects.toThrow(/backend failed/i)
+
+    expect(ns.getMetrics()).toMatchObject({
+      misses: 1,
+      fetches: 1,
+      circuitBreakerTrips: 0
+    })
+  })
+
   it('tracks namespace metrics on a real cache stack', async () => {
     const cache = makeCache()
     const users = cache.namespace('users')
