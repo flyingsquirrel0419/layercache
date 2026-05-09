@@ -713,6 +713,41 @@ describe('CacheStackReader', () => {
       expect(result).toBe('timeout-fetch')
       expect(execute).toHaveBeenCalledTimes(2)
     })
+
+    it('backs off single-flight waiter polling while respecting the timeout deadline', async () => {
+      vi.useFakeTimers()
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0', { get: vi.fn(async () => null) })]
+      const execute = vi.fn(
+        async (
+          _key: string,
+          _opts: unknown,
+          worker: () => Promise<string | null>,
+          waiter: () => Promise<string | null>
+        ) => {
+          return execute.mock.calls.length === 1 ? waiter() : worker()
+        }
+      )
+      options.singleFlightCoordinator = { execute }
+      options.singleFlightTimeoutMs = 100
+      options.singleFlightPollMs = 10
+      options.sleep = vi.fn(async (ms: number) => {
+        vi.advanceTimersByTime(ms)
+      })
+      options.storeEntry = vi.fn(async () => {})
+
+      try {
+        await expect(reader.getPrepared('key:1', async () => 'timeout-fetch')).resolves.toBe('timeout-fetch')
+        expect(options.sleep).toHaveBeenNthCalledWith(1, 10)
+        expect(options.sleep).toHaveBeenNthCalledWith(2, 20)
+        expect(options.sleep).toHaveBeenNthCalledWith(3, 40)
+        expect(options.sleep).toHaveBeenLastCalledWith(30)
+      } finally {
+        randomSpy.mockRestore()
+        vi.useRealTimers()
+      }
+    })
   })
 
   // --- Background refresh management ---

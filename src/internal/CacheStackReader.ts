@@ -27,6 +27,9 @@ const DEFAULT_SINGLE_FLIGHT_LEASE_MS = 30_000
 const DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS = 5_000
 const DEFAULT_SINGLE_FLIGHT_POLL_MS = 50
 const DEFAULT_BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
+const SINGLE_FLIGHT_BACKOFF_FACTOR = 2
+const SINGLE_FLIGHT_BACKOFF_JITTER = 0.2
+const SINGLE_FLIGHT_MAX_POLL_MS = 1_000
 
 type ReadMode = 'allow-stale' | 'fresh-only'
 
@@ -373,6 +376,7 @@ export class CacheStackReader {
     const timeoutMs = this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS
     const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
     const deadline = Date.now() + timeoutMs
+    let nextPollMs = pollIntervalMs
 
     this.options.metricsCollector.increment('singleFlightWaits')
     this.options.emit('stampede-dedupe', { key })
@@ -383,7 +387,13 @@ export class CacheStackReader {
         this.options.metricsCollector.increment('hits')
         return hit.value
       }
-      await this.options.sleep(pollIntervalMs)
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        break
+      }
+      const delayMs = Math.min(this.jitterSingleFlightPoll(nextPollMs), remainingMs)
+      await this.options.sleep(delayMs)
+      nextPollMs = Math.min(nextPollMs * SINGLE_FLIGHT_BACKOFF_FACTOR, SINGLE_FLIGHT_MAX_POLL_MS, timeoutMs)
     }
 
     if (!this.options.singleFlightCoordinator) {
@@ -396,6 +406,11 @@ export class CacheStackReader {
       () => this.fetchAndPopulate(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext),
       () => this.waitForFreshValue(key, fetcher, options, expectedClearEpoch, expectedKeyEpoch, fetcherContext)
     )
+  }
+
+  private jitterSingleFlightPoll(delayMs: number): number {
+    const jitterRange = delayMs * SINGLE_FLIGHT_BACKOFF_JITTER
+    return Math.max(1, Math.round(delayMs - jitterRange + Math.random() * jitterRange * 2))
   }
 
   private async fetchAndPopulate<T>(
