@@ -146,6 +146,22 @@ describe('CacheNamespace', () => {
     expect(ns.getMetrics().sets).toBeGreaterThanOrEqual(1)
   })
 
+  it('getEntry returns unqualified keys and distinguishes stored null values', async () => {
+    const ns = makeCache().namespace('cache')
+
+    await ns.set('null-key', null)
+
+    await expect(ns.getEntry('null-key')).resolves.toEqual(
+      expect.objectContaining({
+        key: 'null-key',
+        value: null,
+        kind: 'value',
+        state: 'fresh'
+      })
+    )
+    await expect(ns.getEntry('missing')).resolves.toBeNull()
+  })
+
   it('getOrThrow participates in namespace metrics', async () => {
     const ns = makeCache().namespace('strict')
     await ns.set('key', 1)

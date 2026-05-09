@@ -605,6 +605,20 @@ export interface CacheInspectResult {
   tags: string[]
 }
 
+/** Cached entry result that can distinguish a stored `null` from a miss. */
+export interface CacheEntryResult<T = unknown> {
+  /** User-facing cache key. */
+  key: string
+  /** Unwrapped cached value. May be `null` when `kind` is `value` or `empty`. */
+  value: T | null
+  /** Whether this entry stores a normal value or a negative-cache empty marker. */
+  kind: 'value' | 'empty'
+  /** Fresh/stale state currently available for this entry. */
+  state: 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
+  /** First layer that supplied the entry. */
+  layer: string
+}
+
 // ---------------------------------------------------------------------------
 // Typed EventEmitter events
 // ---------------------------------------------------------------------------

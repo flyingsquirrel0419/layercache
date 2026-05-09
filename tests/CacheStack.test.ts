@@ -367,6 +367,33 @@ describe('CacheStack', () => {
     expect(secondFetcher).not.toHaveBeenCalled()
   })
 
+  it('getEntry distinguishes stored null values and negative-cache entries from misses', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+
+    await cache.set('stored-null', null)
+    await expect(cache.get('stored-null')).resolves.toBeNull()
+    await expect(cache.getEntry('stored-null')).resolves.toEqual(
+      expect.objectContaining({
+        key: 'stored-null',
+        value: null,
+        kind: 'value',
+        state: 'fresh',
+        layer: 'memory'
+      })
+    )
+
+    await cache.get('negative-null', async () => null, { negativeCache: true })
+    await expect(cache.getEntry('negative-null')).resolves.toEqual(
+      expect.objectContaining({
+        key: 'negative-null',
+        value: null,
+        kind: 'empty',
+        state: 'fresh'
+      })
+    )
+    await expect(cache.getEntry('missing')).resolves.toBeNull()
+  })
+
   it('continues has() checks when layer.has() fails or returns false', async () => {
     const warn = vi.fn()
     const flakyHasLayer: CacheLayer = {

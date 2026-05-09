@@ -33,6 +33,7 @@ export {
   type CacheContextOptionsContext,
   type CacheEntryWriteKind,
   type CacheEntryWriteOptions,
+  type CacheEntryResult,
   type CacheDegradationOptions,
   type CacheFetcher,
   type CacheFetcherContext,
