@@ -35,6 +35,21 @@ describe('TagIndex', () => {
     sort.mockRestore()
   })
 
+  it('does not refresh LRU order on every repeated touch', async () => {
+    const index = new TagIndex()
+    const mapDelete = vi.spyOn(Map.prototype, 'delete')
+
+    try {
+      await index.touch('user:1')
+      mapDelete.mockClear()
+      await index.touch('user:1')
+
+      expect(mapDelete).not.toHaveBeenCalled()
+    } finally {
+      mapDelete.mockRestore()
+    }
+  })
+
   it('matches wildcard patterns through the trie-backed known-key index', async () => {
     const index = new TagIndex()
 
