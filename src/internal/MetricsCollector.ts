@@ -1,6 +1,8 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { CacheHitRateSnapshot, CacheLayerLatency, CacheMetricsSnapshot } from '../types'
 
 export class MetricsCollector {
+  private readonly captures = new AsyncLocalStorage<CacheMetricsSnapshot[]>()
   private data: CacheMetricsSnapshot = this.empty()
 
   get snapshot(): CacheMetricsSnapshot {
@@ -17,10 +19,16 @@ export class MetricsCollector {
     amount = 1
   ): void {
     ;(this.data[field] as number) += amount
+    for (const capture of this.captures.getStore() ?? []) {
+      ;(capture[field] as number) += amount
+    }
   }
 
   incrementLayer(map: 'hitsByLayer' | 'missesByLayer', layerName: string): void {
     this.data[map][layerName] = (this.data[map][layerName] ?? 0) + 1
+    for (const capture of this.captures.getStore() ?? []) {
+      capture[map][layerName] = (capture[map][layerName] ?? 0) + 1
+    }
   }
 
   /**
@@ -28,9 +36,24 @@ export class MetricsCollector {
    * Maintains a rolling average and max using Welford's online algorithm.
    */
   recordLatency(layerName: string, durationMs: number): void {
-    const existing = this.data.latencyByLayer[layerName]
+    this.recordLatencySample(this.data, layerName, durationMs)
+    for (const capture of this.captures.getStore() ?? []) {
+      this.recordLatencySample(capture, layerName, durationMs)
+    }
+  }
+
+  async capture<T>(operation: () => Promise<T>): Promise<{ result: T; metrics: CacheMetricsSnapshot }> {
+    const metrics = this.empty()
+    const activeCaptures = this.captures.getStore()
+    const captures = activeCaptures ? [...activeCaptures, metrics] : [metrics]
+    const result = await this.captures.run(captures, operation)
+    return { result, metrics }
+  }
+
+  private recordLatencySample(metrics: CacheMetricsSnapshot, layerName: string, durationMs: number): void {
+    const existing = metrics.latencyByLayer[layerName]
     if (!existing) {
-      this.data.latencyByLayer[layerName] = { avgMs: durationMs, maxMs: durationMs, count: 1 }
+      metrics.latencyByLayer[layerName] = { avgMs: durationMs, maxMs: durationMs, count: 1 }
       return
     }
 

@@ -869,6 +869,14 @@ export class CacheStack extends EventEmitter {
   }
 
   /**
+   * Runs an operation while collecting only the metrics emitted by its async context.
+   * Used by namespaces so metrics tracking does not serialize the operation itself.
+   */
+  async captureMetrics<T>(operation: () => Promise<T>): Promise<{ result: T; metrics: CacheMetricsSnapshot }> {
+    return this.metricsCollector.capture(operation)
+  }
+
+  /**
    * Returns metrics plus layer degradation state and active background refresh count.
    */
   getStats(): CacheStatsSnapshot {

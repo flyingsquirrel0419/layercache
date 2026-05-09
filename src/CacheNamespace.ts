@@ -4,8 +4,7 @@ import {
   addNamespaceMetrics,
   cloneNamespaceMetrics,
   computeNamespaceHitRate,
-  createEmptyNamespaceMetrics,
-  diffNamespaceMetrics
+  createEmptyNamespaceMetrics
 } from './internal/CacheNamespaceMetrics'
 import type {
   CacheFetcher,
@@ -332,13 +331,13 @@ export class CacheNamespace {
   }
 
   private async trackMetrics<T>(operation: () => Promise<T>): Promise<T> {
-    return this.getMetricsMutex().runExclusive(async () => {
-      const before = this.cache.getMetrics()
-      const result = await operation()
-      const after = this.cache.getMetrics()
-      this.metrics = addNamespaceMetrics(this.metrics, diffNamespaceMetrics(before, after))
-      return result
+    const { result, metrics } = await this.cache.captureMetrics(operation)
+
+    await this.getMetricsMutex().runExclusive(() => {
+      this.metrics = addNamespaceMetrics(this.metrics, metrics)
     })
+
+    return result
   }
 
   private getMetricsMutex(): Mutex {
