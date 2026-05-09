@@ -582,6 +582,7 @@ class MyCustomLayer implements CacheLayer {
 | `generationCleanup` | `boolean \| { batchSize: number }` | - | Auto-prune stale generation keys |
 | `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
 | `negativeCaching` | `boolean` | `false` | Cache nulls globally |
+| `cacheNullValues` | `boolean` | `false` | Cache null fetcher results as regular values |
 | `negativeTtl` | `number \| LayerTtlMap` | - | Global TTL for negative cache entries |
 | `staleWhileRevalidate` | `number \| LayerTtlMap` | - | Global stale-while-revalidate window (milliseconds) |
 | `staleIfError` | `number \| LayerTtlMap` | - | Global stale-if-error window (milliseconds) |
@@ -614,6 +615,7 @@ class MyCustomLayer implements CacheLayer {
 | `ttl` | `number \| LayerTtlMap` | TTL in milliseconds, or per-layer overrides |
 | `ttlPolicy` | `string \| object \| function` | `'until-midnight'`, `'next-hour'`, `{ alignTo }`, or custom |
 | `negativeCache` | `boolean` | Cache null results |
+| `cacheNullValues` | `boolean` | Cache null fetcher results as regular values |
 | `negativeTtl` | `number` | Short TTL for misses |
 | `staleWhileRevalidate` | `number \| LayerTtlMap` | Return stale and refresh in background |
 | `staleIfError` | `number \| LayerTtlMap` | Keep serving stale if refresh fails |
