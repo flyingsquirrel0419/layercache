@@ -4,6 +4,14 @@ type CacheOperationOptions =
       ttl?: number;
       staleWhileRevalidate?: number;
       tags?: string[];
+      negativeCache?: boolean;
+      cacheNullValues?: boolean;
+      circuitBreaker?: {
+        failureThreshold?: number;
+        cooldownMs?: number;
+        scope?: "key" | "shared";
+        breakerKey?: string;
+      };
       shouldCache?: (value: unknown) => boolean;
     };
 
@@ -13,9 +21,11 @@ type PlaygroundCacheOptions = {
 };
 
 type CacheEntryState = "fresh" | "stale-while-revalidate";
+type CacheEntryKind = "value" | "empty";
 
 type CacheEntry = {
   value: unknown;
+  kind: CacheEntryKind;
   freshUntil: number;
   expiresAt: number;
 };
@@ -24,13 +34,24 @@ const DEFAULT_TTL_MS = 60_000;
 
 function resolveOperationOptions(options: CacheOperationOptions = DEFAULT_TTL_MS) {
   if (typeof options === "number") {
-    return { ttlMs: options, staleWhileRevalidateMs: 0, tags: undefined, shouldCache: undefined };
+    return {
+      ttlMs: options,
+      staleWhileRevalidateMs: 0,
+      tags: undefined,
+      negativeCache: false,
+      cacheNullValues: false,
+      circuitBreaker: undefined,
+      shouldCache: undefined,
+    };
   }
 
   return {
     ttlMs: options.ttl ?? DEFAULT_TTL_MS,
     staleWhileRevalidateMs: options.staleWhileRevalidate ?? 0,
     tags: options.tags,
+    negativeCache: options.negativeCache ?? false,
+    cacheNullValues: options.cacheNullValues ?? false,
+    circuitBreaker: options.circuitBreaker,
     shouldCache: options.shouldCache,
   };
 }
@@ -51,7 +72,7 @@ export class MockCacheLayer {
     return entry?.state === "fresh" ? entry.value : undefined;
   }
 
-  async getEntry(key: string): Promise<{ value: unknown; state: CacheEntryState } | undefined> {
+  async getEntry(key: string): Promise<{ value: unknown; kind: CacheEntryKind; state: CacheEntryState } | undefined> {
     await this.simulateLatency();
     const entry = this.store.get(key);
     if (!entry) return undefined;
@@ -64,14 +85,21 @@ export class MockCacheLayer {
 
     return {
       value: entry.value,
+      kind: entry.kind,
       state: now > entry.freshUntil ? "stale-while-revalidate" : "fresh",
     };
   }
 
-  async set(key: string, value: unknown, ttlMs: number, staleWhileRevalidateMs = 0): Promise<void> {
+  async set(
+    key: string,
+    value: unknown,
+    ttlMs: number,
+    staleWhileRevalidateMs = 0,
+    kind: CacheEntryKind = "value"
+  ): Promise<void> {
     await this.simulateLatency();
     const freshUntil = Date.now() + ttlMs;
-    this.store.set(key, { value, freshUntil, expiresAt: freshUntil + staleWhileRevalidateMs });
+    this.store.set(key, { value, kind, freshUntil, expiresAt: freshUntil + staleWhileRevalidateMs });
   }
 
   async delete(key: string): Promise<boolean> {
@@ -122,8 +150,19 @@ export class MockCacheStack {
   private layers: MockCacheLayer[];
   private tags = new Map<string, Set<string>>(); // tag -> keys
   private keyTags = new Map<string, Set<string>>(); // key -> tags
-  private stats = { hits: 0, misses: 0, sets: 0, deletes: 0, backfills: 0, staleHits: 0, refreshes: 0 };
+  private stats = {
+    hits: 0,
+    misses: 0,
+    sets: 0,
+    deletes: 0,
+    backfills: 0,
+    staleHits: 0,
+    refreshes: 0,
+    negativeCacheHits: 0,
+    circuitBreakerTrips: 0,
+  };
   private inFlight = new Map<string, Promise<unknown>>();
+  private circuitBreakers = new Map<string, { failures: number; openUntil: number | null }>();
   private generation: number | undefined;
   private onLog?: (message: string) => void;
 
@@ -146,6 +185,11 @@ export class MockCacheStack {
       const entry = await layer.getEntry(storageKey);
       if (entry) {
         this.stats.hits++;
+        if (entry.kind === "empty") {
+          this.stats.negativeCacheHits++;
+          this.log(`[${layer.name}] NEGATIVE HIT for key "${storageKey}"`);
+          return null;
+        }
         if (entry.state === "stale-while-revalidate") {
           this.stats.staleHits++;
           this.log(`[${layer.name}] STALE for key "${storageKey}"`);
@@ -173,14 +217,50 @@ export class MockCacheStack {
     return null;
   }
 
+  async getEntry<T>(key: string): Promise<{
+    key: string;
+    value: T | null;
+    kind: CacheEntryKind;
+    state: "fresh" | "stale";
+    layer: string;
+  } | null> {
+    const storageKey = this.qualifyKey(key);
+
+    for (const [index, layer] of this.layers.entries()) {
+      const entry = await layer.getEntry(storageKey);
+      if (!entry) continue;
+
+      if (index > 0) {
+        await this.backfillUpperLayers(storageKey, entry.value as T, resolveOperationOptions(), index, entry.kind);
+      }
+
+      return {
+        key,
+        value: entry.value as T | null,
+        kind: entry.kind,
+        state: entry.state === "fresh" ? "fresh" : "stale",
+        layer: layer.name,
+      };
+    }
+
+    return null;
+  }
+
   async set<T>(key: string, value: T, options: CacheOperationOptions = DEFAULT_TTL_MS): Promise<void> {
     const operation = resolveOperationOptions(options);
     await this.storeInLayers(this.qualifyKey(key), value, operation);
   }
 
-  private async storeInLayers<T>(key: string, value: T, operation: ReturnType<typeof resolveOperationOptions>): Promise<void> {
+  private async storeInLayers<T>(
+    key: string,
+    value: T,
+    operation: ReturnType<typeof resolveOperationOptions>,
+    kind: CacheEntryKind = "value"
+  ): Promise<void> {
     this.stats.sets++;
-    await Promise.all(this.layers.map((layer) => layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs)));
+    await Promise.all(
+      this.layers.map((layer) => layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs, kind))
+    );
     if (operation.tags) {
       this.trackTags(key, operation.tags);
     }
@@ -287,10 +367,13 @@ export class MockCacheStack {
     key: string,
     value: T,
     operation: ReturnType<typeof resolveOperationOptions>,
-    hitIndex: number
+    hitIndex: number,
+    kind: CacheEntryKind = "value"
   ): Promise<void> {
     const upperLayers = this.layers.slice(0, hitIndex);
-    await Promise.all(upperLayers.map((layer) => layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs)));
+    await Promise.all(
+      upperLayers.map((layer) => layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs, kind))
+    );
     this.stats.backfills += upperLayers.length;
     this.log(`[BACKFILL] Filled ${upperLayers.length} upper layer(s) for "${key}" in parallel`);
   }
@@ -309,14 +392,26 @@ export class MockCacheStack {
 
     this.log(`[FETCH] Calling fetcher for "${storageKey}"...`);
     const fetchPromise = (async () => {
+      const breakerKey = this.resolveCircuitBreakerKey(storageKey, operation.circuitBreaker);
+
       try {
+        this.assertCircuitClosed(breakerKey);
         const value = await fetcher({ key: userKey, currentValue: undefined, state: "miss" });
-        if (value !== null && value !== undefined && operation.shouldCache?.(value) !== false) {
-          await this.storeInLayers(storageKey, value, operation);
+        this.circuitBreakers.delete(breakerKey);
+        const shouldStoreNull = value === null && (operation.cacheNullValues || operation.negativeCache);
+        const shouldStoreValue = value !== undefined && (value !== null || shouldStoreNull);
+        if (shouldStoreValue && operation.shouldCache?.(value) !== false) {
+          const kind = value === null && operation.negativeCache && !operation.cacheNullValues ? "empty" : "value";
+          await this.storeInLayers(storageKey, value, operation, kind);
           this.stats.backfills++;
           this.log(`[BACKFILL] Stored "${storageKey}" in all layers`);
         }
         return value;
+      } catch (error) {
+        if (!(error instanceof Error && error.message.startsWith("Circuit breaker is open"))) {
+          this.recordCircuitFailure(breakerKey, operation.circuitBreaker);
+        }
+        throw error;
       } finally {
         this.inFlight.delete(storageKey);
       }
@@ -344,8 +439,11 @@ export class MockCacheStack {
     const refreshPromise = (async () => {
       try {
         const value = await fetcher({ key: userKey, currentValue, state: "stale-while-revalidate" });
-        if (value !== null && value !== undefined && operation.shouldCache?.(value) !== false) {
-          await this.storeInLayers(storageKey, value, operation);
+        const shouldStoreNull = value === null && (operation.cacheNullValues || operation.negativeCache);
+        const shouldStoreValue = value !== undefined && (value !== null || shouldStoreNull);
+        if (shouldStoreValue && operation.shouldCache?.(value) !== false) {
+          const kind = value === null && operation.negativeCache && !operation.cacheNullValues ? "empty" : "value";
+          await this.storeInLayers(storageKey, value, operation, kind);
           this.stats.backfills++;
           this.log(`[SWR] Refreshed "${storageKey}" in all layers`);
         }
@@ -357,6 +455,41 @@ export class MockCacheStack {
     })();
 
     this.inFlight.set(storageKey, refreshPromise);
+  }
+
+  private resolveCircuitBreakerKey(
+    key: string,
+    options: ReturnType<typeof resolveOperationOptions>["circuitBreaker"]
+  ): string {
+    if (!options) return `key:${key}`;
+    if (options.breakerKey) return `custom:${options.breakerKey}`;
+    if (options.scope === "shared") return "scope:shared";
+    return `key:${key}`;
+  }
+
+  private assertCircuitClosed(breakerKey: string): void {
+    const state = this.circuitBreakers.get(breakerKey);
+    if (!state?.openUntil) return;
+    if (state.openUntil <= Date.now()) {
+      this.circuitBreakers.delete(breakerKey);
+      return;
+    }
+    throw new Error(`Circuit breaker is open for "${breakerKey}"`);
+  }
+
+  private recordCircuitFailure(
+    breakerKey: string,
+    options: ReturnType<typeof resolveOperationOptions>["circuitBreaker"]
+  ): void {
+    if (!options) return;
+    const state = this.circuitBreakers.get(breakerKey) ?? { failures: 0, openUntil: null };
+    state.failures += 1;
+    if (state.failures >= (options.failureThreshold ?? 3)) {
+      state.openUntil = Date.now() + (options.cooldownMs ?? 30_000);
+      this.stats.circuitBreakerTrips++;
+      this.log(`[CIRCUIT-BREAKER] Opened "${breakerKey}"`);
+    }
+    this.circuitBreakers.set(breakerKey, state);
   }
 }
 

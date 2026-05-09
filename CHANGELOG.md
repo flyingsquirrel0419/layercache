@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `cacheNullValues` can store fetched `null` values as regular cache values instead of treating them as misses or negative-cache entries.
+- `CacheStack.getEntry()` and namespace `getEntry()` expose entry metadata so callers can distinguish stored `null` values, negative-cache entries, stale entries, and misses.
+- Circuit breakers can now use `scope: 'shared'` and `breakerKey` to group related fetches by backend dependency instead of only by cache key.
+- Fetcher rate limits support `queueOverflow: 'reject' | 'bypass'` so saturated queues fail explicitly by default or deliberately bypass the limiter.
+- `DiskLayer.maxWriteQueueDepth` bounds the serialized disk write queue and can be disabled with `false`.
+
+### Changed
+
+- TagIndex wildcard matching now prunes candidates by literal prefix and uses iterative traversal to avoid recursive wildcard depth limits.
+- TagIndex repeated touches are throttled with `touchRefreshIntervalMs` to reduce hot-path LRU churn.
+- Namespace metrics now use async-local metric capture and preserve metrics from operations that throw.
+- Distributed single-flight waiters back off polling while respecting the configured timeout.
+
+### Fixed
+
+- Circuit breaker buckets are namespaced internally so per-key, shared, and custom breaker ids cannot collide.
+- Enum-like runtime validation now rejects empty-string `scope` and `queueOverflow` values.
 
 ## [3.0.0] — 2026-05-05
 

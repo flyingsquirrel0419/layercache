@@ -262,6 +262,8 @@ const cache = new CacheStack([
 | **Namespaces** | Scoped cache views with hierarchical prefix support |
 | **Cache warming** | Pre-populate layers at startup with priority-based loading |
 | **Negative caching** | Cache misses (e.g., "user not found") for short TTLs |
+| **Stored null values** | `cacheNullValues` keeps intentional `null` values distinct from misses |
+| **Entry introspection** | `getEntry()` reports value, kind, state, key, and source layer |
 
 ### Invalidation & Freshness
 
@@ -285,9 +287,11 @@ const cache = new CacheStack([
 |---|---|
 | **Graceful degradation** | Skip failed layers temporarily, keep cache available |
 | **Circuit breaker** | Stop hammering broken upstreams after repeated failures |
-| **Fetcher rate limiting** | Scoped to global, per-key, or per-fetcher with custom buckets |
+| **Shared circuit breaker scopes** | Group failures by backend dependency with `scope: 'shared'` and `breakerKey` |
+| **Fetcher rate limiting** | Scoped to global, per-key, or per-fetcher with explicit queue overflow behavior |
 | **Write policies** | `strict` (fail if any layer fails) or `best-effort` |
 | **Write-behind** | Batch writes with configurable flush interval |
+| **Bounded disk writes** | `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized write buildup |
 | **Compression** | gzip / brotli in RedisLayer with configurable threshold |
 | **MessagePack** | Pluggable serializers (JSON default, MessagePack alternative) |
 | **Persistence** | Export/import snapshots to memory or disk |

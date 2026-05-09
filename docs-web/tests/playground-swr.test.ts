@@ -120,6 +120,17 @@ test("playground presets include exact-key invalidation and expiration syntax", 
   assert.match(source, /expireByKeys\(\["profile:2", "profile:3"\]\)/);
 });
 
+test("playground presets include current null-entry and shared circuit breaker syntax", async () => {
+  const presetsPath = resolve(__dirname, "../lib/playground/presets.ts");
+  const source = await readFile(presetsPath, "utf8");
+
+  assert.match(source, /cacheNullValues:\s*true/);
+  assert.match(source, /cache\.getEntry\("profile:deleted"\)/);
+  assert.match(source, /negativeCache:\s*true/);
+  assert.match(source, /scope:\s*"shared"/);
+  assert.match(source, /breakerKey:\s*"users-api"/);
+});
+
 test("playground presets use current write options for tags instead of cache.tag()", async () => {
   const presetsPath = resolve(__dirname, "../lib/playground/presets.ts");
   const source = await readFile(presetsPath, "utf8");
@@ -156,6 +167,54 @@ test("playground cache supports shouldCache and null misses", async () => {
 
   assert.deepEqual(successful, { ok: true });
   assert.deepEqual(await cache.get("http:profile"), { ok: true });
+  assert.equal(attempts, 2);
+});
+
+test("playground cache distinguishes stored nulls from negative-cache entries and misses", async () => {
+  const { cache } = createPlaygroundCache();
+
+  await cache.set("profile:deleted", null, { ttl: 1_000, cacheNullValues: true });
+  assert.equal(await cache.get("profile:deleted"), null);
+  assert.deepEqual(await cache.getEntry("profile:deleted"), {
+    key: "profile:deleted",
+    value: null,
+    kind: "value",
+    state: "fresh",
+    layer: "Memory",
+  });
+
+  await cache.get("profile:not-found", async () => null, { ttl: 1_000, negativeCache: true });
+  assert.equal(await cache.get("profile:not-found"), null);
+  assert.deepEqual(await cache.getEntry("profile:not-found"), {
+    key: "profile:not-found",
+    value: null,
+    kind: "empty",
+    state: "fresh",
+    layer: "Memory",
+  });
+  assert.equal(await cache.getEntry("profile:missing"), null);
+});
+
+test("playground cache applies shared circuit breaker options", async () => {
+  const { cache } = createPlaygroundCache();
+  const circuitBreaker = { failureThreshold: 2, cooldownMs: 60_000, scope: "shared" as const, breakerKey: "users-api" };
+  let attempts = 0;
+
+  for (const key of ["user:1", "user:2"]) {
+    await assert.rejects(
+      cache.get(
+        key,
+        async () => {
+          attempts++;
+          throw new Error("down");
+        },
+        { circuitBreaker }
+      ),
+      /down/
+    );
+  }
+
+  await assert.rejects(cache.get("user:3", async () => "ok", { circuitBreaker }), /Circuit breaker is open/);
   assert.equal(attempts, 2);
 });
 

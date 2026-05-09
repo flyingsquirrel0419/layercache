@@ -117,6 +117,21 @@ Reset all metric counters to zero:
 cache.resetMetrics()
 ```
 
+### captureMetrics()
+
+Capture the metrics emitted by one async operation without diffing a global
+snapshot. This is useful for namespace-level accounting and other overlapping
+work where multiple operations may run at the same time.
+
+```tsx
+const { result, metrics } = await cache.captureMetrics(async () => {
+  return cache.get('user:123', fetchUser)
+})
+
+console.log(result)
+console.log(metrics.fetches)
+```
+
 ## Health Checks
 
 Monitor the health of each cache layer with ping checks:

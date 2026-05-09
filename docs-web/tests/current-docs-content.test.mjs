@@ -55,17 +55,40 @@ test("API docs describe generation persistence and context-aware entry options",
   const source = await readDoc("content/docs/api.mdx");
 
   assert.match(source, /RedisGenerationStore/);
-  assert.match(source, /const nextGeneration = cache\.bumpGeneration\(\)/);
-  assert.match(source, /await generations\.set\(nextGeneration\)/);
+  assert.match(source, /const nextGeneration = await generations\.bump\(\)/);
+  assert.match(source, /cache\.bumpGeneration\(nextGeneration\)/);
   assert.match(source, /Context-Aware Entry Options/);
   assert.match(source, /contextOptions: \(\{ value \}\)/);
+});
+
+test("API docs describe null entry introspection and new resilience options", async () => {
+  const source = await readDoc("content/docs/api.mdx");
+
+  assert.match(source, /cache\.getEntry/);
+  assert.match(source, /cacheNullValues: true/);
+  assert.match(source, /CircuitBreakerOptions/);
+  assert.match(source, /breakerKey/);
+  assert.match(source, /RateLimitOptions/);
+  assert.match(source, /queueOverflow/);
+  assert.match(source, /maxWriteQueueDepth/);
+});
+
+test("web docs describe shared circuit breakers, queue overflow, disk queue guards, and metric capture", async () => {
+  const resilience = await readDoc("content/docs/resilience.mdx");
+  const layers = await readDoc("content/docs/layers.mdx");
+  const observability = await readDoc("content/docs/observability.mdx");
+
+  assert.match(resilience, /scope: 'shared'/);
+  assert.match(resilience, /queueOverflow: 'bypass'/);
+  assert.match(layers, /maxWriteQueueDepth/);
+  assert.match(observability, /captureMetrics/);
 });
 
 test("docs are configured for GitHub Pages deployment", async () => {
   const robots = await readDoc("content/public/robots.txt");
   const config = await readFile(resolve(__dirname, "../rspress.config.ts"), "utf8");
 
-  assert.match(robots, /https:\/\/flyingsquirrel0419\.github\.io\/layercache\/sitemap\.xml/);
+  assert.match(robots, /https:\/\/layercache\.flyingsquirrel\.me\/sitemap\.xml/);
   assert.match(config, /GITHUB_PAGES/);
   assert.match(config, /\/layercache\//);
 });

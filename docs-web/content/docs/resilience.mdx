@@ -230,6 +230,20 @@ await cache.get('fragile-key', fetchFragileData, {
 })
 ```
 
+Use shared scope when several cache keys depend on the same backend and should
+trip one circuit together:
+
+```ts
+await cache.get('user:1', fetchUser, {
+  circuitBreaker: {
+    failureThreshold: 2,
+    cooldownMs: 60_000,
+    scope: 'shared',
+    breakerKey: 'users-api'
+  }
+})
+```
+
 ### Circuit Breaker Events
 
 Monitor circuit breaker state changes:
@@ -441,7 +455,8 @@ const cache = new CacheStack([...], {
   fetcherRateLimit: {
     maxConcurrent: 10,    // Max 10 concurrent fetchers
     intervalMs: 1000,     // Reset limit every second
-    scope: 'global'       // 'global' | 'key' | 'fetcher'
+    scope: 'global',      // 'global' | 'key' | 'fetcher'
+    queueOverflow: 'reject'
   }
 })
 ```
@@ -553,6 +568,20 @@ const p2 = cache.get('key2', fetch2)  // Running
 const p3 = cache.get('key3', fetch3)  // Queued
 
 // When p1 or p2 completes, p3 starts
+```
+
+By default, saturated internal queues reject new work with a clear overflow
+error. If a caller intentionally prefers availability over strict limiting, use
+`queueOverflow: 'bypass'`:
+
+```ts
+await cache.get('search:expensive', fetchSearch, {
+  fetcherRateLimit: {
+    maxConcurrent: 1,
+    scope: 'key',
+    queueOverflow: 'bypass'
+  }
+})
 ```
 
 ### Combining with Stampede Prevention

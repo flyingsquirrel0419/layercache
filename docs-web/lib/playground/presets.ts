@@ -151,6 +151,31 @@ console.log("Second result cached:", JSON.stringify(second));
 console.log("Cached value now:", JSON.stringify(await cache.get("http:api:profile")));`,
   },
   {
+    id: "entry-introspection",
+    title: "Stored Nulls & getEntry",
+    description: "Distinguish stored null values, negative-cache entries, and misses",
+    code: `// Store null as a real value and inspect the entry metadata
+const { cache } = createPlaygroundCache();
+
+await cache.set("profile:deleted", null, {
+  ttl: 60_000,
+  cacheNullValues: true,
+});
+
+console.log("Stored null read:", await cache.get("profile:deleted"));
+console.log("Stored null entry:", JSON.stringify(await cache.getEntry("profile:deleted"), null, 2));
+
+await cache.get("profile:not-found", async () => null, {
+  negativeCache: true,
+  ttl: 30_000,
+});
+
+console.log("Negative-cache read:", await cache.get("profile:not-found"));
+console.log("Negative-cache entry:", JSON.stringify(await cache.getEntry("profile:not-found"), null, 2));
+console.log("Missing entry:", await cache.getEntry("profile:missing"));
+console.log("Stats:", JSON.stringify(cache.getStats()));`,
+  },
+  {
     id: "exact-key-apis",
     title: "Exact-Key APIs",
     description: "Invalidate or expire individual keys without pattern matching",
@@ -282,33 +307,31 @@ console.log("Stats:", JSON.stringify(cache.getStats()));`,
   {
     id: "circuit-breaker",
     title: "Circuit Breaker",
-    description: "Failure threshold and recovery",
-    code: `// Simulating circuit breaker behavior
+    description: "Shared breaker scope for one backend dependency",
+    code: `// Simulating shared circuit breaker behavior
 const { cache } = createPlaygroundCache();
+
+const circuitBreaker = {
+  failureThreshold: 2,
+  cooldownMs: 60_000,
+  scope: "shared",
+  breakerKey: "users-api",
+};
+
 let attempts = 0;
-let successes = 0;
-
-console.log("Simulating failing fetcher...\\n");
-
-// Attempt multiple fetches - simulate failures
-for (let i = 0; i < 5; i++) {
-  attempts++;
+for (const key of ["user:1", "user:2", "user:3"]) {
   try {
-    const result = await cache.get(\`key:\${i}\`, async () => {
-      if (i < 3) {
-        console.log(\`  Attempt \${i + 1}: Fetcher FAILED\`);
-        throw new Error("Database connection failed");
-      }
-      console.log(\`  Attempt \${i + 1}: Fetcher succeeded\`);
-      return { value: \`data-\${i}\` };
-    }, { ttl: 30_000 });
-    successes++;
+    await cache.get(key, async () => {
+      attempts++;
+      console.log(\`Fetcher attempt #\${attempts} for \${key}\`);
+      throw new Error("Users API unavailable");
+    }, { ttl: 30_000, circuitBreaker });
   } catch (e) {
-    console.log(\`  -> Error caught (attempt \${i + 1})\`);
+    console.log(\`\${key}: \${e.message}\`);
   }
 }
 
-console.log(\`\\nResults: \${successes}/\${attempts} successful\`);
+console.log("All keys share breaker bucket:", circuitBreaker.breakerKey);
 console.log("Stats:", JSON.stringify(cache.getStats()));`,
   },
   {

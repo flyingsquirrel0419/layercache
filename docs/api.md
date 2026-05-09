@@ -133,6 +133,28 @@ const info = await cache.inspect('user:123')
 // }
 ```
 
+#### `cache.getEntry<T>(key): Promise<CacheEntryResult<T> | null>`
+
+Reads a key and returns entry metadata instead of only the value. Use this when
+`null` is a valid cached value and you need to distinguish stored nulls,
+negative-cache entries, stale entries, and misses.
+
+```ts
+await cache.set('user:deleted', null, { cacheNullValues: true })
+
+const entry = await cache.getEntry('user:deleted')
+// {
+//   key: 'user:deleted',
+//   value: null,
+//   kind: 'value',
+//   state: 'fresh',
+//   layer: 'memory'
+// }
+
+const miss = await cache.getEntry('user:missing')
+// null
+```
+
 ---
 
 ### Write Operations
@@ -376,6 +398,18 @@ const { metrics, layers, backgroundRefreshes } = cache.getStats()
 // layers: [{ name, isLocal, degradedUntil }]
 ```
 
+#### `cache.captureMetrics(operation)`
+
+Runs an async operation and returns only the metrics emitted while that
+operation was active. Namespaces use this internally so overlapping namespace
+operations do not serialize on a global metrics lock.
+
+```ts
+const { result, metrics } = await cache.captureMetrics(async () => {
+  return cache.get('user:123', fetchUser)
+})
+```
+
 #### `cache.getHitRate()`
 
 Computed hit rate overall and per-layer.
@@ -514,9 +548,14 @@ import { resolve } from 'node:path'
 new DiskLayer({
   directory: resolve('./var/cache/layercache'),
   maxFiles: 50_000,
+  maxWriteQueueDepth: 10_000,
   name: 'disk'
 })
 ```
+
+`maxWriteQueueDepth` caps pending serialized `set()` / `delete()` work so a
+slow disk cannot accumulate unbounded writes. Set it to `false` to disable the
+guard for trusted low-volume environments.
 
 #### At-Rest Protection
 
@@ -605,6 +644,37 @@ class MyCustomLayer implements CacheLayer {
 | `snapshotMaxEntries` | `number \| false` | - | Max entries in a snapshot |
 | `invalidationMaxKeys` | `number \| false` | - | Safety limit for invalidation scans |
 | `maxProfileEntries` | `number` | `100000` | Max size before pruning internal maps |
+
+### CircuitBreakerOptions
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `failureThreshold` | `number` | `3` | Consecutive failures before opening the circuit |
+| `cooldownMs` | `number` | `30000` | Milliseconds before another fetch attempt is allowed |
+| `scope` | `'key' \| 'shared'` | `'key'` | Use per-key buckets or one shared bucket for these options |
+| `breakerKey` | `string` | - | Explicit bucket id for grouping related backend dependencies |
+
+```ts
+await cache.get('user:1', fetchFromApi, {
+  circuitBreaker: {
+    failureThreshold: 2,
+    cooldownMs: 60_000,
+    scope: 'shared',
+    breakerKey: 'users-api'
+  }
+})
+```
+
+### RateLimitOptions
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxConcurrent` | `number` | - | Maximum concurrent fetchers in the selected bucket |
+| `intervalMs` | `number` | - | Rate-limit window size in milliseconds |
+| `maxPerInterval` | `number` | - | Maximum fetches per interval |
+| `scope` | `'global' \| 'key' \| 'fetcher'` | `'global'` | Bucket by all fetches, cache key, or fetcher function |
+| `bucketKey` | `string` | - | Explicit bucket id for related work |
+| `queueOverflow` | `'reject' \| 'bypass'` | `'reject'` | Reject saturated queues or deliberately bypass the limiter |
 
 ### Per-Operation Options
 
