@@ -786,21 +786,23 @@ describe('CacheStack internals', () => {
       cache as {
         recordCircuitFailure: (
           key: string,
+          breakerKey: string,
           options: { failureThreshold: number; cooldownMs: number } | undefined,
           error: unknown
         ) => void
       }
-    ).recordCircuitFailure('user:1', undefined, new Error('ignored'))
+    ).recordCircuitFailure('user:1', 'user:1', undefined, new Error('ignored'))
     expect(cache.getMetrics().circuitBreakerTrips).toBe(0)
     ;(
       cache as {
         recordCircuitFailure: (
           key: string,
+          breakerKey: string,
           options: { failureThreshold: number; cooldownMs: number } | undefined,
           error: unknown
         ) => void
       }
-    ).recordCircuitFailure('user:1', { failureThreshold: 1, cooldownMs: 50 }, new Error('boom'))
+    ).recordCircuitFailure('user:1', 'user:1', { failureThreshold: 1, cooldownMs: 50 }, new Error('boom'))
     expect(cache.getMetrics().circuitBreakerTrips).toBe(1)
 
     const emitted: unknown[] = []

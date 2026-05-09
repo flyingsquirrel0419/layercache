@@ -285,7 +285,8 @@ export class CacheStack extends EventEmitter {
       emitError: (operation, context) => this.emitError(operation, context),
       formatError: (error) => this.formatError(error),
       storeEntry: (key, kind, value, options) => this.storeEntry(key, kind, value, options),
-      recordCircuitFailure: (key, options, error) => this.recordCircuitFailure(key, options, error),
+      recordCircuitFailure: (key, breakerKey, options, error) =>
+        this.recordCircuitFailure(key, breakerKey, options, error),
       resolveLayerMs: (layerName, override, globalDefault, fallback) =>
         this.resolveLayerMs(layerName, override, globalDefault, fallback),
       sleep: (ms) => this.sleep(ms),
@@ -1622,16 +1623,21 @@ export class CacheStack extends EventEmitter {
     return Boolean(this.options.gracefulDegradation)
   }
 
-  private recordCircuitFailure(key: string, options: CacheCircuitBreakerOptions | undefined, error: unknown): void {
+  private recordCircuitFailure(
+    key: string,
+    breakerKey: string,
+    options: CacheCircuitBreakerOptions | undefined,
+    error: unknown
+  ): void {
     if (!options) {
       return
     }
 
-    this.circuitBreakerManager.recordFailure(key, options)
-    if (this.circuitBreakerManager.isOpen(key)) {
+    this.circuitBreakerManager.recordFailure(breakerKey, options)
+    if (this.circuitBreakerManager.isOpen(breakerKey)) {
       this.metricsCollector.increment('circuitBreakerTrips')
     }
-    this.emitError('fetch', { key, error: this.formatError(error) })
+    this.emitError('fetch', { key, breakerKey, error: this.formatError(error) })
   }
 
   private emitError(operation: string, context: Record<string, unknown>): void {
