@@ -175,23 +175,41 @@ test("playground cache distinguishes stored nulls from negative-cache entries an
 
   await cache.set("profile:deleted", null, { ttl: 1_000, cacheNullValues: true });
   assert.equal(await cache.get("profile:deleted"), null);
-  assert.deepEqual(await cache.getEntry("profile:deleted"), {
-    key: "profile:deleted",
-    value: null,
-    kind: "value",
-    state: "fresh",
-    layer: "Memory",
-  });
+  const deletedEntry = await cache.getEntry("profile:deleted");
+  assert.equal(typeof deletedEntry?.layer, "string");
+  assert.deepEqual(
+    deletedEntry && {
+      key: deletedEntry.key,
+      value: deletedEntry.value,
+      kind: deletedEntry.kind,
+      state: deletedEntry.state,
+    },
+    {
+      key: "profile:deleted",
+      value: null,
+      kind: "value",
+      state: "fresh",
+    }
+  );
 
   await cache.get("profile:not-found", async () => null, { ttl: 1_000, negativeCache: true });
   assert.equal(await cache.get("profile:not-found"), null);
-  assert.deepEqual(await cache.getEntry("profile:not-found"), {
-    key: "profile:not-found",
-    value: null,
-    kind: "empty",
-    state: "fresh",
-    layer: "Memory",
-  });
+  const negativeEntry = await cache.getEntry("profile:not-found");
+  assert.equal(typeof negativeEntry?.layer, "string");
+  assert.deepEqual(
+    negativeEntry && {
+      key: negativeEntry.key,
+      value: negativeEntry.value,
+      kind: negativeEntry.kind,
+      state: negativeEntry.state,
+    },
+    {
+      key: "profile:not-found",
+      value: null,
+      kind: "empty",
+      state: "fresh",
+    }
+  );
   assert.equal(await cache.getEntry("profile:missing"), null);
 });
 

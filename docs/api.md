@@ -140,7 +140,7 @@ Reads a key and returns entry metadata instead of only the value. Use this when
 negative-cache entries, stale entries, and misses.
 
 ```ts
-await cache.set('user:deleted', null, { cacheNullValues: true })
+await cache.set('user:deleted', null)
 
 const entry = await cache.getEntry('user:deleted')
 // {
@@ -153,6 +153,13 @@ const entry = await cache.getEntry('user:deleted')
 
 const miss = await cache.getEntry('user:missing')
 // null
+```
+
+`cache.set()` stores `null` values directly. `cacheNullValues` applies to
+read-through fetchers that return `null`, not to direct writes.
+
+```ts
+await cache.get('user:deleted', async () => null, { cacheNullValues: true })
 ```
 
 ---
@@ -410,6 +417,18 @@ const { result, metrics } = await cache.captureMetrics(async () => {
 })
 ```
 
+If the operation rejects, the thrown error is annotated with a `metrics`
+property containing the captured `CacheMetricsSnapshot`.
+
+```ts
+try {
+  await cache.captureMetrics(async () => cache.get('user:123', fetchUser))
+} catch (error) {
+  const metrics = (error as { metrics?: CacheMetricsSnapshot }).metrics
+  throw error
+}
+```
+
 #### `cache.getHitRate()`
 
 Computed hit rate overall and per-layer.
@@ -554,8 +573,8 @@ new DiskLayer({
 ```
 
 `maxWriteQueueDepth` caps pending serialized `set()` / `delete()` work so a
-slow disk cannot accumulate unbounded writes. Set it to `false` to disable the
-guard for trusted low-volume environments.
+slow disk cannot accumulate unbounded writes. Defaults to 10,000. Set it to
+`false` to disable the guard for trusted low-volume environments.
 
 #### At-Rest Protection
 
@@ -653,6 +672,11 @@ class MyCustomLayer implements CacheLayer {
 | `cooldownMs` | `number` | `30000` | Milliseconds before another fetch attempt is allowed |
 | `scope` | `'key' \| 'shared'` | `'key'` | Use per-key buckets or one shared bucket for these options |
 | `breakerKey` | `string` | - | Explicit bucket id for grouping related backend dependencies |
+
+If `breakerKey` is provided, it selects the explicit bucket id and takes
+precedence over `scope`. Otherwise `scope: 'key'` creates one bucket per cache
+key, while `scope: 'shared'` uses one shared bucket for all keys using those
+options.
 
 ```ts
 await cache.get('user:1', fetchFromApi, {

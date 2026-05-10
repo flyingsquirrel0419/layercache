@@ -345,35 +345,64 @@ export class CacheStack extends EventEmitter {
    * Unlike `get()`, this distinguishes a stored `null` value from an absent key.
    */
   async getEntry<T>(key: string): Promise<CacheEntryResult<T> | null> {
-    const userKey = validateCacheKey(key)
-    const normalizedKey = this.qualifyKey(userKey)
-    await this.awaitStartup('getEntry')
+    return this.observeOperation('layercache.get_entry', { 'layercache.key': String(key ?? '') }, async () => {
+      const userKey = validateCacheKey(key)
+      const normalizedKey = this.qualifyKey(userKey)
+      await this.awaitStartup('getEntry')
+      let sawRetainableValue = false
 
-    for (const layer of this.layers) {
-      if (this.shouldSkipLayer(layer)) {
-        continue
+      for (let index = 0; index < this.layers.length; index += 1) {
+        const layer = this.layers[index]
+        if (!layer || this.shouldSkipLayer(layer)) {
+          continue
+        }
+
+        const readStart = performance.now()
+        const stored = await this.readLayerEntry(layer, normalizedKey)
+        this.metricsCollector.recordLatency(layer.name, performance.now() - readStart)
+        if (stored === null) {
+          this.metricsCollector.incrementLayer('missesByLayer', layer.name)
+          continue
+        }
+
+        const resolved = resolveStoredValue<T>(stored)
+        if (resolved.state === 'expired') {
+          await layer.delete(normalizedKey)
+          continue
+        }
+
+        sawRetainableValue = true
+        await this.tagIndex.touch(normalizedKey)
+        await this.reader.backfill(normalizedKey, stored, index - 1)
+        this.metricsCollector.increment('hits')
+        if (resolved.state === 'stale-while-revalidate' || resolved.state === 'stale-if-error') {
+          this.metricsCollector.increment('staleHits')
+        }
+        this.metricsCollector.incrementLayer('hitsByLayer', layer.name)
+        this.logger.debug?.('hit', { key: normalizedKey, layer: layer.name, state: resolved.state })
+        this.emit('hit', {
+          key: normalizedKey,
+          layer: layer.name,
+          state: resolved.state as CacheStackEvents['hit']['state']
+        })
+
+        return {
+          key: userKey,
+          value: resolved.value,
+          kind: resolved.envelope?.kind ?? 'value',
+          state: resolved.state,
+          layer: layer.name
+        }
       }
 
-      const stored = await this.readLayerEntry(layer, normalizedKey)
-      if (stored === null) {
-        continue
+      if (!sawRetainableValue) {
+        await this.tagIndex.remove(normalizedKey)
       }
-
-      const resolved = resolveStoredValue<T>(stored)
-      if (resolved.state === 'expired') {
-        continue
-      }
-
-      return {
-        key: userKey,
-        value: resolved.value,
-        kind: resolved.envelope?.kind ?? 'value',
-        state: resolved.state,
-        layer: layer.name
-      }
-    }
-
-    return null
+      this.metricsCollector.increment('misses')
+      this.logger.debug?.('miss', { key: normalizedKey, mode: 'getEntry' })
+      this.emit('miss', { key: normalizedKey, mode: 'getEntry' })
+      return null
+    })
   }
 
   /**

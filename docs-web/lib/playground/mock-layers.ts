@@ -437,8 +437,12 @@ export class MockCacheStack {
     this.stats.refreshes++;
 
     const refreshPromise = (async () => {
+      const breakerKey = this.resolveCircuitBreakerKey(storageKey, operation.circuitBreaker);
+
       try {
+        this.assertCircuitClosed(breakerKey);
         const value = await fetcher({ key: userKey, currentValue, state: "stale-while-revalidate" });
+        this.circuitBreakers.delete(breakerKey);
         const shouldStoreNull = value === null && (operation.cacheNullValues || operation.negativeCache);
         const shouldStoreValue = value !== undefined && (value !== null || shouldStoreNull);
         if (shouldStoreValue && operation.shouldCache?.(value) !== false) {
@@ -448,6 +452,9 @@ export class MockCacheStack {
           this.log(`[SWR] Refreshed "${storageKey}" in all layers`);
         }
       } catch (error) {
+        if (!(error instanceof Error && error.message.startsWith("Circuit breaker is open"))) {
+          this.recordCircuitFailure(breakerKey, operation.circuitBreaker);
+        }
         this.log(`[SWR] Refresh failed for "${storageKey}": ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         this.inFlight.delete(storageKey);

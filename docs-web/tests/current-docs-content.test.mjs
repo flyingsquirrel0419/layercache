@@ -78,8 +78,8 @@ test("web docs describe shared circuit breakers, queue overflow, disk queue guar
   const layers = await readDoc("content/docs/layers.mdx");
   const observability = await readDoc("content/docs/observability.mdx");
 
-  assert.match(resilience, /scope: 'shared'/);
-  assert.match(resilience, /queueOverflow: 'bypass'/);
+  assert.match(resilience, /scope:\s*['"]shared['"]/);
+  assert.match(resilience, /queueOverflow:\s*['"]bypass['"]/);
   assert.match(layers, /maxWriteQueueDepth/);
   assert.match(observability, /captureMetrics/);
 });

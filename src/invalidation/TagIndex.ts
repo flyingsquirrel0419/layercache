@@ -239,10 +239,20 @@ export class TagIndex implements CacheTagIndex {
     prefix: string,
     visitor: (key: string) => void | Promise<void>
   ): Promise<void> {
-    const matches: string[] = []
-    this.collectFromNode(node, prefix, matches)
-    for (const key of matches) {
-      await visitor(key)
+    const stack: Array<{ node: TrieNode; prefix: string }> = [{ node, prefix }]
+    while (stack.length > 0) {
+      const current = stack.pop()
+      if (!current) {
+        continue
+      }
+      if (current.node.terminal) {
+        await visitor(current.prefix)
+      }
+
+      const children = [...current.node.children].reverse()
+      for (const [character, child] of children) {
+        stack.push({ node: child, prefix: `${current.prefix}${character}` })
+      }
     }
   }
 

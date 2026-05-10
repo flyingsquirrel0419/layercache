@@ -422,6 +422,30 @@ describe('CacheStack', () => {
     await expect(cache.getEntry('missing')).resolves.toBeNull()
   })
 
+  it('getEntry records read side effects and backfills faster layers', async () => {
+    const memory = new RecordingLayer('memory')
+    const redis = new RecordingLayer('redis')
+    redis.values.set('profile:1', 'cached')
+    const cache = new CacheStack([memory, redis])
+
+    await expect(cache.getEntry('profile:1')).resolves.toEqual(
+      expect.objectContaining({
+        key: 'profile:1',
+        value: 'cached',
+        kind: 'value',
+        state: 'fresh',
+        layer: 'redis'
+      })
+    )
+
+    expect(memory.values.get('profile:1')).toBe('cached')
+    const metrics = cache.getMetrics()
+    expect(metrics.hits).toBe(1)
+    expect(metrics.backfills).toBe(1)
+    expect(metrics.hitsByLayer.redis).toBe(1)
+    expect(metrics.missesByLayer.memory).toBe(1)
+  })
+
   it('continues has() checks when layer.has() fails or returns false', async () => {
     const warn = vi.fn()
     const flakyHasLayer: CacheLayer = {

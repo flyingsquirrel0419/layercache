@@ -776,6 +776,8 @@ describe('CacheStackReader', () => {
       options.singleFlightCoordinator = { execute }
       options.singleFlightTimeoutMs = 100
       options.singleFlightPollMs = 10
+      // With jitter fixed at the midpoint, polling doubles from the base interval
+      // and caps at the remaining timeout deadline: 10 -> 20 -> 40 -> 30.
       options.sleep = vi.fn(async (ms: number) => {
         vi.advanceTimersByTime(ms)
       })

@@ -288,7 +288,7 @@ const cache = new CacheStack([
 | **Graceful degradation** | Skip failed layers temporarily, keep cache available |
 | **Circuit breaker** | Stop hammering broken upstreams after repeated failures |
 | **Shared circuit breaker scopes** | Group failures by backend dependency with `scope: 'shared'` and `breakerKey` |
-| **Fetcher rate limiting** | Scoped to global, per-key, or per-fetcher with explicit queue overflow behavior |
+| **Fetcher rate limiting** | Scoped to global, per-key, or per-fetcher; `queueOverflow: 'reject'` rejects saturated queues and `'bypass'` runs overflow work directly |
 | **Write policies** | `strict` (fail if any layer fails) or `best-effort` |
 | **Write-behind** | Batch writes with configurable flush interval |
 | **Bounded disk writes** | `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized write buildup |
