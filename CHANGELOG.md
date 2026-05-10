@@ -21,11 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TagIndex repeated touches are throttled with `touchRefreshIntervalMs` to reduce hot-path LRU churn.
 - Namespace metrics now use async-local metric capture and preserve metrics from operations that throw.
 - Distributed single-flight waiters back off polling while respecting the configured timeout.
+- Test coverage now includes fetcher-rate-limit interval draining, cleanup timer rearming, bucket hard-limit failure, and disposed-bucket safeguards, raising the overall statement baseline above 96.9%.
 
 ### Fixed
 
 - Circuit breaker buckets are namespaced internally so per-key, shared, and custom breaker ids cannot collide.
 - Enum-like runtime validation now rejects empty-string `scope` and `queueOverflow` values.
+- `CacheStack.getEntry()` now records read metrics, touches tag metadata, backfills faster layers, deletes expired entries, and emits hit/miss events consistently with the normal read path.
+- Playground stale-while-revalidate refreshes now use the same circuit-breaker accounting as cache misses.
 
 ## [3.0.0] — 2026-05-05
 

@@ -24,8 +24,13 @@ Run all checks before opening a PR:
 ```bash
 npm run lint        # Biome linting & formatting
 npm test            # Vitest test suite
+npm run test:coverage # Vitest coverage report for PR coverage checks
 npm run build:all   # ESM + CJS build
 ```
+
+Coverage uploads are handled by CI. The upload step is non-blocking, but PRs
+that change behavior should keep local `npm run test:coverage` output from
+regressing unexpectedly.
 
 Documentation changes should also be checked from the docs app:
 
@@ -45,6 +50,7 @@ npm run test:watch
 
 - **Formatting** - Use [Biome](https://biomejs.dev/) formatting and lint rules. Run `npm run lint:fix` to auto-fix.
 - **Testing** - Add or update tests whenever behavior changes. We use [Vitest](https://vitest.dev/).
+- **Coverage** - Prefer focused regression tests for new branches, edge cases, and operational safeguards instead of broad snapshot-style assertions.
 - **Focus** - Keep changes focused. Avoid mixing unrelated work in one PR.
 - **Documentation** - Keep `README.md`, `docs/`, `docs-web/content/`, and `CHANGELOG.md` in sync with user-facing changes.
 - **Release scope** - Update `package.json`, `package-lock.json`, `docs-web/package.json`, `docs-web/package-lock.json`, and `CHANGELOG.md` together when a PR changes the next release version.

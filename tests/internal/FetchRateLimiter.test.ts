@@ -179,6 +179,43 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('waits for interval capacity before draining queued work', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const order: string[] = []
+
+    try {
+      const first = limiter.schedule(
+        { intervalMs: 100, maxPerInterval: 1, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        async () => {
+          order.push('first')
+          return 'a'
+        }
+      )
+      const second = limiter.schedule(
+        { intervalMs: 100, maxPerInterval: 1, scope: 'global' },
+        { key: 'user:2', fetcher: async () => 'b' },
+        async () => {
+          order.push('second')
+          return 'b'
+        }
+      )
+
+      await expect(first).resolves.toBe('a')
+      expect(order).toEqual(['first'])
+
+      await vi.advanceTimersByTimeAsync(99)
+      expect(order).toEqual(['first'])
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toBe('b')
+      expect(order).toEqual(['first', 'second'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears an existing cleanup timer when rearming an interval bucket', () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()
@@ -206,6 +243,49 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('clears pending interval cleanup when queued work starts for the same bucket', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout')
+    let releaseFirst: (() => void) | undefined
+
+    try {
+      const first = limiter.schedule(
+        { maxConcurrent: 1, intervalMs: 100, maxPerInterval: 2, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        () =>
+          new Promise<string>((resolve) => {
+            releaseFirst = () => resolve('a')
+          })
+      )
+      const second = limiter.schedule(
+        { maxConcurrent: 1, intervalMs: 100, maxPerInterval: 2, scope: 'global' },
+        { key: 'user:2', fetcher: async () => 'b' },
+        async () => 'b'
+      )
+
+      await vi.advanceTimersByTimeAsync(1)
+      const bucket = (
+        limiter as unknown as { buckets: Map<string, { cleanupTimer?: ReturnType<typeof setTimeout> }> }
+      ).buckets.get('global')
+      expect(bucket).toBeDefined()
+      if (!bucket) {
+        throw new Error('Expected global rate-limit bucket to exist')
+      }
+      bucket.cleanupTimer = setTimeout(() => undefined, 1_000)
+
+      releaseFirst?.()
+      await expect(first).resolves.toBe('a')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toBe('b')
+      expect(clearTimeoutSpy).toHaveBeenCalled()
+    } finally {
+      clearTimeoutSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('evicts idle buckets when the internal bucket map grows too large', async () => {
     const limiter = new FetchRateLimiter()
     const buckets = (limiter as unknown as { buckets: Map<string, { active: number; startedAt: number[] }> }).buckets
@@ -221,6 +301,19 @@ describe('FetchRateLimiter', () => {
     )
 
     expect(buckets.size).toBeLessThanOrEqual(9_001)
+  })
+
+  it('throws when the bucket hard limit cannot evict active buckets', () => {
+    const limiter = new FetchRateLimiter()
+    const buckets = (limiter as unknown as { buckets: Map<string, { active: number; startedAt: number[] }> }).buckets
+
+    for (let index = 0; index < 10_000; index += 1) {
+      buckets.set(`key:${index}`, { active: 1, startedAt: [] })
+    }
+
+    expect(() =>
+      (limiter as unknown as { bucketState: (bucketKey: string) => unknown }).bucketState('key:overflow')
+    ).toThrow(/bucket limit/i)
   })
 
   it('computes wait times, prunes windows, and cleans up buckets', async () => {
@@ -345,6 +438,9 @@ describe('FetchRateLimiter', () => {
       limiter.dispose()
 
       expect((limiter as unknown as { buckets: Map<string, unknown> }).buckets.size).toBe(0)
+      expect(() =>
+        (limiter as unknown as { bucketState: (bucketKey: string) => unknown }).bucketState('key:disposed')
+      ).toThrow(/disposed/i)
       await expect(
         limiter.schedule({ maxConcurrent: 1 }, { key: 'user:2', fetcher: async () => 'b' }, async () => 'b')
       ).rejects.toThrow(/disposed/i)

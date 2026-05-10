@@ -44,6 +44,8 @@ layercache includes several built-in security measures:
 - **Decompression limits** — RedisLayer enforces `decompressionMaxBytes` (default 64 MiB) to prevent compression bombs
 - **Atomic file writes** — snapshots use temp file + `fs.rename` to prevent TOCTOU races
 - **Key truncation** — error messages truncate long keys to prevent log injection
+- **Bounded work queues** — fetcher rate limiting rejects saturated queues by default, and `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized disk writes
+- **Circuit breaker isolation** — per-key, shared, and explicit breaker buckets are namespaced to avoid accidental dependency-bucket collisions
 - **Redis CLI safeguards** — mass deletion requires `--force`, Redis passwords are masked in output, production `redis://` URLs are rejected unless `--allow-plaintext` is explicitly passed, and scan commands have bounded default limits
 - **HTTP cache-key filtering** — Express and Hono implicit URL cache keys omit common sensitive query parameters such as access tokens, API keys, passwords, private keys, credentials, and session identifiers
 - **Signed invalidation messages** — RedisInvalidationBus can sign and verify pub/sub invalidation messages with HMAC-SHA256 via `signingSecret`
