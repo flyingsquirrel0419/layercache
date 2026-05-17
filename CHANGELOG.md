@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-05-17
+
 ### Added
 
 - `cacheNullValues` can store fetched `null` values as regular cache values instead of treating them as misses or negative-cache entries.
 - `CacheStack.getEntry()` and namespace `getEntry()` expose entry metadata so callers can distinguish stored `null` values, negative-cache entries, stale entries, and misses.
+- `CacheStack.captureMetrics()` runs an async operation and returns the result plus only the metrics emitted during that operation.
 - Circuit breakers can now use `scope: 'shared'` and `breakerKey` to group related fetches by backend dependency instead of only by cache key.
 - Fetcher rate limits support `queueOverflow: 'reject' | 'bypass'` so saturated queues fail explicitly by default or deliberately bypass the limiter.
 - `DiskLayer.maxWriteQueueDepth` bounds the serialized disk write queue and can be disabled with `false`.
