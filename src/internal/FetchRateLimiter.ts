@@ -1,10 +1,10 @@
 import type { CacheRateLimitOptions } from '../types'
 
-interface QueueItem {
+interface QueueItem<T> {
   bucketKey: string
   options: NormalizedRateLimitOptions
-  task: () => Promise<unknown>
-  resolve: (value: unknown) => void
+  task: () => Promise<T>
+  resolve: (value: T) => void
   reject: (error: unknown) => void
 }
 
@@ -29,7 +29,7 @@ const DEFAULT_QUEUE_OVERFLOW_POLICY: NonNullable<CacheRateLimitOptions['queueOve
 
 export class FetchRateLimiter {
   private readonly buckets = new Map<string, BucketState>()
-  private readonly queuesByBucket = new Map<string, Array<QueueItem>>()
+  private readonly queuesByBucket = new Map<string, Array<QueueItem<unknown>>>()
   private readonly pendingBuckets = new Set<string>()
   private readonly fetcherBuckets = new WeakMap<(...args: never[]) => unknown, string>()
   private nextFetcherBucketId = 0
@@ -70,8 +70,8 @@ export class FetchRateLimiter {
       queue.push({
         bucketKey,
         options: normalized,
-        task: task as () => Promise<unknown>,
-        resolve: resolve as (value: unknown) => void,
+        task,
+        resolve,
         reject
       })
       this.queuesByBucket.set(bucketKey, queue)
