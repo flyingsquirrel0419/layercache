@@ -65,8 +65,8 @@
     "test:integration": "node ./scripts/run-integration-tests.mjs",
     "test:all": "npm test && npm run test:integration",
     "test:watch": "vitest",
-    "lint": "npx @biomejs/biome check .",
-    "lint:fix": "npx @biomejs/biome check --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
     "bench:latency": "tsx benchmarks/latency.ts",
     "bench:stampede": "tsx benchmarks/stampede.ts",
     "bench:direct": "tsx benchmarks/direct.ts",
@@ -97,8 +97,11 @@
     "ioredis": "^5.6.1",
     "ioredis-mock": "^8.13.0",
     "tsup": "^8.5.0",
-    "tsx": "^4.19.3",
+    "tsx": "^4.22.4",
     "typescript": "^5.8.3",
     "vitest": "^4.1.2"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }
