@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] — 2026-06-14
+
+### Fixed
+
+- Fixed the `FetchRateLimiter` queue item typing under strict TypeScript checks by aligning queued task and resolver storage with the bucket queue's `unknown` value boundary.
+- Restored the `lint` and `lint:fix` scripts to direct `biome` invocations, since npm scripts already resolve local binaries from `node_modules/.bin`.
+
+### Security
+
+- Resolved development dependency audit findings by updating the lockfile to use `tmp@0.2.7`, `tsx@4.22.4`, and `esbuild@0.28.1`.
+- Added an `esbuild` override so transitive dev tooling no longer resolves the vulnerable `0.27.x` line.
+
 ## [3.1.0] — 2026-05-17
 
 ### Added
