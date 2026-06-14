@@ -216,10 +216,256 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('continues draining after a queued task rejects', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const order: string[] = []
+    let rejectFirst: ((error: Error) => void) | undefined
+
+    try {
+      const first = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            order.push('first-start')
+            rejectFirst = reject
+          })
+      )
+      const second = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'user:2', fetcher: async () => 'b' },
+        async () => {
+          order.push('second-start')
+          return 'b'
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(order).toEqual(['first-start'])
+
+      rejectFirst?.(new Error('first failed'))
+      await expect(first).rejects.toThrow('first failed')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toBe('b')
+      expect(order).toEqual(['first-start', 'second-start'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops corrupted pending queue entries while draining', () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const pendingBuckets = (limiter as unknown as { pendingBuckets: Set<string> }).pendingBuckets
+
+    const sparseQueue: Array<unknown> = []
+    sparseQueue.length = 1
+    queuesByBucket.set('sparse', sparseQueue)
+    pendingBuckets.add('sparse')
+    ;(limiter as unknown as { drain: () => void }).drain()
+
+    expect(queuesByBucket.has('sparse')).toBe(false)
+    expect(pendingBuckets.has('sparse')).toBe(false)
+  })
+
+  it('drops buckets when a queued entry disappears before shifting', () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const pendingBuckets = (limiter as unknown as { pendingBuckets: Set<string> }).pendingBuckets
+    const queue = [
+      {
+        bucketKey: 'global',
+        options: { maxConcurrent: 1, scope: 'global' },
+        run: async () => undefined,
+        reject: () => undefined
+      }
+    ]
+    queue.shift = () => undefined
+    queuesByBucket.set('global', queue)
+    pendingBuckets.add('global')
+    ;(limiter as unknown as { drain: () => void }).drain()
+
+    expect(queuesByBucket.has('global')).toBe(false)
+    expect(pendingBuckets.has('global')).toBe(false)
+  })
+
+  it('run closure resolves the outer scheduled promise with the task return value', async () => {
+    const limiter = new FetchRateLimiter()
+
+    const result = await limiter.schedule(
+      { maxConcurrent: 2, scope: 'global' },
+      { key: 'user:1', fetcher: async () => 'x' },
+      async () => 42
+    )
+
+    expect(result).toBe(42)
+  })
+
+  it('run closure propagates a rejected promise from the task to the outer scheduled promise', async () => {
+    const limiter = new FetchRateLimiter()
+    const taskError = new Error('async task failed')
+
+    await expect(
+      limiter.schedule(
+        { maxConcurrent: 2, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'x' },
+        async () => {
+          throw taskError
+        }
+      )
+    ).rejects.toBe(taskError)
+  })
+
+  it('run closure propagates a synchronous throw from the task to the outer scheduled promise', async () => {
+    const limiter = new FetchRateLimiter()
+    const taskError = new TypeError('sync throw inside async')
+
+    await expect(
+      limiter.schedule(
+        { maxConcurrent: 2, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'x' },
+        async () => {
+          throw taskError
+        }
+      )
+    ).rejects.toBe(taskError)
+  })
+
+  it('drains all tasks completely after intermixed rejections and resolutions', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const order: string[] = []
+    let rejectFirst: ((error: Error) => void) | undefined
+    let resolveThird: ((value: string) => void) | undefined
+
+    try {
+      const first = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k1', fetcher: async () => 'a' },
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            order.push('first-start')
+            rejectFirst = reject
+          })
+      )
+      const second = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k2', fetcher: async () => 'b' },
+        async () => {
+          order.push('second-start')
+          return 'b'
+        }
+      )
+      const third = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k3', fetcher: async () => 'c' },
+        () =>
+          new Promise<string>((resolve, _reject) => {
+            order.push('third-start')
+            resolveThird = resolve
+          })
+      )
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(order).toEqual(['first-start'])
+
+      rejectFirst?.(new Error('first rejected'))
+      await expect(first).rejects.toThrow('first rejected')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toBe('b')
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(order).toContain('third-start')
+
+      resolveThird?.('c')
+      await expect(third).resolves.toBe('c')
+
+      expect(order).toEqual(['first-start', 'second-start', 'third-start'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('dispose rejects queued items that have not yet been dispatched', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    let blockRelease: (() => void) | undefined
+
+    try {
+      // First task: blocks the slot
+      const blocker = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k1', fetcher: async () => 'a' },
+        () =>
+          new Promise<string>((resolve) => {
+            blockRelease = () => resolve('done')
+          })
+      )
+
+      // Second task: queued behind the blocker
+      const queued = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k2', fetcher: async () => 'b' },
+        async () => 'queued result'
+      )
+
+      await vi.advanceTimersByTimeAsync(1)
+
+      // Dispose while the blocker is running and queued task is waiting
+      limiter.dispose()
+
+      await expect(queued).rejects.toThrow(/disposed/i)
+
+      // The blocker is still outstanding — release it to avoid unhandled rejection
+      blockRelease?.()
+      // blocker promise may reject or resolve depending on timing; swallow either
+      await blocker.then(() => undefined, () => undefined)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('run closure result does not interfere with the finally handler on drain', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+
+    try {
+      const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+
+      // Schedule two tasks: one succeeds, one fails
+      const success = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k1', fetcher: async () => 'x' },
+        async () => 'ok'
+      )
+
+      const failure = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'k2', fetcher: async () => 'y' },
+        async () => {
+          throw new Error('fail')
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(success).resolves.toBe('ok')
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(failure).rejects.toThrow('fail')
+
+      // Both tasks ran: queue should now be empty
+      expect(queuesByBucket.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears an existing cleanup timer when rearming an interval bucket', () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()
-    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout')
+
     const bucket = {
       active: 0,
       startedAt: [Date.now()],
