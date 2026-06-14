@@ -216,6 +216,81 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('continues draining after a queued task rejects', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const order: string[] = []
+    let rejectFirst: ((error: Error) => void) | undefined
+
+    try {
+      const first = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'user:1', fetcher: async () => 'a' },
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            order.push('first-start')
+            rejectFirst = reject
+          })
+      )
+      const second = limiter.schedule(
+        { maxConcurrent: 1, scope: 'global' },
+        { key: 'user:2', fetcher: async () => 'b' },
+        async () => {
+          order.push('second-start')
+          return 'b'
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(order).toEqual(['first-start'])
+
+      rejectFirst?.(new Error('first failed'))
+      await expect(first).rejects.toThrow('first failed')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toBe('b')
+      expect(order).toEqual(['first-start', 'second-start'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops corrupted pending queue entries while draining', () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const pendingBuckets = (limiter as unknown as { pendingBuckets: Set<string> }).pendingBuckets
+
+    const sparseQueue: Array<unknown> = []
+    sparseQueue.length = 1
+    queuesByBucket.set('sparse', sparseQueue)
+    pendingBuckets.add('sparse')
+    ;(limiter as unknown as { drain: () => void }).drain()
+
+    expect(queuesByBucket.has('sparse')).toBe(false)
+    expect(pendingBuckets.has('sparse')).toBe(false)
+  })
+
+  it('drops buckets when a queued entry disappears before shifting', () => {
+    const limiter = new FetchRateLimiter()
+    const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
+    const pendingBuckets = (limiter as unknown as { pendingBuckets: Set<string> }).pendingBuckets
+    const queue = [
+      {
+        bucketKey: 'global',
+        options: { maxConcurrent: 1, scope: 'global' },
+        run: async () => undefined,
+        reject: () => undefined
+      }
+    ]
+    queue.shift = () => undefined
+    queuesByBucket.set('global', queue)
+    pendingBuckets.add('global')
+    ;(limiter as unknown as { drain: () => void }).drain()
+
+    expect(queuesByBucket.has('global')).toBe(false)
+    expect(pendingBuckets.has('global')).toBe(false)
+  })
+
   it('clears an existing cleanup timer when rearming an interval bucket', () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()
