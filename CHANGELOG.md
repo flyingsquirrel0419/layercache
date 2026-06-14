@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed the `FetchRateLimiter` queue item typing under strict TypeScript checks by aligning queued task and resolver storage with the bucket queue's `unknown` value boundary.
 - Restored the `lint` and `lint:fix` scripts to direct `biome` invocations, since npm scripts already resolve local binaries from `node_modules/.bin`.
+- Added rate limiter regression coverage for rejected queued tasks continuing to drain and for corrupted pending-queue defensive cleanup, raising the suite to 601 passing tests and overall statement coverage to 97.13%.
 
 ### Security
 
