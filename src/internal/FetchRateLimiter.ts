@@ -3,8 +3,7 @@ import type { CacheRateLimitOptions } from '../types'
 interface QueueItem {
   bucketKey: string
   options: NormalizedRateLimitOptions
-  task: () => Promise<unknown>
-  resolve: (value: unknown) => void
+  run: () => Promise<void>
   reject: (error: unknown) => void
 }
 
@@ -70,8 +69,13 @@ export class FetchRateLimiter {
       queue.push({
         bucketKey,
         options: normalized,
-        task: task as () => Promise<unknown>,
-        resolve: resolve as (value: unknown) => void,
+        run: async () => {
+          try {
+            resolve(await task())
+          } catch (error) {
+            reject(error)
+          }
+        },
         reject
       })
       this.queuesByBucket.set(bucketKey, queue)
@@ -220,24 +224,21 @@ export class FetchRateLimiter {
         bucket.startedAt.push(Date.now())
       }
 
-      void next
-        .task()
-        .then(next.resolve, next.reject)
-        .finally(() => {
-          bucket.active -= 1
-          if ((this.queuesByBucket.get(next.bucketKey)?.length ?? 0) > 0) {
-            this.pendingBuckets.add(next.bucketKey)
-          }
-          this.cleanupBucket(next.bucketKey, bucket, next.options.intervalMs)
-          // Schedule next drain on next tick to prevent recursive event-loop starvation
-          if (!this.drainTimer) {
-            this.drainTimer = setTimeout(() => {
-              this.drainTimer = undefined
-              this.drain()
-            }, 0)
-            this.drainTimer.unref?.()
-          }
-        })
+      void next.run().finally(() => {
+        bucket.active -= 1
+        if ((this.queuesByBucket.get(next.bucketKey)?.length ?? 0) > 0) {
+          this.pendingBuckets.add(next.bucketKey)
+        }
+        this.cleanupBucket(next.bucketKey, bucket, next.options.intervalMs)
+        // Schedule next drain on next tick to prevent recursive event-loop starvation
+        if (!this.drainTimer) {
+          this.drainTimer = setTimeout(() => {
+            this.drainTimer = undefined
+            this.drain()
+          }, 0)
+          this.drainTimer.unref?.()
+        }
+      })
     }
   }
 
