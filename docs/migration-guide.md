@@ -46,6 +46,8 @@ NODE_ENV=production npx layercache stats --redis redis://localhost:6379 --allow-
 
 Express and Hono middleware now bypass implicit URL-only caching when common sensitive query parameters are present. This avoids both storing secrets in cache keys and collapsing private responses into one scrubbed URL key. Provide a custom `keyResolver` when private responses are selected by query credentials.
 
+The sensitive parameter names are `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token`. The same list is documented in the integration options.
+
 ### DiskLayer protected entries
 
 When `DiskLayer` is configured with `encryptionKey` or `signingKey`, plaintext legacy entries are now rejected by default. If you need to read old plaintext files during a migration, enable `allowLegacyPlaintext: true` temporarily and disable it after the cache directory has been rewritten.

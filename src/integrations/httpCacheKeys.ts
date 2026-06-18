@@ -44,7 +44,7 @@ function inspectHttpCacheUrl(url: string): { normalizedUrl: string; hasSensitive
   } catch {
     return {
       normalizedUrl: url,
-      hasSensitiveQuery: false
+      hasSensitiveQuery: true
     }
   }
 }

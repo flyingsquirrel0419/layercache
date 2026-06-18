@@ -330,7 +330,7 @@ describe('cacheGraphqlResolver', () => {
 })
 
 describe('HTTP cache middlewares', () => {
-  it('falls back to res.end for express cache hits and preserves invalid URLs', async () => {
+  it('bypasses invalid express URLs for implicit cache keys', async () => {
     const cache = makeCache()
     await cache.set('GET:http://[', { ok: true })
     const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
@@ -342,8 +342,8 @@ describe('HTTP cache middlewares', () => {
 
     await middleware({ method: 'GET', originalUrl: 'http://[' }, res, next)
 
-    expect(res.end).toHaveBeenCalledWith(JSON.stringify({ ok: true }))
-    expect(next).not.toHaveBeenCalled()
+    expect(res.end).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledTimes(1)
   })
 
   it('falls through for invalid hono URLs and unsupported methods', async () => {
@@ -645,14 +645,16 @@ describe('createExpressCacheMiddleware', () => {
     expect(hitResponse.end).toHaveBeenCalledWith(JSON.stringify({ ok: true }))
   })
 
-  it('normalizes malformed express urls by falling back to the raw string', async () => {
+  it('bypasses implicit express caching when URL parsing fails', async () => {
     const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
     const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
     let calls = 0
 
     const run = async () => {
       const response = { setHeader: vi.fn(), json: vi.fn((body: unknown) => body) }
-      await middleware({ method: 'GET', url: '%%%broken-url%%%' }, response, () => {
+      await middleware({ method: 'GET', url: 'http://[' }, response, () => {
         calls += 1
         response.json({ calls })
       })
@@ -660,7 +662,9 @@ describe('createExpressCacheMiddleware', () => {
 
     await run()
     await run()
-    expect(calls).toBe(1)
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
   })
 
   it('emits express cache write failures for non-Error rejections', async () => {
@@ -1108,22 +1112,16 @@ describe('createHonoCacheMiddleware', () => {
     expect(getSpy).not.toHaveBeenCalled()
   })
 
-  it('normalizes malformed hono urls by falling back to the raw string and emits cache write errors', async () => {
+  it('bypasses implicit hono caching when URL parsing fails', async () => {
     const cache = makeCache()
-    const onError = vi.fn()
-    cache.on('error', onError)
-    const emitSpy = vi.spyOn(cache, 'emit')
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
     const middleware = createHonoCacheMiddleware(cache, {
       allowPrivateCaching: true
     })
 
-    const originalSet = cache.set.bind(cache)
-    cache.set = vi.fn(async () => {
-      throw 'boom'
-    }) as typeof cache.set
-
     const context = {
-      req: { method: 'GET', url: '%%%broken-url%%%' },
+      req: { method: 'GET', url: 'http://[' },
       header: vi.fn(),
       json: vi.fn((body) => body)
     }
@@ -1131,17 +1129,8 @@ describe('createHonoCacheMiddleware', () => {
     await middleware(context, async () => {
       context.json({ ok: true })
     })
-    await Promise.resolve()
 
-    expect(emitSpy).toHaveBeenCalledWith('error', {
-      operation: 'set',
-      error: 'boom'
-    })
-    expect(onError).toHaveBeenCalledWith({
-      operation: 'set',
-      error: 'boom'
-    })
-
-    cache.set = originalSet
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
   })
 })
