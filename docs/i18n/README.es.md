@@ -377,7 +377,11 @@ import {
 } from 'layercache'
 
 const redis = new Redis()
-const bus = new RedisInvalidationBus({ publisher: redis, subscriber: new Redis() })
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(),
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+})
 const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags' })
 const coordinator = new RedisSingleFlightCoordinator({ client: redis })
 

@@ -25,7 +25,7 @@ Layercache 3.0 tightens production defaults and updates the docs/runtime surface
 
 - `RedisTagIndex` now uses 16 known-key shards by default, with a `migrate-tag-index` CLI command for older single-set indexes.
 - Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed.
-- Express and Hono implicit URL cache keys strip sensitive query parameters, and non-2xx JSON responses are skipped by default.
+- Express and Hono implicit URL caching skips requests with sensitive query parameters unless a custom key resolver is provided, and non-2xx JSON responses are skipped by default.
 - `RedisInvalidationBus` supports signed invalidation messages, and `RedisGenerationStore` persists generation rotations across instances.
 - The documentation site now runs on Rspress and deploys through GitHub Pages.
 

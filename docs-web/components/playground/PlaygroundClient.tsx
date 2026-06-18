@@ -153,7 +153,7 @@ export function PlaygroundClient() {
           <div className={styles.panelHeader}>
             <div>
               <p className={styles.panelTitle}>Editor</p>
-              <p className={styles.panelSub}>Edit a preset, then run it in the worker sandbox.</p>
+              <p className={styles.panelSub}>Edit a preset, then run it in the worker playground.</p>
             </div>
             <div className={styles.toolbarActions}>
               <button

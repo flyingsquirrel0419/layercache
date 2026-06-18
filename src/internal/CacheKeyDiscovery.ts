@@ -12,21 +12,38 @@ export class CacheKeyDiscovery {
   constructor(private readonly options: CacheKeyDiscoveryOptions) {}
 
   async collectKeysWithPrefix(prefix: string, maxMatches: number | false = false): Promise<string[]> {
-    const { tagIndex } = this.options
     const matches = new Set<string>()
+    await this.forEachKeyWithPrefix(prefix, (key) => {
+      matches.add(key)
+      this.assertWithinMatchLimit(matches, maxMatches)
+    })
+
+    return [...matches]
+  }
+
+  async forEachKeyWithPrefix(
+    prefix: string,
+    visitor: (key: string) => void | Promise<void>,
+    maxMatches: number | false = false
+  ): Promise<void> {
+    const { tagIndex } = this.options
+    let matches = 0
+    const visit = async (key: string): Promise<void> => {
+      matches += 1
+      this.assertWithinMatchCount(matches, maxMatches)
+      await visitor(key)
+    }
 
     if (tagIndex.forEachKeyForPrefix) {
       await tagIndex.forEachKeyForPrefix(prefix, async (key) => {
-        matches.add(key)
-        this.assertWithinMatchLimit(matches, maxMatches)
+        await visit(key)
       })
     } else {
       const initialMatches = tagIndex.keysForPrefix
         ? await tagIndex.keysForPrefix(prefix)
         : await tagIndex.matchPattern(`${prefix}*`)
       for (const key of initialMatches) {
-        matches.add(key)
-        this.assertWithinMatchLimit(matches, maxMatches)
+        await visit(key)
       }
     }
 
@@ -40,8 +57,7 @@ export class CacheKeyDiscovery {
           if (layer.forEachKey) {
             await layer.forEachKey(async (key) => {
               if (key.startsWith(prefix)) {
-                matches.add(key)
-                this.assertWithinMatchLimit(matches, maxMatches)
+                await visit(key)
               }
             })
             return
@@ -50,8 +66,7 @@ export class CacheKeyDiscovery {
           const keys = await layer.keys?.()
           for (const key of keys ?? []) {
             if (key.startsWith(prefix)) {
-              matches.add(key)
-              this.assertWithinMatchLimit(matches, maxMatches)
+              await visit(key)
             }
           }
         } catch (error) {
@@ -59,8 +74,6 @@ export class CacheKeyDiscovery {
         }
       })
     )
-
-    return [...matches]
   }
 
   async collectKeysMatchingPattern(pattern: string, maxMatches: number | false = false): Promise<string[]> {
@@ -114,6 +127,12 @@ export class CacheKeyDiscovery {
   private assertWithinMatchLimit(matches: Set<string>, maxMatches: number | false): void {
     if (maxMatches !== false && matches.size > maxMatches) {
       throw new Error(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
+    }
+  }
+
+  private assertWithinMatchCount(matches: number, maxMatches: number | false): void {
+    if (maxMatches !== false && matches > maxMatches) {
+      throw new Error(`Invalidation matched too many keys (${matches} > ${maxMatches}).`)
     }
   }
 }

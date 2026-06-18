@@ -47,6 +47,14 @@ export class RedisInvalidationBus implements InvalidationBus {
     this.channel = options.channel ?? 'layercache:invalidation'
     this.logger = options.logger
     this.signingKey = options.signingSecret ? normalizeSigningSecret(options.signingSecret) : undefined
+    if (!this.signingKey) {
+      this.logger?.warn?.(
+        'RedisInvalidationBus is running without signingSecret; invalidation messages are unsigned.',
+        {
+          channel: this.channel
+        }
+      )
+    }
   }
 
   /**

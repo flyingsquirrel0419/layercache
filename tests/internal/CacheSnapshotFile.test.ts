@@ -154,6 +154,30 @@ describe('CacheSnapshotFile', () => {
     }
   })
 
+  it('rejects commit when the validated parent was swapped to a symlink before rename', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-race-'))
+    const outsideDir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-race-outside-'))
+    const parentDir = join(dir, 'nested')
+    const targetPath = join(parentDir, 'snapshot.json')
+
+    try {
+      await fs.promises.mkdir(parentDir, { recursive: true })
+      const validatedTargetPath = await validateSnapshotFilePath(targetPath, 'write', dir)
+      const tempPath = atomicWriteTempPath(validatedTargetPath)
+
+      await rm(parentDir, { recursive: true, force: true })
+      await symlink(outsideDir, parentDir, 'dir')
+      await writeFile(tempPath, 'proof', 'utf8')
+
+      await expect(commitAtomicWrite(tempPath, validatedTargetPath)).rejects.toThrow(/symbolic link/i)
+      await expect(fs.promises.stat(join(outsideDir, 'snapshot.json'))).rejects.toThrow()
+      await expect(fs.promises.stat(tempPath)).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(outsideDir, { recursive: true, force: true })
+    }
+  })
+
   it('generates a temp path with a hex suffix for atomic writes', () => {
     const result = atomicWriteTempPath('/data/snapshot.json')
     expect(result).toMatch(/^\/data\/snapshot\.json\.tmp-[0-9a-f]{16}$/)

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Fixed implicit Express/Hono private URL caching so requests containing sensitive query parameters bypass implicit URL-only caching unless a custom `keyResolver` is supplied, preventing scrubbed private responses from sharing one cache key.
+- Fixed namespace clearing so `CacheNamespace.clear()` invalidates the delimiter-bound namespace prefix (for example `tenant:`), preventing sibling namespace eviction such as `a` clearing `ab`.
+- Fixed DiskLayer protected reads so plaintext legacy payloads are rejected when `encryptionKey` or `signingKey` is configured. Added `allowLegacyPlaintext` as an explicit migration-only opt-in.
+- Fixed generation cleanup to stream old-generation keys into bounded batches instead of materializing the full key list before deletion.
+- Changed OpenTelemetry instrumentation to export `layercache.key_hash` by default. Raw `layercache.key` attributes now require `includeRawKeyAttributes: true`.
+- Hardened snapshot commits by rejecting symlinked target parents immediately before the final rename.
+- Hardened CLI invalidation so explicit `--pattern "*"` requires `--force`, matching the default full-cache invalidation guard.
+- Hardened CLI Redis connection errors by scrubbing Redis URLs from nested error messages before printing them.
+- Added a Redis invalidation warning when `RedisInvalidationBus` is constructed without `signingSecret` and a logger is provided.
+- Hardened the docs playground worker by shadowing direct access to high-risk Worker globals in the evaluated function scope.
+
+### Changed
+
+- Updated README, API docs, migration docs, docs-web content, localized README distributed examples, and security policy to describe the new cache-key, DiskLayer, OpenTelemetry, CLI, Redis invalidation, snapshot, and playground behavior.
+
+### Tests
+
+- Added regression coverage for all security fixes and hardening changes. The Vitest suite now reports 618 passing tests and 24 skipped tests.
+- Added docs-web content assertions for the updated security-sensitive documentation.
+
 ## [3.1.1] — 2026-06-14
 
 ### Fixed

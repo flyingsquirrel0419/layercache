@@ -38,6 +38,7 @@ test("integration docs describe HTTP cache safety behavior", async () => {
 
   assert.match(source, /Only 2xx JSON responses are written to the cache/);
   assert.match(source, /context\.status\(500\)/);
+  assert.match(source, /bypass implicit caching/);
   assert.match(source, /api_key/);
   assert.match(source, /private_key/);
   assert.match(source, /credentials/);
@@ -81,7 +82,9 @@ test("web docs describe shared circuit breakers, queue overflow, disk queue guar
   assert.match(resilience, /scope:\s*['"]shared['"]/);
   assert.match(resilience, /queueOverflow:\s*['"]bypass['"]/);
   assert.match(layers, /maxWriteQueueDepth/);
+  assert.match(layers, /allowLegacyPlaintext/);
   assert.match(observability, /captureMetrics/);
+  assert.match(observability, /layercache\.key_hash/);
 });
 
 test("docs are configured for GitHub Pages deployment", async () => {

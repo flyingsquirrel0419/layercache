@@ -71,7 +71,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   try {
     await redis.connect().catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = maskRedisUrlsInText(error instanceof Error ? error.message : String(error))
       throw new Error(`Failed to connect to Redis at ${maskRedisUrl(redisUrl)}: ${message}`)
     })
 
@@ -111,8 +111,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
       const keys = await scanKeys(redis, effectivePattern, args.scanLimit ?? DEFAULT_SCAN_MAX_KEYS)
 
-      // Require --force for untargeted bulk invalidation (default * pattern with no --tag)
-      if (!args.pattern && !args.force && keys.length > 0) {
+      // Require --force for untargeted or explicitly broad bulk invalidation.
+      if (requiresForceForInvalidationPattern(effectivePattern) && !args.force && keys.length > 0) {
         process.stderr.write(`Warning: this operation will invalidate ${keys.length} keys. Use --force to confirm.\n`)
         return
       }
@@ -364,6 +364,14 @@ function maskRedisUrl(url: string): string {
     // Bare host:port — no credentials to mask
     return url.replace(/:([^@/]+)@/, ':***@')
   }
+}
+
+function maskRedisUrlsInText(text: string): string {
+  return text.replace(/rediss?:\/\/[^\s"'<>]+/gi, (match) => maskRedisUrl(match))
+}
+
+function requiresForceForInvalidationPattern(pattern: string): boolean {
+  return pattern.trim() === '*'
 }
 
 function validateCliInput(value: string, validator: (v: string) => void): boolean {

@@ -57,7 +57,7 @@ layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stamp
 
 - `RedisTagIndex` uses 16 known-key shards by default. Existing Redis tag indexes that still use the legacy `<prefix>:keys` set should be migrated with `npx layercache migrate-tag-index`.
 - Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed. Prefer `rediss://` for production Redis endpoints.
-- Express and Hono implicit URL cache keys now strip sensitive query parameters before caching, and non-2xx JSON responses are not cached by default.
+- Express and Hono implicit URL caching now skips requests with sensitive query parameters unless you provide a custom `keyResolver`, and non-2xx JSON responses are not cached by default.
 - Redis-backed generation persistence is available through `RedisGenerationStore`, and `CacheStack.getGeneration()` exposes the active generation.
 - The docs site now runs on Rspress and GitHub Pages.
 
@@ -325,7 +325,7 @@ layercache plugs into the frameworks you already use:
 | **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - procedure middleware |
 | **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - field resolver wrapper |
 | **Next.js** | Works natively with App Router and API routes |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - event-driven tracing spans without monkey-patching |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - event-driven tracing spans with hashed cache-key attributes by default |
 
 <details>
 <summary><b>Express example</b></summary>
@@ -378,7 +378,7 @@ layercache is built for multi-instance production environments:
 ```
 
 - **Redis single-flight** - dedup misses across instances with distributed locks
-- **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency
+- **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency; set `signingSecret` for shared Redis channels
 - **Redis tag index** - shared tag tracking with 16 known-key shards by default
 - **Snapshot persistence** - export/import state between instances
 

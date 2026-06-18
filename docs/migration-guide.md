@@ -44,7 +44,15 @@ NODE_ENV=production npx layercache stats --redis redis://localhost:6379 --allow-
 
 ### Implicit HTTP cache keys
 
-Express and Hono middleware now remove common sensitive query parameters from implicit URL cache keys. This avoids storing secrets in cache keys, but entries written with older URL keys that included parameters such as `api_key`, `private_key`, or `credentials` will miss until refreshed.
+Express and Hono middleware now bypass implicit URL-only caching when common sensitive query parameters are present. This avoids both storing secrets in cache keys and collapsing private responses into one scrubbed URL key. Provide a custom `keyResolver` when private responses are selected by query credentials.
+
+### DiskLayer protected entries
+
+When `DiskLayer` is configured with `encryptionKey` or `signingKey`, plaintext legacy entries are now rejected by default. If you need to read old plaintext files during a migration, enable `allowLegacyPlaintext: true` temporarily and disable it after the cache directory has been rewritten.
+
+### OpenTelemetry key attributes
+
+`createOpenTelemetryPlugin()` now exports `layercache.key_hash` by default. Pass `{ includeRawKeyAttributes: true }` only if your telemetry backend is allowed to receive raw cache keys.
 
 ### Generation persistence
 

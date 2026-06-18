@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { type FileHandle, rename, unlink } from 'node:fs/promises'
+import { type FileHandle, lstat, rename, unlink } from 'node:fs/promises'
+import { dirname } from 'node:path'
 
 function isWithinSnapshotBase(
   realBaseDir: string,
@@ -135,6 +136,10 @@ export function atomicWriteTempPath(targetPath: string): string {
 
 export async function commitAtomicWrite(tempPath: string, targetPath: string): Promise<void> {
   try {
+    const parent = await lstat(dirname(targetPath))
+    if (parent.isSymbolicLink()) {
+      throw new Error('Snapshot target parent must not be a symbolic link.')
+    }
     await rename(tempPath, targetPath)
   } catch (error) {
     await unlink(tempPath).catch(() => undefined)

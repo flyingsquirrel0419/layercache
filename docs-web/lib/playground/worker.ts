@@ -1,5 +1,5 @@
 // Web Worker for playground execution
-import { createPlaygroundCache } from "./mock-layers";
+import { createPlaygroundSandbox } from "./worker-sandbox";
 
 const ctx = self as unknown as Worker;
 
@@ -27,38 +27,7 @@ ctx.onmessage = async (event: MessageEvent) => {
     };
 
     try {
-      const { cache } = createPlaygroundCache((message: string) => {
-        postLog("cache", message);
-      });
-      let activeCache = cache;
-
-      const sandbox = {
-        cache,
-        createPlaygroundCache: (options = {}) => {
-          const instance = createPlaygroundCache({
-            ...options,
-            onLog: (msg: string) => postLog("cache", msg),
-          });
-          activeCache = instance.cache;
-          return instance;
-        },
-        console,
-        setTimeout,
-        clearTimeout,
-        setInterval,
-        clearInterval,
-        Promise,
-        JSON,
-        Date,
-        Map,
-        Set,
-        Array,
-        Object,
-        Math,
-        Error,
-        TypeError,
-        RangeError,
-      };
+      const { sandbox, getActiveCache } = createPlaygroundSandbox(postLog);
 
       const asyncFn = new Function(
         ...Object.keys(sandbox),
@@ -69,8 +38,8 @@ ctx.onmessage = async (event: MessageEvent) => {
 
       ctx.postMessage({
         type: "done",
-        layerInfo: activeCache.getLayerInfo(),
-        stats: activeCache.getStats(),
+        layerInfo: getActiveCache().getLayerInfo(),
+        stats: getActiveCache().getStats(),
       });
     } catch (error) {
       postLog("error", error instanceof Error ? error.message : String(error));

@@ -533,27 +533,57 @@ describe('createExpressCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
-  it('excludes sensitive query parameters from implicit express cache keys', async () => {
+  it('bypasses implicit express caching when sensitive query parameters are present', async () => {
     const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
     const setSpy = vi.spyOn(cache, 'set')
     const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async (token: string) => {
+      const response = {
+        setHeader: vi.fn(),
+        json: vi.fn((body: unknown) => body)
+      }
+
+      await middleware(
+        {
+          method: 'GET',
+          url: `/users?token=${token}&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc`
+        },
+        response,
+        () => {
+          calls += 1
+          response.json({ calls })
+        }
+      )
+    }
+
+    await run('one')
+    await run('two')
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('allows custom express key resolvers to cache sensitive query URLs', async () => {
+    const cache = makeCache()
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createExpressCacheMiddleware(cache, {
+      allowPrivateCaching: true,
+      keyResolver: (req) => `tenant:${req.url ?? '/'}`
+    })
     const response = {
       setHeader: vi.fn(),
       json: vi.fn((body: unknown) => body)
     }
 
-    await middleware(
-      {
-        method: 'GET',
-        url: '/users?token=secret&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc'
-      },
-      response,
-      () => {
-        response.json({ ok: true })
-      }
-    )
+    await middleware({ method: 'GET', url: '/users?token=secret' }, response, () => {
+      response.json({ ok: true })
+    })
 
-    expect(setSpy).toHaveBeenCalledWith('GET:/users?a=1&b=2', { ok: true }, expect.any(Object))
+    expect(setSpy).toHaveBeenCalledWith('tenant:/users?token=secret', { ok: true }, expect.any(Object))
   })
 
   it('does not serve a cached express error response after a later successful response', async () => {
@@ -844,14 +874,48 @@ describe('createHonoCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
-  it('excludes sensitive query parameters from implicit hono cache keys', async () => {
+  it('bypasses implicit hono caching when sensitive query parameters are present', async () => {
     const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
     const setSpy = vi.spyOn(cache, 'set')
     const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async (token: string) => {
+      const context = {
+        req: {
+          method: 'GET',
+          path: `/users?token=${token}&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc`
+        },
+        header: vi.fn(),
+        json: vi.fn((body) => body)
+      }
+
+      await middleware(context, async () => {
+        calls += 1
+        context.json({ calls })
+      })
+    }
+
+    await run('one')
+    await run('two')
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('allows custom hono key resolvers to cache sensitive query URLs', async () => {
+    const cache = makeCache()
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createHonoCacheMiddleware(cache, {
+      allowPrivateCaching: true,
+      keyResolver: (request) => `tenant:${request.path ?? '/'}`
+    })
     const context = {
       req: {
         method: 'GET',
-        path: '/users?token=secret&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc'
+        path: '/users?token=secret'
       },
       header: vi.fn(),
       json: vi.fn((body) => body)
@@ -861,7 +925,7 @@ describe('createHonoCacheMiddleware', () => {
       context.json({ ok: true })
     })
 
-    expect(setSpy).toHaveBeenCalledWith('GET:/users?a=1&b=2', { ok: true }, expect.any(Object))
+    expect(setSpy).toHaveBeenCalledWith('tenant:/users?token=secret', { ok: true }, expect.any(Object))
   })
 
   it('does not serve a cached hono error response after a later successful response', async () => {

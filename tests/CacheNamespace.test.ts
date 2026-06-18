@@ -107,6 +107,20 @@ describe('CacheNamespace', () => {
     expect(await ns2.get('k')).toBe(2)
   })
 
+  it('clear() does not remove overlapping sibling namespace prefixes', async () => {
+    const cache = makeCache()
+    const nsA = cache.namespace('a')
+    const nsAB = cache.namespace('ab')
+
+    await nsA.set('k', 1)
+    await nsAB.set('k', 2)
+
+    await nsA.clear()
+
+    expect(await nsA.get('k')).toBeNull()
+    expect(await nsAB.get('k')).toBe(2)
+  })
+
   it('mget returns values for multiple keys', async () => {
     const ns = makeCache().namespace('data')
     await ns.set('a', 1)

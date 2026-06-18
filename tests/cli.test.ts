@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 let connectImpl = async () => undefined
 let scanImpl = async () => ['0', ['key:1', 'key:2']] as [string, string[]]
 let connectCalls = 0
+let delCalls: string[][] = []
 let migrateCalls = 0
 let tagIndexOptions: unknown[] = []
 
@@ -15,7 +16,10 @@ vi.mock('ioredis', () => {
         return connectImpl()
       },
       scan: async () => scanImpl(),
-      del: async () => 2,
+      del: async (...keys: string[]) => {
+        delCalls.push(keys)
+        return keys.length
+      },
       getBuffer: async () => Buffer.from(JSON.stringify({ ok: true })),
       ttl: async () => 42,
       pttl: async () => 42,
@@ -53,6 +57,7 @@ describe('CLI — main()', () => {
     connectImpl = async () => undefined
     scanImpl = async () => ['0', ['key:1', 'key:2']]
     connectCalls = 0
+    delCalls = []
     migrateCalls = 0
     tagIndexOptions = []
     originalNodeEnv = process.env.NODE_ENV
@@ -116,6 +121,23 @@ describe('CLI — main()', () => {
     expect(output).toContain('deletedKeys')
   })
 
+  it('requires --force for explicit broad invalidate patterns', async () => {
+    const { main } = await import('../src/cli')
+    await main(['invalidate', '--redis', 'redis://localhost:6379', '--pattern', '*'])
+
+    expect(stderrOutput.join('')).toContain('Use --force')
+    expect(stdoutOutput.join('')).toBe('')
+    expect(delCalls).toEqual([])
+  })
+
+  it('allows explicit broad invalidate patterns when --force is provided', async () => {
+    const { main } = await import('../src/cli')
+    await main(['invalidate', '--redis', 'redis://localhost:6379', '--pattern', '*', '--force'])
+
+    expect(stdoutOutput.join('')).toContain('deletedKeys')
+    expect(delCalls).toEqual([['key:1', 'key:2']])
+  })
+
   it('invalidate command with tag outputs deletedKeys', async () => {
     const { main } = await import('../src/cli')
     await main(['invalidate', '--redis', 'redis://localhost:6379', '--tag', 'user:1'])
@@ -141,6 +163,18 @@ describe('CLI — main()', () => {
     await main(['stats', '--redis', 'redis://default:secret@localhost:6379'])
 
     expect(stderrOutput.join('')).toContain('redis://default:***@localhost:6379')
+    expect(stderrOutput.join('')).not.toContain('secret')
+  })
+
+  it('masks Redis credentials embedded in nested connection error messages', async () => {
+    connectImpl = async () => {
+      throw new Error('failed for redis://default:secret@localhost:6379/0')
+    }
+
+    const { main } = await import('../src/cli')
+    await main(['stats', '--redis', 'redis://default:secret@localhost:6379/0'])
+
+    expect(stderrOutput.join('')).toContain('redis://default:***@localhost:6379/0')
     expect(stderrOutput.join('')).not.toContain('secret')
   })
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,6 +18,10 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function hashCacheKey(key: string): string {
+  return createHash('sha256').update(key).digest('hex')
 }
 
 class ExplodingLayer implements CacheLayer {
@@ -521,7 +526,7 @@ describe('growth features', () => {
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_tag', expect.any(Object))
   })
 
-  it('supports spans without optional methods and attaches key attributes to set/delete', async () => {
+  it('supports spans without optional methods and hashes key attributes by default', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const tracer = {
       startSpan: vi.fn(() => ({
@@ -535,9 +540,26 @@ describe('growth features', () => {
     plugin.uninstall()
 
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
-      attributes: { 'layercache.key': 'otel:key' }
+      attributes: { 'layercache.key_hash': hashCacheKey('otel:key') }
     })
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.delete', {
+      attributes: { 'layercache.key_hash': hashCacheKey('otel:key') }
+    })
+  })
+
+  it('allows raw OpenTelemetry key attributes only when explicitly requested', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer, { includeRawKeyAttributes: true })
+    await cache.set('otel:key', 1)
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
       attributes: { 'layercache.key': 'otel:key' }
     })
   })
@@ -561,13 +583,13 @@ describe('growth features', () => {
     plugin.uninstall()
 
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.get', {
-      attributes: { 'layercache.key': '' }
+      attributes: { 'layercache.key_hash': hashCacheKey('') }
     })
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
-      attributes: { 'layercache.key': '' }
+      attributes: { 'layercache.key_hash': hashCacheKey('') }
     })
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.delete', {
-      attributes: { 'layercache.key': '' }
+      attributes: { 'layercache.key_hash': hashCacheKey('') }
     })
   })
 

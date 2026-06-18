@@ -33,6 +33,39 @@ describe('CacheKeyDiscovery', () => {
     expect(layerVisitor).toHaveBeenCalledTimes(1)
   })
 
+  it('streams prefix matches without requiring collectKeysWithPrefix callers to materialize results', async () => {
+    const seen: string[] = []
+    const discovery = new CacheKeyDiscovery({
+      layers: [
+        {
+          name: 'memory',
+          get: vi.fn(),
+          set: vi.fn(),
+          delete: vi.fn(),
+          clear: vi.fn(),
+          forEachKey: async (visitor) => {
+            await visitor('user:2')
+            await visitor('post:1')
+          }
+        } as unknown as CacheLayer
+      ],
+      tagIndex: {
+        matchPattern: vi.fn(),
+        forEachKeyForPrefix: async (_prefix, visitor) => {
+          await visitor('user:1')
+        }
+      } as unknown as CacheTagIndex,
+      shouldSkipLayer: () => false,
+      handleLayerFailure: vi.fn(async () => undefined)
+    })
+
+    await discovery.forEachKeyWithPrefix('user:', (key) => {
+      seen.push(key)
+    })
+
+    expect(seen).toEqual(['user:1', 'user:2'])
+  })
+
   it('falls back to array-based scans and handles layer failures', async () => {
     const handleLayerFailure = vi.fn(async () => undefined)
     const discovery = new CacheKeyDiscovery({

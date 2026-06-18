@@ -37,6 +37,21 @@ describe('RedisInvalidationBus', () => {
     subscriber.disconnect()
   })
 
+  it('warns when constructed without a signing secret', () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { warn: vi.fn() }
+
+    new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:unsigned-warning', logger })
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('without signingSecret'), {
+      channel: 'layercache:test:unsigned-warning'
+    })
+
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
   it('logs handler errors without breaking the subscription', async () => {
     const publisher = new Redis()
     const subscriber = publisher.duplicate()

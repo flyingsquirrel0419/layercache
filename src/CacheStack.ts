@@ -9,9 +9,9 @@ import {
 } from './internal/CacheKeySerialization'
 import {
   generationPrefix,
-  planGenerationCleanupBatches,
   qualifyGenerationKey,
   qualifyGenerationPattern,
+  resolveGenerationCleanupBatchSize,
   resolveGenerationCleanupTarget,
   stripGenerationPrefix
 } from './internal/CacheStackGeneration'
@@ -1497,16 +1497,31 @@ export class CacheStack extends EventEmitter {
 
   private async cleanupGeneration(generation: number): Promise<void> {
     const prefix = `v${generation}:`
-    const keys = await this.keyDiscovery.collectKeysWithPrefix(prefix)
-    for (const batch of planGenerationCleanupBatches(keys, this.options.generationCleanup)) {
-      await this.deleteKeys(batch)
+    const batchSize = resolveGenerationCleanupBatchSize(this.options.generationCleanup)
+    let batch: string[] = []
+
+    const flushBatch = async (): Promise<void> => {
+      if (batch.length === 0) {
+        return
+      }
+      const keys = batch
+      batch = []
+      await this.deleteKeys(keys)
       await this.publishInvalidation({
         scope: 'keys',
-        keys: batch,
+        keys,
         sourceId: this.instanceId,
         operation: 'invalidate'
       })
     }
+
+    await this.keyDiscovery.forEachKeyWithPrefix(prefix, async (key) => {
+      batch.push(key)
+      if (batch.length >= batchSize) {
+        await flushBatch()
+      }
+    })
+    await flushBatch()
   }
 
   private initializeWriteBehind(options: CacheWriteBehindOptions | undefined): void {
