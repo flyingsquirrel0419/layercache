@@ -317,6 +317,30 @@ describe('DiskLayer', () => {
     statSpy.mockRestore()
   })
 
+  it('rejects entries that exceed maxEntryBytes while streaming', async () => {
+    const boundedLayer = new DiskLayer({ directory: dir, maxEntryBytes: 4 })
+    const chunks = [Buffer.from('abc'), Buffer.from('de')]
+    const handle = {
+      stat: vi.fn(async () => ({ size: 4 })),
+      read: vi.fn(async (buffer: Buffer, _offset: number, _length: number, _position: number) => {
+        const chunk = chunks.shift()
+        if (!chunk) {
+          return { bytesRead: 0, buffer }
+        }
+        chunk.copy(buffer)
+        return { bytesRead: chunk.length, buffer }
+      })
+    }
+
+    await expect(
+      (
+        boundedLayer as unknown as {
+          readHandleWithLimit: (handle: typeof handle) => Promise<Buffer>
+        }
+      ).readHandleWithLimit(handle)
+    ).rejects.toThrow(/maxEntryBytes/i)
+  })
+
   it('keeps scanning when an entry cannot be opened', async () => {
     await fs.mkdir(dir, { recursive: true })
     const { createHash } = await import('node:crypto')

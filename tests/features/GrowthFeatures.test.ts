@@ -564,6 +564,27 @@ describe('growth features', () => {
     })
   })
 
+  it('hashes undefined OpenTelemetry key attributes from manual operation events', () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    cache.emit('operation-start', {
+      id: 123,
+      name: 'manual',
+      attributes: { 'layercache.key': undefined, other: 'kept' }
+    })
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('manual', {
+      attributes: { other: 'kept', 'layercache.key_hash': hashCacheKey('') }
+    })
+  })
+
   it('normalizes missing keys in OpenTelemetry key attributes', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const tracer = {

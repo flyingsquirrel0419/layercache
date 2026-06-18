@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- Added regression coverage for all security fixes and hardening changes. The Vitest suite now reports 618 passing tests and 24 skipped tests.
+- Added regression coverage for all security fixes and hardening changes. The Vitest suite now reports 623 passing tests and 24 skipped tests.
 - Added docs-web content assertions for the updated security-sensitive documentation.
 
 ## [3.1.1] — 2026-06-14
