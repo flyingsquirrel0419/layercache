@@ -11,6 +11,7 @@ import {
   armRunTimeout,
   clearRunTimeout,
 } from "@/lib/playground/run-timeout-controller.mjs";
+import { runPlaygroundInSandbox } from "@/lib/playground/sandboxed-runner";
 import styles from "./PlaygroundClient.module.css";
 
 interface LogEntry {
@@ -34,65 +35,59 @@ export function PlaygroundClient() {
   const [activeTab, setActiveTab] = useState<"logs" | "layers">("logs");
   const [isRunning, setIsRunning] = useState(false);
 
-  const workerRef = useRef<Worker | null>(null);
+  const runnerRef = useRef<{ stop: () => void } | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const stopWorker = useCallback((worker: Worker | null = workerRef.current) => {
+  const stopRunner = useCallback((runner: { stop: () => void } | null = runnerRef.current) => {
     clearRunTimeout(timeoutRef);
 
-    if (!worker) {
+    if (!runner) {
       return;
     }
 
-    worker.terminate();
-    if (workerRef.current === worker) {
-      workerRef.current = null;
+    runner.stop();
+    if (runnerRef.current === runner) {
+      runnerRef.current = null;
     }
   }, []);
 
   useEffect(() => {
-    return () => stopWorker();
-  }, [stopWorker]);
+    return () => stopRunner();
+  }, [stopRunner]);
 
   const handleRun = useCallback(() => {
     if (isRunning) return;
 
-    // Clean up any previous worker
-    stopWorker();
-
-    // Create fresh worker
-    const worker = new Worker(
-      new URL("../../lib/playground/worker.ts", import.meta.url)
-    );
-
-    worker.onmessage = (event) => {
-      const { type, message, timestamp, layerInfo } = event.data;
-      if (type === "log" || type === "error" || type === "cache") {
-        setLogs((prev) => [...prev, { type, message, timestamp }]);
-      } else if (type === "done") {
-        stopWorker(worker);
-        setLayerInfo(layerInfo);
-        setIsRunning(false);
-      }
-    };
-
-    worker.onerror = (error) => {
-      setLogs((prev) => [
-        ...prev,
-        { type: "error" as const, message: `Error: ${error.message || "Worker failed"}`, timestamp: Date.now() },
-      ]);
-      stopWorker(worker);
-      setIsRunning(false);
-    };
-
-    workerRef.current = worker;
+    stopRunner();
 
     // Main-thread kill timer — still fires when the worker thread is stuck in a sync loop.
+    const runner = runPlaygroundInSandbox({
+      code,
+      onMessage: (event) => {
+        if (event.type === "log" || event.type === "error" || event.type === "cache") {
+          setLogs((prev) => [...prev, { type: event.type, message: event.message, timestamp: event.timestamp }]);
+        } else if (event.type === "done") {
+          stopRunner(runner);
+          setLayerInfo(event.layerInfo as LayerInfo[] | undefined);
+          setIsRunning(false);
+        }
+      },
+      onError: (message) => {
+        setLogs((prev) => [
+          ...prev,
+          { type: "error" as const, message: `Error: ${message}`, timestamp: Date.now() },
+        ]);
+        stopRunner(runner);
+        setIsRunning(false);
+      },
+    });
+    runnerRef.current = runner;
+
     armRunTimeout({
       timeoutRef,
       ms: RUN_TIMEOUT_MS,
       onTimeout: () => {
-        if (workerRef.current !== worker) {
+        if (runnerRef.current !== runner) {
           return;
         }
 
@@ -100,7 +95,7 @@ export function PlaygroundClient() {
           ...prev,
           { type: "error" as const, message: "Execution timed out (30s limit) — worker terminated", timestamp: Date.now() },
         ]);
-        stopWorker(worker);
+        stopRunner(runner);
         setIsRunning(false);
       },
     });
@@ -109,8 +104,7 @@ export function PlaygroundClient() {
     setLayerInfo(undefined);
     setActiveTab("logs");
     setIsRunning(true);
-    worker.postMessage({ type: "run", code });
-  }, [code, isRunning, stopWorker]);
+  }, [code, isRunning, stopRunner]);
 
   const handlePresetSelect = useCallback((id: string) => {
     const preset = presets.find((p) => p.id === id);
@@ -153,7 +147,7 @@ export function PlaygroundClient() {
           <div className={styles.panelHeader}>
             <div>
               <p className={styles.panelTitle}>Editor</p>
-              <p className={styles.panelSub}>Edit a preset, then run it in the worker playground.</p>
+              <p className={styles.panelSub}>Edit a preset, then run it in the sandboxed worker playground.</p>
             </div>
             <div className={styles.toolbarActions}>
               <button

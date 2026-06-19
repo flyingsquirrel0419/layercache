@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened CLI invalidation so explicit `--pattern "*"` requires `--force`, matching the default full-cache invalidation guard.
 - Hardened CLI Redis connection errors by scrubbing Redis URLs from nested error messages before printing them.
 - Added a Redis invalidation warning when `RedisInvalidationBus` is constructed without `signingSecret` and a logger is provided.
-- Hardened the docs playground worker by shadowing direct access to high-risk Worker globals in the evaluated function scope.
+- Hardened the docs playground by running examples inside a sandboxed iframe with a Blob Worker and token-checked worker messages.
 
 ### Changed
 

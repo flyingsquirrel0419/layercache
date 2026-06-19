@@ -1,33 +1,105 @@
+import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { blockedPlaygroundWorkerGlobals, createPlaygroundSandbox } from '../../docs-web/lib/playground/worker-sandbox'
+import { createPlaygroundWorkerSource } from '../../docs-web/lib/playground/runner-source'
+import {
+  PLAYGROUND_IFRAME_SANDBOX,
+  createPlaygroundFrameSource,
+  isTrustedPlaygroundWorkerMessage
+} from '../../docs-web/lib/playground/sandboxed-runner'
 
-describe('playground worker sandbox', () => {
-  it('shadows direct access to dangerous Worker globals', () => {
-    const { sandbox } = createPlaygroundSandbox(() => undefined)
+function createWorkerContext() {
+  const outboundMessages: Array<Record<string, unknown>> = []
+  const baseContext = {
+    console: {
+      log: () => undefined,
+      error: () => undefined
+    },
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    Promise,
+    JSON,
+    Date,
+    Map,
+    Set,
+    Array,
+    Object,
+    Math,
+    Error,
+    TypeError,
+    RangeError,
+    postMessage: (message: Record<string, unknown>) => outboundMessages.push(message),
+    fetch: () => Promise.resolve(),
+    onmessage: undefined as undefined | ((event: { data: Record<string, unknown> }) => Promise<void>)
+  }
+  const context = vm.createContext(baseContext)
+  context.self = context
+  context.globalThis = context
 
-    for (const name of blockedPlaygroundWorkerGlobals) {
-      expect(sandbox).toHaveProperty(name, undefined)
-    }
+  return {
+    outboundMessages,
+    context
+  }
+}
 
-    const checkGlobals = new Function(
-      ...Object.keys(sandbox),
-      `return {
-        self: typeof self,
-        globalThis: typeof globalThis,
-        fetch: typeof fetch,
-        postMessage: typeof postMessage,
-        Function: typeof Function,
-        eval: typeof eval
-      }`
+describe('playground sandbox runner', () => {
+  it('uses an opaque-origin iframe sandbox with a restrictive CSP', () => {
+    expect(PLAYGROUND_IFRAME_SANDBOX).toBe('allow-scripts')
+    expect(PLAYGROUND_IFRAME_SANDBOX).not.toContain('allow-same-origin')
+
+    const frameSource = createPlaygroundFrameSource()
+    expect(frameSource).toContain("default-src 'none'")
+    expect(frameSource).toContain('connect-src')
+    expect(frameSource).toContain('worker-src blob:')
+  })
+
+  it('filters forged worker messages that do not include the runner token', async () => {
+    const { context, outboundMessages } = createWorkerContext()
+    vm.runInContext(createPlaygroundWorkerSource(), context)
+
+    await context.onmessage?.({
+      data: {
+        type: 'run',
+        runId: 'run-1',
+        messageToken: 'trusted-token',
+        code: `
+          const realPostMessage = console.log.constructor('return postMessage')();
+          realPostMessage({ type: 'done', runId: 'run-1', layerInfo: [{ forged: true }] });
+          console.log('continued');
+        `
+      }
+    })
+
+    expect(outboundMessages).toContainEqual({
+      type: 'done',
+      runId: 'run-1',
+      layerInfo: [{ forged: true }]
+    })
+
+    const trustedMessages = outboundMessages.filter((message) =>
+      isTrustedPlaygroundWorkerMessage(message, 'trusted-token')
     )
 
-    expect(checkGlobals(...Object.values(sandbox))).toEqual({
-      self: 'undefined',
-      globalThis: 'undefined',
-      fetch: 'undefined',
-      postMessage: 'undefined',
-      Function: 'undefined',
-      eval: 'undefined'
-    })
+    expect(trustedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'log',
+          message: 'continued',
+          runId: 'run-1',
+          messageToken: 'trusted-token'
+        }),
+        expect.objectContaining({
+          type: 'done',
+          runId: 'run-1',
+          messageToken: 'trusted-token'
+        })
+      ])
+    )
+    expect(trustedMessages).not.toContainEqual(
+      expect.objectContaining({
+        layerInfo: [{ forged: true }]
+      })
+    )
   })
 })
