@@ -50,6 +50,7 @@ describe('playground sandbox runner', () => {
 
     const frameSource = createPlaygroundFrameSource()
     expect(frameSource).toContain("default-src 'none'")
+    expect(frameSource).toContain("'unsafe-eval'")
     expect(frameSource).toContain('connect-src')
     expect(frameSource).toContain('worker-src blob:')
   })

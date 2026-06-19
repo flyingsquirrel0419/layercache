@@ -889,7 +889,8 @@ describe('createHonoCacheMiddleware', () => {
       const context = {
         req: {
           method: 'GET',
-          path: `/users?token=${token}&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc`
+          path: '/users',
+          url: `/users?token=${token}&api_key=secret&apikey=secret&private_key=secret&credentials=secret&b=2&code=oauth&a=1&session=abc`
         },
         header: vi.fn(),
         json: vi.fn((body) => body)

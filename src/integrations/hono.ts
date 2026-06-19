@@ -48,7 +48,7 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
       return
     }
 
-    const rawPath = context.req.path ?? context.req.url ?? '/'
+    const rawPath = context.req.url ?? context.req.path ?? '/'
     if (!options.keyResolver && hasSensitiveHttpCacheQuery(rawPath)) {
       await next()
       return
