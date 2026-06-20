@@ -27,10 +27,14 @@ export class CacheKeyDiscovery {
     maxMatches: number | false = false
   ): Promise<void> {
     const { tagIndex } = this.options
-    let matches = 0
+    const matches = new Set<string>()
     const visit = async (key: string): Promise<void> => {
-      matches += 1
-      this.assertWithinMatchCount(matches, maxMatches)
+      const previousSize = matches.size
+      matches.add(key)
+      if (matches.size === previousSize) {
+        return
+      }
+      this.assertWithinMatchLimit(matches, maxMatches)
       await visitor(key)
     }
 
