@@ -13,10 +13,13 @@ export class CacheKeyDiscovery {
 
   async collectKeysWithPrefix(prefix: string, maxMatches: number | false = false): Promise<string[]> {
     const matches = new Set<string>()
-    await this.forEachKeyWithPrefix(prefix, (key) => {
-      matches.add(key)
-      this.assertWithinMatchLimit(matches, maxMatches)
-    })
+    await this.forEachKeyWithPrefix(
+      prefix,
+      (key) => {
+        matches.add(key)
+      },
+      maxMatches
+    )
 
     return [...matches]
   }
@@ -131,12 +134,6 @@ export class CacheKeyDiscovery {
   private assertWithinMatchLimit(matches: Set<string>, maxMatches: number | false): void {
     if (maxMatches !== false && matches.size > maxMatches) {
       throw new Error(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
-    }
-  }
-
-  private assertWithinMatchCount(matches: number, maxMatches: number | false): void {
-    if (maxMatches !== false && matches > maxMatches) {
-      throw new Error(`Invalidation matched too many keys (${matches} > ${maxMatches}).`)
     }
   }
 }
