@@ -1,4 +1,4 @@
-import Redis from 'ioredis-mock'
+import Redis from 'ioredis'
 import { describe, expect, it, vi } from 'vitest'
 import { RedisTagIndex } from '../../src/invalidation/RedisTagIndex'
 

@@ -1,4 +1,4 @@
-import Redis from 'ioredis-mock'
+import Redis from 'ioredis'
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { createStoredValueEnvelope } from '../src/internal/StoredValue'

@@ -1,4 +1,4 @@
-import Redis from 'ioredis-mock'
+import Redis from 'ioredis'
 import { describe, expect, it } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'

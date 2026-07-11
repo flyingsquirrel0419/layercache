@@ -5,6 +5,9 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 const dockerBin = process.platform === 'win32' ? 'docker.exe' : 'docker'
 const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const useExistingRedis = process.env.REDIS_AVAILABLE === '1'
+// Extra CLI args are forwarded to vitest, e.g.
+// `npm run test:integration -- --project real-redis-mirror`.
+const vitestArgs = ['run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(2)]
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -55,7 +58,7 @@ let exitCode = 0
 try {
   if (useExistingRedis) {
     await waitForRedis()
-    exitCode = await run(npmBin, ['exec', '--', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
+    exitCode = await run(npmBin, ['exec', '--', 'vitest', ...vitestArgs], {
       env: {
         ...process.env,
         REDIS_AVAILABLE: '1'
@@ -67,7 +70,7 @@ try {
       exitCode = upCode
     } else {
       await waitForRedis()
-      exitCode = await run(npmBin, ['exec', '--', 'vitest', 'run', '--config', 'vitest.integration.config.ts'], {
+      exitCode = await run(npmBin, ['exec', '--', 'vitest', ...vitestArgs], {
         env: {
           ...process.env,
           REDIS_AVAILABLE: '1'

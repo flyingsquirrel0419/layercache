@@ -1,4 +1,4 @@
-import Redis from 'ioredis-mock'
+import Redis from 'ioredis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RedisInvalidationBus } from '../../src/invalidation/RedisInvalidationBus'
 

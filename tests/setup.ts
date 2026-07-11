@@ -22,22 +22,25 @@ function trackRedisInstance<T extends { disconnect?: () => void; duplicate?: (..
   return instance
 }
 
-vi.mock('ioredis-mock', async () => {
-  const actual = await vi.importActual<{ default: new (...args: unknown[]) => object }>('ioredis-mock')
-  const OriginalRedis = actual.default
+vi.mock('ioredis', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('ioredis')
+  const { default: MockRedis } = (await import('ioredis-mock')) as unknown as {
+    default: new (...args: unknown[]) => object
+  }
 
   const WrappedRedis = function wrappedRedis(this: unknown, ...args: unknown[]) {
     return trackRedisInstance(
-      new OriginalRedis(...args) as { disconnect?: () => void; duplicate?: (...args: unknown[]) => unknown }
+      new MockRedis(...args) as { disconnect?: () => void; duplicate?: (...args: unknown[]) => unknown }
     )
-  } as unknown as typeof OriginalRedis
+  } as unknown as typeof MockRedis
 
-  Object.setPrototypeOf(WrappedRedis, OriginalRedis)
-  WrappedRedis.prototype = OriginalRedis.prototype
+  Object.setPrototypeOf(WrappedRedis, MockRedis)
+  WrappedRedis.prototype = MockRedis.prototype
 
   return {
     ...actual,
-    default: WrappedRedis
+    default: WrappedRedis,
+    Redis: WrappedRedis
   }
 })
 

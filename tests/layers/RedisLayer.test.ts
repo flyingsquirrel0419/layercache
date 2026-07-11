@@ -1,5 +1,5 @@
 import { Transform } from 'node:stream'
-import Redis from 'ioredis-mock'
+import Redis from 'ioredis'
 import { describe, expect, it, vi } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
