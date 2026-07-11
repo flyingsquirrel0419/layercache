@@ -21,18 +21,7 @@ export default defineConfig({
       {
         test: {
           name: 'redis-integration',
-          include: ['tests/integration/redis/**/*.test.ts'],
-          setupFiles: ['./tests/setup.real-redis.ts'],
-          env: { LAYERCACHE_TEST_REDIS: 'real' },
-          testTimeout: 30_000,
-          environment: 'node',
-          globals: true
-        }
-      },
-      {
-        test: {
-          name: 'real-redis-mirror',
-          include: REAL_REDIS_MIRRORED_TESTS,
+          include: ['tests/integration/redis/**/*.test.ts', ...REAL_REDIS_MIRRORED_TESTS],
           setupFiles: ['./tests/setup.real-redis.ts'],
           env: { LAYERCACHE_TEST_REDIS: 'real' },
           testTimeout: 30_000,
