@@ -179,4 +179,42 @@ describe('Stampede prevention', () => {
     const result = await guard.execute('reject-key', async () => 'recovered')
     expect(result).toBe('recovered')
   })
+
+  it('makes repeated timeout release calls idempotent', () => {
+    const guard = new StampedeGuard()
+    guard.releaseTimedOut('missing')
+
+    const entry = {
+      promise: Promise.resolve('value'),
+      references: 0,
+      settled: false,
+      timedOut: true
+    }
+    ;(guard as unknown as { inFlight: Map<string, typeof entry> }).inFlight.set('timed-out', entry)
+    guard.releaseTimedOut('timed-out')
+
+    expect((guard as unknown as { inFlight: Map<string, unknown> }).inFlight.has('timed-out')).toBe(true)
+  })
+
+  it('removes a settled entry after its callers have released it', () => {
+    const guard = new StampedeGuard()
+    const entry = {
+      promise: Promise.resolve('value'),
+      references: 0,
+      settled: false,
+      timedOut: false
+    }
+    const internals = guard as unknown as {
+      activeTasks: number
+      inFlight: Map<string, typeof entry>
+      settleEntry: (key: string, value: typeof entry) => void
+    }
+    internals.activeTasks = 1
+    internals.inFlight.set('settled', entry)
+
+    internals.settleEntry('settled', entry)
+
+    expect(internals.inFlight.has('settled')).toBe(false)
+    expect(internals.activeTasks).toBe(0)
+  })
 })

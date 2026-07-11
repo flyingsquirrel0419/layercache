@@ -253,12 +253,22 @@ export class CacheStackReader {
     }
 
     const layers = this.options.layers.slice(0, upToIndex + 1).filter((layer) => Boolean(layer))
+    const executeBackfills = async (): Promise<void> => {
+      const pending: Array<Promise<void>> = []
+      for (const operation of operations) pending.push(operation())
+      await Promise.all(pending)
+    }
+    const cleanupBackfills = async (): Promise<void> => {
+      const pending: Array<Promise<void>> = []
+      for (const layer of layers) pending.push(layer.delete(key))
+      await Promise.all(pending)
+    }
     await this.options.maintenance.runFencedWrite(
       key,
       fence.clearEpoch,
       fence.keyEpoch,
-      () => Promise.all(operations.map((operation) => operation())).then(() => undefined),
-      () => Promise.all(layers.map((layer) => layer.delete(key))).then(() => undefined)
+      executeBackfills,
+      cleanupBackfills
     )
   }
 

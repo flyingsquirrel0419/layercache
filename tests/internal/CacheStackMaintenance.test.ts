@@ -170,6 +170,60 @@ describe('CacheStackMaintenance', () => {
     expect(executed).toEqual(['one', 'two'])
   })
 
+  it('rejects queue overflow during an active flush and drains retained work afterward', async () => {
+    const maintenance = new CacheStackMaintenance()
+    let releaseFlush!: () => void
+    const flushGate = new Promise<void>((resolve) => {
+      releaseFlush = resolve
+    })
+    const executed: string[] = []
+    let flushes = 0
+    const flushBatch = vi.fn(async (batch: Array<() => Promise<void>>) => {
+      flushes += 1
+      if (flushes === 1) await flushGate
+      for (const operation of batch) await operation()
+    })
+
+    await maintenance.enqueueWriteBehind(
+      async () => {
+        executed.push('first')
+      },
+      { batchSize: 10, maxQueueSize: 2 },
+      flushBatch
+    )
+    const activeFlush = maintenance.flushWriteBehindQueue({ batchSize: 10, maxQueueSize: 2 }, flushBatch)
+    await Promise.resolve()
+    await maintenance.enqueueWriteBehind(
+      async () => {
+        executed.push('second')
+      },
+      { batchSize: 10, maxQueueSize: 2 },
+      flushBatch
+    )
+    const pressureFlush = maintenance.enqueueWriteBehind(
+      async () => {
+        executed.push('third')
+      },
+      { batchSize: 10, maxQueueSize: 2 },
+      flushBatch
+    )
+
+    await expect(
+      maintenance.enqueueWriteBehind(
+        async () => {
+          executed.push('overflow')
+        },
+        { batchSize: 10, maxQueueSize: 2 },
+        flushBatch
+      )
+    ).rejects.toThrow(/queue limit/i)
+
+    releaseFlush()
+    await Promise.all([activeFlush, pressureFlush])
+    expect(executed).toEqual(['first', 'second', 'third'])
+    expect(flushBatch).toHaveBeenCalledTimes(2)
+  })
+
   it('runs generation cleanup sequentially and continues after reported failures', async () => {
     const maintenance = new CacheStackMaintenance()
     const order: string[] = []

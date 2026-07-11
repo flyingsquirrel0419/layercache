@@ -795,6 +795,33 @@ describe('CacheStackReader', () => {
         vi.useRealTimers()
       }
     })
+
+    it('bounds repeated coordinator waiter selection to one retry', async () => {
+      vi.useFakeTimers()
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0', { get: vi.fn(async () => null) })]
+      const execute = vi.fn(
+        async (
+          _key: string,
+          _opts: unknown,
+          _worker: () => Promise<string | null>,
+          waiter: () => Promise<string | null>
+        ) => waiter()
+      )
+      options.singleFlightCoordinator = { execute }
+      options.singleFlightTimeoutMs = 20
+      options.singleFlightPollMs = 10
+      options.sleep = vi.fn(async (ms: number) => {
+        vi.advanceTimersByTime(ms)
+      })
+
+      try {
+        await expect(reader.getPrepared('key:1', async () => 'never')).rejects.toThrow(/timed out/i)
+        expect(execute).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   // --- Background refresh management ---

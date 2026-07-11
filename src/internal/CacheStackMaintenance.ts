@@ -96,7 +96,7 @@ export class CacheStackMaintenance {
       return false
     }
     const previous = this.writeChains.get(key)
-    const result = previous ? previous.catch(() => undefined).then(run) : run()
+    const result = previous ? previous.then(run) : run()
     const tail = result.then(
       () => undefined,
       () => undefined

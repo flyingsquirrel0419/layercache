@@ -117,6 +117,17 @@ describe('MemcachedLayer', () => {
     expect(await client.get('bad')).toBeNull()
   })
 
+  it('still returns a miss when corrupt-entry cleanup fails', async () => {
+    await client.set('bad', 'not-valid-json!!!')
+    const originalDelete = client.delete.bind(client)
+    client.delete = async () => {
+      throw new Error('delete failed')
+    }
+
+    await expect(layer.get('bad')).resolves.toBeNull()
+    client.delete = originalDelete
+  })
+
   it('rejects keys that exceed the Memcached size limit', async () => {
     await expect(layer.set('x'.repeat(251), 'value')).rejects.toThrow(/250-byte Memcached limit/i)
   })

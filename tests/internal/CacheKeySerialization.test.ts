@@ -46,6 +46,42 @@ describe('CacheKeySerialization', () => {
     expect(() => serializeKeyPart(new Tenant('alpha'))).toThrow(/unsupported cache-key object type/i)
   })
 
+  it('canonicalizes supported built-ins and rejects unsafe key values', () => {
+    expect(normalizeForSerialization(new URL('https://example.com/a?b=1'))).toEqual({
+      $type: 'URL',
+      value: 'https://example.com/a?b=1'
+    })
+    expect(normalizeForSerialization(/tenant:\d+/gi)).toEqual({
+      $type: 'RegExp',
+      source: 'tenant:\\d+',
+      flags: 'gi'
+    })
+    expect(
+      normalizeForSerialization(
+        new Map([
+          ['z', 1],
+          ['a', 2]
+        ])
+      )
+    ).toEqual({
+      $type: 'Map',
+      entries: [
+        ['a', 2],
+        ['z', 1]
+      ]
+    })
+    expect(normalizeForSerialization(new Set(['z', 'a']))).toEqual({
+      $type: 'Set',
+      values: ['a', 'z']
+    })
+    expect(normalizeForSerialization(Object.assign(Object.create(null), { safe: true }))).toEqual({ safe: true })
+
+    expect(() => normalizeForSerialization(new Date(Number.NaN))).toThrow(/invalid Date/i)
+    expect(() => normalizeForSerialization(() => undefined)).toThrow(/function/i)
+    expect(() => normalizeForSerialization(Symbol('tenant'))).toThrow(/symbol/i)
+    expect(() => normalizeForSerialization(Object.create({ constructor: undefined }))).toThrow(/unknown/i)
+  })
+
   it('rejects circular cache-key state', () => {
     const circular: Record<string, unknown> = {}
     circular.self = circular

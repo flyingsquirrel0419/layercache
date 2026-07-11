@@ -428,6 +428,20 @@ describe('createTrpcCacheMiddleware', () => {
     expect(calls).toBe(3)
   })
 
+  it('supports the current tRPC getRawInput accessor', async () => {
+    const cache = makeCache()
+    const keyResolver = vi.fn((input: { id: number }) => String(input.id))
+    const middleware = createTrpcCacheMiddleware(cache, 'proc', { keyResolver })
+
+    await expect(
+      middleware({
+        getRawInput: async () => ({ id: 42 }),
+        next: async () => ({ ok: true, data: 'value' })
+      })
+    ).resolves.toEqual({ ok: true, data: 'value' })
+    expect(keyResolver).toHaveBeenCalledWith({ id: 42 }, undefined, undefined, undefined)
+  })
+
   it('does not cache unsuccessful tRPC results', async () => {
     const cache = makeCache()
     const middleware = createTrpcCacheMiddleware(cache, 'proc', { keyResolver: () => 'failure' })

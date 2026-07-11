@@ -270,6 +270,39 @@ describe('FetchRateLimiter', () => {
     expect(pendingBuckets.has('sparse')).toBe(false)
   })
 
+  it('cleans empty pending buckets and ignores drains after disposal', () => {
+    const limiter = new FetchRateLimiter()
+    const internals = limiter as unknown as {
+      drain: () => void
+      pendingBuckets: Set<string>
+      queuesByBucket: Map<string, Array<unknown>>
+    }
+    internals.pendingBuckets.add('empty')
+    internals.queuesByBucket.set('empty', [])
+
+    internals.drain()
+    expect(internals.pendingBuckets.has('empty')).toBe(false)
+    expect(internals.queuesByBucket.has('empty')).toBe(false)
+
+    limiter.dispose()
+    expect(() => internals.drain()).not.toThrow()
+  })
+
+  it('clears a scheduled drain timer before processing pending work', () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const internals = limiter as unknown as {
+      drain: () => void
+      drainTimer?: ReturnType<typeof setTimeout>
+    }
+    internals.drainTimer = setTimeout(() => undefined, 1_000)
+
+    internals.drain()
+
+    expect(internals.drainTimer).toBeUndefined()
+    vi.useRealTimers()
+  })
+
   it('drops buckets when a queued entry disappears before shifting', () => {
     const limiter = new FetchRateLimiter()
     const queuesByBucket = (limiter as unknown as { queuesByBucket: Map<string, Array<unknown>> }).queuesByBucket
