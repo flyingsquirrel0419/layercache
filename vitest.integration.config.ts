@@ -17,13 +17,17 @@ const REAL_REDIS_MIRRORED_TESTS = [
 
 export default defineConfig({
   test: {
+    globalSetup: ['./tests/global-setup.real-redis.ts'],
     projects: [
       {
         test: {
           name: 'redis-integration',
           include: ['tests/integration/redis/**/*.test.ts', ...REAL_REDIS_MIRRORED_TESTS],
           setupFiles: ['./tests/setup.real-redis.ts'],
-          env: { LAYERCACHE_TEST_REDIS: 'real' },
+          env: {
+            LAYERCACHE_TEST_REDIS: 'real',
+            REDIS_AVAILABLE: '1'
+          },
           testTimeout: 30_000,
           environment: 'node',
           globals: true

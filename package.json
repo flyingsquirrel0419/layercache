@@ -62,7 +62,7 @@
     "build:all": "npm run build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:integration": "node ./scripts/run-integration-tests.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:all": "npm test && npm run test:integration",
     "test:watch": "vitest",
     "lint": "biome check .",

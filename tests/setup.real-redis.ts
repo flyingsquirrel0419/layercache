@@ -7,8 +7,8 @@ let controlClient: Redis | null = null
 beforeAll(async () => {
   if (process.env.REDIS_AVAILABLE !== '1') {
     throw new Error(
-      'The real-redis mirror project needs a running Redis. Run `npm run test:integration` ' +
-        '(starts docker compose) or set REDIS_AVAILABLE=1 and REDIS_URL.'
+      'Real Redis tests need a running Redis. Run `npm run test:integration` ' +
+        '(globalSetup starts docker compose) or set REDIS_AVAILABLE=1 and REDIS_URL.'
     )
   }
 
