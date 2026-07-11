@@ -13,6 +13,7 @@ export class CacheStackMaintenance {
   private writeBehindTimer?: ReturnType<typeof setInterval>
   private writeBehindFlushPromise?: Promise<void>
   private generationCleanupPromise?: Promise<void>
+  private readonly writeChains = new Map<string, Promise<void>>()
   private clearEpoch = 0
 
   initializeWriteBehindTimer(
@@ -80,22 +81,53 @@ export class CacheStackMaintenance {
     return false
   }
 
+  async runFencedWrite(
+    key: string,
+    expectedClearEpoch: number,
+    expectedKeyEpoch: number,
+    operation: () => Promise<void>,
+    cleanup: () => Promise<void>
+  ): Promise<boolean> {
+    const run = async (): Promise<boolean> => {
+      if (this.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) return false
+      await operation()
+      if (!this.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) return true
+      await cleanup()
+      return false
+    }
+    const previous = this.writeChains.get(key)
+    const result = previous ? previous.catch(() => undefined).then(run) : run()
+    const tail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    this.writeChains.set(key, tail)
+    void tail.finally(() => {
+      if (this.writeChains.get(key) === tail) this.writeChains.delete(key)
+    })
+    return result
+  }
+
   async enqueueWriteBehind(
     operation: WriteBehindOperation,
     options: CacheWriteBehindOptions | undefined,
     flushBatch: FlushWriteBehindBatch
   ): Promise<void> {
-    this.writeBehindQueue.push(operation)
     const batchSize = options?.batchSize ?? 100
     const maxQueueSize = options?.maxQueueSize ?? batchSize * 10
+    if (this.writeBehindQueue.length >= maxQueueSize) {
+      throw new Error(`Write-behind queue limit (${maxQueueSize}) exceeded.`)
+    }
+    this.writeBehindQueue.push(operation)
 
-    if (this.writeBehindQueue.length >= batchSize) {
+    if (this.writeBehindQueue.length >= maxQueueSize) {
       await this.flushWriteBehindQueue(options, flushBatch)
       return
     }
 
-    if (this.writeBehindQueue.length >= maxQueueSize) {
+    if (this.writeBehindQueue.length >= batchSize) {
       await this.flushWriteBehindQueue(options, flushBatch)
+      return
     }
   }
 

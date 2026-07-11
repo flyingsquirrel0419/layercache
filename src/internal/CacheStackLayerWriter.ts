@@ -37,6 +37,11 @@ interface LayerBatchEntry {
   options?: CacheWriteOptions
 }
 
+export interface CacheWriteFence {
+  clearEpoch: number
+  keyEpoch: number
+}
+
 export class CacheStackLayerWriter {
   constructor(private readonly options: CacheStackLayerWriterOptions) {}
 
@@ -44,11 +49,12 @@ export class CacheStackLayerWriter {
     key: string,
     kind: CacheWriteKind,
     value: unknown,
-    writeOptions?: CacheWriteOptions
-  ): Promise<void> {
+    writeOptions?: CacheWriteOptions,
+    fence?: CacheWriteFence
+  ): Promise<boolean> {
     const now = Date.now()
-    const clearEpoch = this.options.maintenance.currentClearEpoch()
-    const keyEpoch = this.options.maintenance.currentKeyEpoch(key)
+    const clearEpoch = fence?.clearEpoch ?? this.options.maintenance.currentClearEpoch()
+    const keyEpoch = fence?.keyEpoch ?? this.options.maintenance.currentKeyEpoch(key)
     const immediateOperations: Array<() => Promise<void>> = []
     const deferredOperations: Array<() => Promise<void>> = []
 
@@ -76,8 +82,31 @@ export class CacheStackLayerWriter {
       }
     }
 
-    await this.executeLayerOperations(immediateOperations, { key, action: kind === 'empty' ? 'negative-set' : 'set' })
+    const immediateLayers = this.options.layers.filter(
+      (layer) => !this.options.shouldSkipLayer(layer) && !this.options.shouldWriteBehind(layer)
+    )
+    const committed = await this.options.maintenance.runFencedWrite(
+      key,
+      clearEpoch,
+      keyEpoch,
+      () =>
+        this.executeLayerOperations(immediateOperations, { key, action: kind === 'empty' ? 'negative-set' : 'set' }),
+      () => this.deleteFromLayers(key, immediateLayers)
+    )
     await Promise.all(deferredOperations.map((operation) => this.options.enqueueWriteBehind(operation)))
+    return committed
+  }
+
+  private async deleteFromLayers(key: string, layers: CacheLayer[]): Promise<void> {
+    await Promise.all(
+      layers.map(async (layer) => {
+        try {
+          await layer.delete(key)
+        } catch (error) {
+          await this.options.handleLayerFailure(layer, 'stale-write-cleanup', error)
+        }
+      })
+    )
   }
 
   async writeBatch(entries: LayerBatchEntry[]): Promise<{ clearEpoch: number; entryEpochs: Map<string, number> }> {

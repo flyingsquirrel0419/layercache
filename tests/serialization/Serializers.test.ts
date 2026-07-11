@@ -57,6 +57,13 @@ describe('JsonSerializer', () => {
     expect(() => serializer.deserialize(JSON.stringify(wide))).toThrow(/max node count/i)
   })
 
+  it('rejects oversized payloads before parsing', () => {
+    const bounded = new JsonSerializer({ maxBytes: 8 })
+    const parse = vi.spyOn(JSON, 'parse')
+    expect(() => bounded.deserialize('{"value":1}')).toThrow(/maxBytes/i)
+    expect(parse).not.toHaveBeenCalled()
+  })
+
   it('surfaces non-Error JSON.parse failures with a stringified message', () => {
     vi.spyOn(JSON, 'parse').mockImplementation(() => {
       throw 'parse failed'
@@ -122,6 +129,11 @@ describe('MsgpackSerializer', () => {
 
   it('rejects excessively wide payloads during deserialize', () => {
     const wide = Array.from({ length: 10_500 }, (_, index) => ({ [`k${index}`]: index }))
-    expect(() => serializer.deserialize(Buffer.from(encode(wide)))).toThrow(/max node count/i)
+    expect(() => serializer.deserialize(Buffer.from(encode(wide)))).toThrow(/max (?:node count|length)/i)
+  })
+
+  it('rejects oversized payloads before decoding', () => {
+    const bounded = new MsgpackSerializer({ maxBytes: 4 })
+    expect(() => bounded.deserialize(Buffer.from(encode({ value: 'too large' })))).toThrow(/maxBytes/i)
   })
 })

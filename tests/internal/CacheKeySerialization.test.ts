@@ -34,6 +34,24 @@ describe('CacheKeySerialization', () => {
     expect(serializeOptions({ tags: ['users'], shouldCache: undefined })).toContain('"tags":["users"]')
   })
 
+  it('preserves supported object identity and rejects unsupported object types', () => {
+    expect(serializeKeyPart(new Date('2026-01-01T00:00:00.000Z'))).not.toBe(
+      serializeKeyPart(new Date('2026-01-02T00:00:00.000Z'))
+    )
+    expect(serializeKeyPart(new Map([['tenant', 'alpha']]))).not.toBe(serializeKeyPart(new Map([['tenant', 'beta']])))
+
+    class Tenant {
+      constructor(readonly id: string) {}
+    }
+    expect(() => serializeKeyPart(new Tenant('alpha'))).toThrow(/unsupported cache-key object type/i)
+  })
+
+  it('rejects circular cache-key state', () => {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    expect(() => serializeKeyPart(circular)).toThrow(/circular/i)
+  })
+
   it('creates instance ids using randomUUID or getRandomValues, and throws when neither is available', () => {
     const originalCrypto = globalThis.crypto
 

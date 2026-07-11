@@ -114,6 +114,7 @@ describe('MemcachedLayer', () => {
     await client.set('bad', 'not-valid-json!!!')
     const result = await layer.get('bad')
     expect(result).toBeNull()
+    expect(await client.get('bad')).toBeNull()
   })
 
   it('rejects keys that exceed the Memcached size limit', async () => {

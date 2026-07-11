@@ -90,6 +90,7 @@ export class MemcachedLayer implements CacheLayer {
     try {
       return this.serializer.deserialize<T>(result.value)
     } catch {
+      await this.client.delete(this.withPrefix(key)).catch(() => undefined)
       return null
     }
   }

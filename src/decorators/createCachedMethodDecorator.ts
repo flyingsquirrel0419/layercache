@@ -1,4 +1,5 @@
 import type { CacheStack } from '../CacheStack'
+import { createInstanceId } from '../internal/CacheKeySerialization'
 import type { CacheWrapOptions } from '../types'
 
 interface CachedMethodDecoratorOptions<TArgs extends unknown[]> extends CacheWrapOptions<TArgs> {
@@ -27,8 +28,9 @@ export function createCachedMethodDecorator<TArgs extends unknown[] = unknown[]>
       let wrapped = wrappedByInstance.get(instance)
       if (!wrapped) {
         const cache = options.cache(instance)
+        const instanceId = createInstanceId()
         wrapped = cache.wrap(
-          options.prefix ?? String(propertyKey),
+          `${options.prefix ?? String(propertyKey)}:instance:${instanceId}`,
           (...methodArgs: unknown[]) => Promise.resolve(original.apply(instance, methodArgs)),
           options as CacheWrapOptions<unknown[]>
         )

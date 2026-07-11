@@ -26,6 +26,13 @@ const MAX_BUCKETS = 10_000
 const MAX_QUEUE_PER_BUCKET = 10_000
 const DEFAULT_QUEUE_OVERFLOW_POLICY: NonNullable<CacheRateLimitOptions['queueOverflow']> = 'reject'
 
+export class FetchRateLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FetchRateLimitError'
+  }
+}
+
 export class FetchRateLimiter {
   private readonly buckets = new Map<string, BucketState>()
   private readonly queuesByBucket = new Map<string, Array<QueueItem>>()
@@ -33,6 +40,7 @@ export class FetchRateLimiter {
   private readonly fetcherBuckets = new WeakMap<(...args: never[]) => unknown, string>()
   private nextFetcherBucketId = 0
   private drainTimer?: ReturnType<typeof setTimeout>
+  private drainScheduled = false
   private isDisposed = false
   rateLimitBypasses = 0
 
@@ -42,7 +50,7 @@ export class FetchRateLimiter {
     task: () => Promise<T>
   ): Promise<T> {
     if (this.isDisposed) {
-      throw new Error('FetchRateLimiter has been disposed.')
+      throw new FetchRateLimitError('FetchRateLimiter has been disposed.')
     }
 
     if (!options) {
@@ -56,6 +64,12 @@ export class FetchRateLimiter {
 
     return new Promise<T>((resolve, reject) => {
       const bucketKey = this.resolveBucketKey(normalized, context)
+      try {
+        this.bucketState(bucketKey)
+      } catch (error) {
+        reject(error)
+        return
+      }
       const queue = this.queuesByBucket.get(bucketKey) ?? []
       if (queue.length >= MAX_QUEUE_PER_BUCKET) {
         if ((normalized.queueOverflow ?? DEFAULT_QUEUE_OVERFLOW_POLICY) === 'bypass') {
@@ -63,7 +77,7 @@ export class FetchRateLimiter {
           task().then(resolve, reject)
           return
         }
-        reject(new Error(`FetchRateLimiter queue overflow for bucket "${bucketKey}".`))
+        reject(new FetchRateLimitError(`FetchRateLimiter queue overflow for bucket "${bucketKey}".`))
         return
       }
       queue.push({
@@ -80,7 +94,7 @@ export class FetchRateLimiter {
       })
       this.queuesByBucket.set(bucketKey, queue)
       this.pendingBuckets.add(bucketKey)
-      this.drain()
+      this.scheduleDrain(0)
     })
   }
 
@@ -90,6 +104,7 @@ export class FetchRateLimiter {
       clearTimeout(this.drainTimer)
       this.drainTimer = undefined
     }
+    this.drainScheduled = false
 
     for (const bucket of this.buckets.values()) {
       if (bucket.cleanupTimer) {
@@ -100,7 +115,7 @@ export class FetchRateLimiter {
 
     for (const queue of this.queuesByBucket.values()) {
       for (const item of queue) {
-        item.reject(new Error('FetchRateLimiter has been disposed.'))
+        item.reject(new FetchRateLimitError('FetchRateLimiter has been disposed.'))
       }
     }
 
@@ -162,56 +177,40 @@ export class FetchRateLimiter {
       this.drainTimer = undefined
     }
 
-    while (this.pendingBuckets.size > 0) {
-      let nextBucketKey: string | undefined
-      let nextWaitMs = Number.POSITIVE_INFINITY
+    let nextWaitMs = Number.POSITIVE_INFINITY
+    let startedWork = false
 
-      for (const bucketKey of this.pendingBuckets) {
-        const queue = this.queuesByBucket.get(bucketKey)
-        if (!queue || queue.length === 0) {
-          this.pendingBuckets.delete(bucketKey)
-          this.queuesByBucket.delete(bucketKey)
-          continue
-        }
+    for (const bucketKey of [...this.pendingBuckets]) {
+      const queue = this.queuesByBucket.get(bucketKey)
+      if (!queue || queue.length === 0) {
+        this.pendingBuckets.delete(bucketKey)
+        this.queuesByBucket.delete(bucketKey)
+        continue
+      }
 
-        const next = queue[0]
-        if (!next) {
-          this.pendingBuckets.delete(bucketKey)
-          this.queuesByBucket.delete(bucketKey)
-          continue
-        }
+      const candidate = queue[0]
+      if (!candidate) {
+        this.pendingBuckets.delete(bucketKey)
+        this.queuesByBucket.delete(bucketKey)
+        continue
+      }
 
-        const waitMs = this.waitTime(bucketKey, next.options)
-        if (waitMs <= 0) {
-          nextBucketKey = bucketKey
-          break
-        }
-
+      const waitMs = this.waitTime(bucketKey, candidate.options)
+      if (waitMs > 0) {
         nextWaitMs = Math.min(nextWaitMs, waitMs)
+        continue
       }
 
-      if (!nextBucketKey) {
-        if (Number.isFinite(nextWaitMs)) {
-          this.drainTimer = setTimeout(() => {
-            this.drainTimer = undefined
-            this.drain()
-          }, nextWaitMs)
-          this.drainTimer.unref?.()
-        }
-        return
-      }
-
-      const queue = this.queuesByBucket.get(nextBucketKey)
       const next = queue?.shift()
       if (!next) {
-        this.pendingBuckets.delete(nextBucketKey)
-        this.queuesByBucket.delete(nextBucketKey)
+        this.pendingBuckets.delete(bucketKey)
+        this.queuesByBucket.delete(bucketKey)
         continue
       }
 
       if (!queue || queue.length === 0) {
-        this.pendingBuckets.delete(nextBucketKey)
-        this.queuesByBucket.delete(nextBucketKey)
+        this.pendingBuckets.delete(bucketKey)
+        this.queuesByBucket.delete(bucketKey)
       }
 
       const bucket = this.bucketState(next.bucketKey)
@@ -223,6 +222,7 @@ export class FetchRateLimiter {
       if (next.options.intervalMs && next.options.maxPerInterval) {
         bucket.startedAt.push(Date.now())
       }
+      startedWork = true
 
       void next.run().finally(() => {
         bucket.active -= 1
@@ -231,15 +231,33 @@ export class FetchRateLimiter {
         }
         this.cleanupBucket(next.bucketKey, bucket, next.options.intervalMs)
         // Schedule next drain on next tick to prevent recursive event-loop starvation
-        if (!this.drainTimer) {
-          this.drainTimer = setTimeout(() => {
-            this.drainTimer = undefined
-            this.drain()
-          }, 0)
-          this.drainTimer.unref?.()
-        }
+        this.scheduleDrain(0)
       })
     }
+
+    if (this.pendingBuckets.size > 0) {
+      this.scheduleDrain(startedWork ? 0 : nextWaitMs)
+    }
+  }
+
+  private scheduleDrain(delayMs: number): void {
+    if (this.isDisposed || this.drainTimer || this.drainScheduled || !Number.isFinite(delayMs)) return
+    if (delayMs <= 0) {
+      this.drainScheduled = true
+      queueMicrotask(() => {
+        this.drainScheduled = false
+        this.drain()
+      })
+      return
+    }
+    this.drainTimer = setTimeout(
+      () => {
+        this.drainTimer = undefined
+        this.drain()
+      },
+      Math.max(0, delayMs)
+    )
+    this.drainTimer.unref?.()
   }
 
   private waitTime(bucketKey: string, options: NormalizedRateLimitOptions): number {
@@ -279,7 +297,7 @@ export class FetchRateLimiter {
 
   private bucketState(bucketKey: string): BucketState {
     if (this.isDisposed) {
-      throw new Error('FetchRateLimiter has been disposed.')
+      throw new FetchRateLimitError('FetchRateLimiter has been disposed.')
     }
 
     const existing = this.buckets.get(bucketKey)
@@ -291,7 +309,7 @@ export class FetchRateLimiter {
       this.evictIdleBuckets()
       // Hard limit: if eviction could not free enough space, throw
       if (this.buckets.size >= MAX_BUCKETS) {
-        throw new Error(`FetchRateLimiter bucket limit (${MAX_BUCKETS}) exceeded.`)
+        throw new FetchRateLimitError(`FetchRateLimiter bucket limit (${MAX_BUCKETS}) exceeded.`)
       }
     }
 

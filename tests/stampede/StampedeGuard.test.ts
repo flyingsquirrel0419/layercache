@@ -100,17 +100,54 @@ describe('Stampede prevention', () => {
     ).rejects.toThrow(/timed out/)
   })
 
-  it('releases the entry after a timeout so subsequent calls can retry', async () => {
+  it('allows a same-key retry while retaining timed-out work against the global capacity limit', async () => {
     const guard = new StampedeGuard({ entryTimeoutMs: 30 })
+    let release!: () => void
+    let executions = 0
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
 
     await expect(
       guard.execute('retry-key', async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200))
+        executions += 1
+        await blocked
       })
     ).rejects.toThrow(/timed out/)
 
+    await expect(
+      guard.execute('retry-key', async () => {
+        executions += 1
+        return 'retry'
+      })
+    ).resolves.toBe('retry')
+    expect(executions).toBe(2)
+
+    release()
+    await blocked
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
     const result = await guard.execute('retry-key', async () => 'success')
     expect(result).toBe('success')
+  })
+
+  it('does not let timed-out work bypass maxInFlight', async () => {
+    const guard = new StampedeGuard({ maxInFlight: 1, entryTimeoutMs: 20 })
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    await expect(
+      guard.execute('slow-key', async () => {
+        await blocked
+      })
+    ).rejects.toThrow(/timed out/)
+    await expect(guard.execute('different-key', async () => 'bypass')).rejects.toThrow(/in-flight limit/)
+
+    release()
+    await blocked
+    await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
   it('truncates keys in timeout error messages', async () => {

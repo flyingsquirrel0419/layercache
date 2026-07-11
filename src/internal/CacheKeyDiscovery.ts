@@ -8,6 +8,13 @@ interface CacheKeyDiscoveryOptions {
   handleLayerFailure: (layer: CacheLayer, operation: string, error: unknown) => Promise<void>
 }
 
+export class InvalidationLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidationLimitError'
+  }
+}
+
 export class CacheKeyDiscovery {
   constructor(private readonly options: CacheKeyDiscoveryOptions) {}
 
@@ -77,6 +84,7 @@ export class CacheKeyDiscovery {
             }
           }
         } catch (error) {
+          if (error instanceof InvalidationLimitError) throw error
           await this.options.handleLayerFailure(layer, 'invalidate-prefix-scan', error)
         }
       })
@@ -123,6 +131,7 @@ export class CacheKeyDiscovery {
             }
           }
         } catch (error) {
+          if (error instanceof InvalidationLimitError) throw error
           await this.options.handleLayerFailure(layer, 'invalidate-pattern-scan', error)
         }
       })
@@ -133,7 +142,7 @@ export class CacheKeyDiscovery {
 
   private assertWithinMatchLimit(matches: Set<string>, maxMatches: number | false): void {
     if (maxMatches !== false && matches.size > maxMatches) {
-      throw new Error(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
+      throw new InvalidationLimitError(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
     }
   }
 }

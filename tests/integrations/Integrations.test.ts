@@ -403,6 +403,48 @@ describe('createTrpcCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
+  it('uses current tRPC input and authenticated context in custom keys', async () => {
+    const cache = makeCache()
+    const middleware = createTrpcCacheMiddleware<{ id: number }, { id: number; tenant: string }, { tenant: string }>(
+      cache,
+      'proc',
+      { keyResolver: (input, _path, _type, context) => `${context?.tenant}:${input.id}` }
+    )
+    let calls = 0
+
+    const run = (tenant: string, id: number) =>
+      middleware({
+        input: { id },
+        ctx: { tenant },
+        next: async () => {
+          calls += 1
+          return { ok: true, data: { id, tenant } }
+        }
+      })
+
+    await expect(run('alpha', 1)).resolves.toEqual({ ok: true, data: { id: 1, tenant: 'alpha' } })
+    await expect(run('beta', 1)).resolves.toEqual({ ok: true, data: { id: 1, tenant: 'beta' } })
+    await expect(run('alpha', 2)).resolves.toEqual({ ok: true, data: { id: 2, tenant: 'alpha' } })
+    expect(calls).toBe(3)
+  })
+
+  it('does not cache unsuccessful tRPC results', async () => {
+    const cache = makeCache()
+    const middleware = createTrpcCacheMiddleware(cache, 'proc', { keyResolver: () => 'failure' })
+    let calls = 0
+    const context = {
+      input: { id: 1 },
+      next: async () => {
+        calls += 1
+        return { ok: false, data: calls }
+      }
+    }
+
+    await expect(middleware(context)).resolves.toEqual({ ok: false, data: 1 })
+    await expect(middleware(context)).resolves.toEqual({ ok: false, data: 2 })
+    expect(calls).toBe(2)
+  })
+
   it('falls through to next() on cache miss', async () => {
     const cache = makeCache()
     const middleware = createTrpcCacheMiddleware(cache, 'fresh', {
@@ -633,6 +675,9 @@ describe('createExpressCacheMiddleware', () => {
 
     await middleware({ method: 'GET', url: '/users' }, missResponse, () => {
       missResponse.json({ ok: true })
+    })
+    await vi.waitFor(async () => {
+      await expect(cache.get('custom')).resolves.toEqual({ ok: true })
     })
 
     const hitResponse = {
