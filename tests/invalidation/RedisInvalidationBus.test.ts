@@ -1,6 +1,6 @@
-import Redis from 'ioredis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RedisInvalidationBus } from '../../src/invalidation/RedisInvalidationBus'
+import { createTestRedis } from '../helpers/test-redis'
 
 describe('RedisInvalidationBus', () => {
   afterEach(() => {
@@ -8,7 +8,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('skips malformed payloads and continues processing later messages', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:invalid-payload' })
     const handler = vi.fn()
@@ -38,7 +38,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('warns when constructed without a signing secret', () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { warn: vi.fn() }
 
@@ -53,7 +53,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('logs handler errors without breaking the subscription', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:handler-error' })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -94,7 +94,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('supports multiple concurrent subscriptions', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:multi-subscribe' })
 
@@ -133,7 +133,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('uses the provided logger instead of console.error', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { error: vi.fn() }
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -164,7 +164,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('rejects excessively nested invalidation payloads before they reach handlers', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { error: vi.fn() }
     const bus = new RedisInvalidationBus({
@@ -204,7 +204,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('rejects excessively wide invalidation payloads before they reach handlers', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { error: vi.fn() }
     const bus = new RedisInvalidationBus({
@@ -239,7 +239,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('publishes through the bus API and rejects valid JSON with an invalid shape', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:shape' })
@@ -261,7 +261,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('accepts expire operations and rejects unknown operations', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:expire-op' })
@@ -295,7 +295,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('accepts messages signed with the configured secret', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const channel = 'layercache:test:signed'
     const busA = new RedisInvalidationBus({ publisher, channel, signingSecret: 'shared-secret' })
@@ -328,7 +328,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('rejects unsigned messages when a signing secret is configured', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { error: vi.fn() }
     const channel = 'layercache:test:unsigned-rejected'
@@ -352,7 +352,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('rejects non-object signed envelopes when a signing secret is configured', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { error: vi.fn() }
     const channel = 'layercache:test:signed-non-object'
@@ -375,7 +375,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('keeps signing helper guarded when no signing secret is configured', () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:no-secret-helper' })
 
@@ -388,7 +388,7 @@ describe('RedisInvalidationBus', () => {
   })
 
   it('rejects tampered signed messages', async () => {
-    const publisher = new Redis()
+    const publisher = createTestRedis()
     const subscriber = publisher.duplicate()
     const logger = { error: vi.fn() }
     const channel = 'layercache:test:tampered-signature'

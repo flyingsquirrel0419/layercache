@@ -1,4 +1,3 @@
-import Redis from 'ioredis'
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { createStoredValueEnvelope } from '../src/internal/StoredValue'
@@ -6,6 +5,7 @@ import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { RedisLayer } from '../src/layers/RedisLayer'
 import { type CacheLayer, CacheMissError, type InvalidationBus, type InvalidationMessage } from '../src/types'
+import { createTestRedis } from './helpers/test-redis'
 
 class RecordingLayer implements CacheLayer {
   readonly name: string
@@ -83,7 +83,7 @@ async function waitForCondition(
 
 describe('CacheStack', () => {
   it('backfills upper layers on lower-layer hits', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const memoryLayer = new MemoryLayer({ ttl: 60_000 })
     const redisLayer = new RedisLayer({ client: redis, ttl: 120_000 })
     const cache = new CacheStack([memoryLayer, redisLayer])
@@ -277,7 +277,7 @@ describe('CacheStack', () => {
   })
 
   it('invalidates by wildcard pattern using actual layer keys after tag-index state is lost', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:pattern:' })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer])
 
@@ -293,7 +293,7 @@ describe('CacheStack', () => {
   })
 
   it('invalidates by prefix using actual layer keys after tag-index state is lost', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:prefix:' })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer])
 
@@ -536,7 +536,7 @@ describe('CacheStack', () => {
   })
 
   it('can clean up stale generations after a generation bump', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:generation:' })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer], {
       generation: 1,
@@ -661,7 +661,7 @@ describe('CacheStack', () => {
   })
 
   it('propagates invalidation to local layers across bridge instances', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000 })], {
       invalidationBus: bus,
@@ -683,7 +683,7 @@ describe('CacheStack', () => {
   })
 
   it('does not broadcast write invalidations by default', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000 })], {
       invalidationBus: bus
@@ -703,7 +703,7 @@ describe('CacheStack', () => {
   })
 
   it('supports distributed tag invalidation with a shared redis tag index', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:test' })
     const cacheA = new CacheStack(
@@ -731,7 +731,7 @@ describe('CacheStack', () => {
   })
 
   it('broadcasts tag expiration without deleting remote local stale values', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:expire' })
     const cacheA = new CacheStack(
@@ -821,7 +821,7 @@ describe('CacheStack', () => {
   })
 
   it('matches redis tag patterns via incremental set scanning', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const originalSscan = redis.sscan.bind(redis)
     let sscanCalls = 0
 
@@ -871,7 +871,7 @@ describe('CacheStack', () => {
   })
 
   it('can skip write-triggered invalidation broadcasts', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const memoryB = new MemoryLayer({ ttl: 60_000 })
     const cacheA = new CacheStack(

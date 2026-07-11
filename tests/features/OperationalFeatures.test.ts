@@ -1,4 +1,4 @@
-import Redis from 'ioredis'
+import type Redis from 'ioredis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import * as TtlResolverModule from '../../src/internal/TtlResolver'
@@ -12,6 +12,7 @@ import type {
   InvalidationBus,
   InvalidationMessage
 } from '../../src/types'
+import { createTestRedis } from '../helpers/test-redis'
 
 class FailingSetLayer implements CacheLayer {
   readonly name = 'failing'
@@ -811,7 +812,7 @@ describe('operational features', () => {
   })
 
   it('supports broadcastL1Invalidation as an alias for write-triggered invalidation', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const memoryB = new MemoryLayer({ ttl: 60_000 })
     const invalidationBus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack(
@@ -832,7 +833,7 @@ describe('operational features', () => {
   })
 
   it('deduplicates fetches across cache instances when a shared coordinator is configured', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const coordinator = new SharedCoordinator()
     const cacheA = new CacheStack(
       [new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 60_000, prefix: 'cache:coordinator:' })],
@@ -1041,7 +1042,7 @@ describe('operational features', () => {
   })
 
   it('provides a redis-backed distributed single-flight coordinator', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:test' })
 
     let fetches = 0
@@ -1083,7 +1084,7 @@ describe('operational features', () => {
     vi.setSystemTime(new Date('2026-04-08T00:00:00Z'))
 
     try {
-      const redis = new Redis()
+      const redis = createTestRedis()
       const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:renew' })
       let fetches = 0
       let releaseFirst!: () => void
@@ -1125,7 +1126,7 @@ describe('operational features', () => {
   })
 
   it('falls back to the waiter when a redis single-flight lock is already held', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis })
     const waiter = vi.fn(async () => 'waited')
 
@@ -1143,7 +1144,7 @@ describe('operational features', () => {
   })
 
   it('releases the lock when renewIntervalMs is invalid for the acquired lock', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:invalid-renew' })
 
     await expect(
@@ -1163,7 +1164,7 @@ describe('operational features', () => {
     vi.setSystemTime(new Date('2026-04-08T00:00:00Z'))
 
     try {
-      const redis = new Redis()
+      const redis = createTestRedis()
       const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:default-renew' })
       let fetches = 0
       let releaseFirst!: () => void
@@ -1265,7 +1266,7 @@ describe('operational features', () => {
   })
 
   it('releases the lock when a redis single-flight worker throws', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:error' })
 
     await expect(
