@@ -4,8 +4,8 @@ import RedisMock from 'ioredis-mock'
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
 const POOL_ID = Number.parseInt(process.env.VITEST_POOL_ID ?? '1', 10) || 1
-// Logical db 0 is reserved for tests/integration/redis/* (TEST_PREFIX-scoped, shared).
-// Mirrored unit test files get a worker-private logical db in 1..15 instead.
+// Real-redis suites (redis-integration + real-redis-mirror) pin each worker to a
+// private logical db in 1..15 so parallel workers cannot see each other's keys.
 export const REAL_REDIS_DB = 1 + ((POOL_ID - 1) % 15)
 
 const useRealRedis = process.env.LAYERCACHE_TEST_REDIS === 'real'

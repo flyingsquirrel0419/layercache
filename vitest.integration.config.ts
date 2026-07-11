@@ -22,7 +22,8 @@ export default defineConfig({
         test: {
           name: 'redis-integration',
           include: ['tests/integration/redis/**/*.test.ts'],
-          setupFiles: ['./tests/integration-setup.ts'],
+          setupFiles: ['./tests/setup.real-redis.ts'],
+          env: { LAYERCACHE_TEST_REDIS: 'real' },
           testTimeout: 30_000,
           environment: 'node',
           globals: true

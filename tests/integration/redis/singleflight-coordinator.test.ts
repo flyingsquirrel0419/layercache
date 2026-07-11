@@ -1,26 +1,11 @@
-import type Redis from 'ioredis'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { RedisSingleFlightCoordinator } from '../../../src/singleflight/RedisSingleFlightCoordinator'
-import { TEST_PREFIX, createRedisClient, redisAvailable } from '../../integration-setup'
+import { createTestRedis } from '../../helpers/test-redis'
 
-const describe_integration = describe.skipIf(!redisAvailable)
-
-describe_integration('RedisSingleFlightCoordinator (real Redis)', () => {
-  let client: Redis
-  let coordinator: RedisSingleFlightCoordinator
-  const prefix = `${TEST_PREFIX}sf:`
-
-  beforeAll(async () => {
-    client = createRedisClient()
-    await client.connect()
-    coordinator = new RedisSingleFlightCoordinator({ client, prefix })
-  })
-
-  afterAll(async () => {
-    await client.disconnect()
-  })
-
+describe('RedisSingleFlightCoordinator (real Redis)', () => {
   it('executes the worker only once for concurrent calls on the same key', async () => {
+    const client = createTestRedis()
+    const coordinator = new RedisSingleFlightCoordinator({ client, prefix: 'sf:' })
     let workerCalls = 0
 
     const options = { leaseMs: 5_000, waitTimeoutMs: 10_000, pollIntervalMs: 50 }
@@ -55,6 +40,8 @@ describe_integration('RedisSingleFlightCoordinator (real Redis)', () => {
   })
 
   it('allows independent execution for different keys', async () => {
+    const client = createTestRedis()
+    const coordinator = new RedisSingleFlightCoordinator({ client, prefix: 'sf:' })
     let aCalls = 0
     let bCalls = 0
 
@@ -88,6 +75,8 @@ describe_integration('RedisSingleFlightCoordinator (real Redis)', () => {
   })
 
   it('allows retry after lease expiration', async () => {
+    const client = createTestRedis()
+    const coordinator = new RedisSingleFlightCoordinator({ client, prefix: 'sf:' })
     let firstCall = false
     let secondCall = false
 
