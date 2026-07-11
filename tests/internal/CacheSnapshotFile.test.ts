@@ -1,5 +1,5 @@
 import * as fs from 'node:fs'
-import { mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,13 +14,14 @@ describe('CacheSnapshotFile', () => {
   it('validates read and write paths inside the configured snapshot base dir', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-file-'))
     const filePath = join(dir, 'nested', 'deeper', 'snapshot.json')
+    const realFilePath = join(await realpath(dir), 'nested', 'deeper', 'snapshot.json')
 
     try {
-      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(realFilePath)
       await expect(validateSnapshotFilePath(filePath, 'write', false)).resolves.toBe(resolve(filePath))
 
       await writeFile(filePath, '[]', 'utf8')
-      await expect(validateSnapshotFilePath(filePath, 'read', dir)).resolves.toBe(filePath)
+      await expect(validateSnapshotFilePath(filePath, 'read', dir)).resolves.toBe(realFilePath)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

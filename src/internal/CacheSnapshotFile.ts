@@ -35,6 +35,21 @@ async function findExistingAncestor(
   }
 }
 
+function mapUnderRealBase(
+  resolvedPath: string,
+  logicalBaseDir: string,
+  realBaseDir: string,
+  pathSeparator: string,
+  path: typeof import('node:path')
+): string {
+  if (!isWithinSnapshotBase(logicalBaseDir, resolvedPath, pathSeparator, path)) {
+    return resolvedPath
+  }
+
+  const relative = path.relative(logicalBaseDir, resolvedPath)
+  return relative.length === 0 ? realBaseDir : path.join(realBaseDir, relative)
+}
+
 export async function validateSnapshotFilePath(
   filePath: string,
   mode: 'read' | 'write',
@@ -60,7 +75,8 @@ export async function validateSnapshotFilePath(
 
   await fs.mkdir(baseDir, { recursive: true })
   const realBaseDir = await fs.realpath(baseDir)
-  if (!isWithinSnapshotBase(realBaseDir, resolved, path.sep, path)) {
+  const normalizedResolved = mapUnderRealBase(resolved, baseDir, realBaseDir, path.sep, path)
+  if (!isWithinSnapshotBase(realBaseDir, normalizedResolved, path.sep, path)) {
     throw new Error(`filePath is outside the allowed snapshot directory: ${realBaseDir}`)
   }
 
