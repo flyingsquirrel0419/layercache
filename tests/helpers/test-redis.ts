@@ -1,5 +1,6 @@
 import Redis from 'ioredis'
 import RedisMock from 'ioredis-mock'
+import { describe, it } from 'vitest'
 
 export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
@@ -9,6 +10,15 @@ const POOL_ID = Number.parseInt(process.env.VITEST_POOL_ID ?? '1', 10) || 1
 export const REAL_REDIS_DB = 1 + ((POOL_ID - 1) % 15)
 
 const useRealRedis = process.env.LAYERCACHE_TEST_REDIS === 'real'
+
+/** True when the suite runs against a live Redis (integration / real-redis-mirror). */
+export const isRealRedis = useRealRedis
+
+/** describe/it wrappers that skip unless LAYERCACHE_TEST_REDIS=real. */
+export const realRedisTest = {
+  describe: describe.skipIf(!isRealRedis) as typeof describe,
+  it: it.skipIf(!isRealRedis) as typeof it
+}
 
 const instances = new Set<Redis>()
 

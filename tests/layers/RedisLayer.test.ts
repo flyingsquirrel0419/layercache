@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
-import { createTestRedis } from '../helpers/test-redis'
+import { createTestRedis, realRedisTest } from '../helpers/test-redis'
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
@@ -402,5 +402,17 @@ describe('RedisLayer', () => {
       await expect(layer.getMany(['a', 'b'])).resolves.toEqual([1, 2])
       await expect(layer.deleteMany(['a'])).resolves.toBeUndefined()
     })
+  })
+
+  realRedisTest.it('respects TTL expiration', async () => {
+    const client = createTestRedis()
+    const layer = new RedisLayer({ client, prefix: 'layer:', ttl: 60_000 })
+
+    await layer.set('expiring', 'gone-soon', 1)
+    await expect(layer.get('expiring')).resolves.toBe('gone-soon')
+
+    await sleep(1_100)
+
+    await expect(layer.get('expiring')).resolves.toBeNull()
   })
 })
