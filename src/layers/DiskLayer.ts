@@ -46,6 +46,11 @@ interface DiskLayerOptions {
    * (AES-GCM already provides integrity).
    */
   signingKey?: string | Buffer
+  /**
+   * Allow reading legacy plaintext entries while signing or encryption is
+   * configured. Intended only for controlled migrations.
+   */
+  allowLegacyPlaintext?: boolean
 }
 
 interface DiskEntry {
@@ -96,7 +101,8 @@ export class DiskLayer implements CacheLayer {
     this.maxWriteQueueDepth = this.normalizeMaxWriteQueueDepth(options.maxWriteQueueDepth)
     this.protection = new PayloadProtection({
       encryptionKey: options.encryptionKey,
-      signingKey: options.signingKey
+      signingKey: options.signingKey,
+      allowLegacyPlaintext: options.allowLegacyPlaintext
     })
   }
 

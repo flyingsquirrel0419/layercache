@@ -37,6 +37,11 @@ interface LayerBatchEntry {
   options?: CacheWriteOptions
 }
 
+export interface CacheWriteFence {
+  clearEpoch: number
+  keyEpoch: number
+}
+
 export class CacheStackLayerWriter {
   constructor(private readonly options: CacheStackLayerWriterOptions) {}
 
@@ -44,13 +49,14 @@ export class CacheStackLayerWriter {
     key: string,
     kind: CacheWriteKind,
     value: unknown,
-    writeOptions?: CacheWriteOptions
-  ): Promise<void> {
+    writeOptions?: CacheWriteOptions,
+    fence?: CacheWriteFence
+  ): Promise<boolean> {
     const now = Date.now()
-    const clearEpoch = this.options.maintenance.currentClearEpoch()
-    const keyEpoch = this.options.maintenance.currentKeyEpoch(key)
+    const clearEpoch = fence?.clearEpoch ?? this.options.maintenance.currentClearEpoch()
+    const keyEpoch = fence?.keyEpoch ?? this.options.maintenance.currentKeyEpoch(key)
     const immediateOperations: Array<() => Promise<void>> = []
-    const deferredOperations: Array<() => Promise<void>> = []
+    const deferredOperations: Array<{ layer: CacheLayer; operation: () => Promise<void> }> = []
 
     for (const layer of this.options.layers) {
       const operation = async () => {
@@ -70,14 +76,45 @@ export class CacheStackLayerWriter {
       }
 
       if (this.options.shouldWriteBehind(layer)) {
-        deferredOperations.push(operation)
+        deferredOperations.push({ layer, operation })
       } else {
         immediateOperations.push(operation)
       }
     }
 
-    await this.executeLayerOperations(immediateOperations, { key, action: kind === 'empty' ? 'negative-set' : 'set' })
-    await Promise.all(deferredOperations.map((operation) => this.options.enqueueWriteBehind(operation)))
+    const immediateLayers = this.options.layers.filter(
+      (layer) => !this.options.shouldSkipLayer(layer) && !this.options.shouldWriteBehind(layer)
+    )
+    const committed = await this.options.maintenance.runFencedWrite(
+      key,
+      clearEpoch,
+      keyEpoch,
+      () =>
+        this.executeLayerOperations(immediateOperations, { key, action: kind === 'empty' ? 'negative-set' : 'set' }),
+      () => this.deleteFromLayers(key, immediateLayers)
+    )
+    await Promise.all(
+      deferredOperations.map(({ layer, operation }) =>
+        this.options.enqueueWriteBehind(async () => {
+          await this.options.maintenance.runFencedWrite(key, clearEpoch, keyEpoch, operation, () =>
+            this.deleteFromLayers(key, [layer])
+          )
+        })
+      )
+    )
+    return committed
+  }
+
+  private async deleteFromLayers(key: string, layers: CacheLayer[]): Promise<void> {
+    await Promise.all(
+      layers.map(async (layer) => {
+        try {
+          await layer.delete(key)
+        } catch (error) {
+          await this.options.handleLayerFailure(layer, 'stale-write-cleanup', error)
+        }
+      })
+    )
   }
 
   async writeBatch(entries: LayerBatchEntry[]): Promise<{ clearEpoch: number; entryEpochs: Map<string, number> }> {
@@ -117,12 +154,22 @@ export class CacheStackLayerWriter {
         try {
           if (layer.setMany) {
             await layer.setMany(activeEntries)
-            return
+          } else {
+            await Promise.all(activeEntries.map((entry) => layer.set(entry.key, entry.value, entry.ttl)))
           }
-
-          await Promise.all(activeEntries.map((entry) => layer.set(entry.key, entry.value, entry.ttl)))
         } catch (error) {
           await this.options.handleLayerFailure(layer, 'write', error)
+        }
+
+        // A fence can change while the backend write is in flight. Remove only
+        // from this layer so that stale completion cannot repopulate the key.
+        const staleKeys = activeEntries
+          .filter((entry) =>
+            this.options.maintenance.isWriteOutdated(entry.key, clearEpoch, entryEpochs.get(entry.key))
+          )
+          .map((entry) => entry.key)
+        if (staleKeys.length > 0) {
+          await this.deleteKeysFromLayer(staleKeys, layer)
         }
       }
 
@@ -133,9 +180,22 @@ export class CacheStackLayerWriter {
       }
     }
 
-    await this.executeLayerOperations(immediateOperations, { key: 'batch', action: 'mset' })
-    await Promise.all(deferredOperations.map((operation) => this.options.enqueueWriteBehind(operation)))
+    const keys = entries.map((entry) => entry.key)
+    await this.options.maintenance.runSerializedWrites(keys, () =>
+      this.executeLayerOperations(immediateOperations, { key: 'batch', action: 'mset' })
+    )
+    await Promise.all(
+      deferredOperations.map((operation) =>
+        this.options.enqueueWriteBehind(async () => {
+          await this.options.maintenance.runSerializedWrites(keys, operation)
+        })
+      )
+    )
     return { clearEpoch, entryEpochs }
+  }
+
+  private async deleteKeysFromLayer(keys: string[], layer: CacheLayer): Promise<void> {
+    await Promise.all(keys.map((key) => this.deleteFromLayers(key, [layer])))
   }
 
   private async executeLayerOperations(

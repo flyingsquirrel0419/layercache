@@ -4,6 +4,9 @@ const SENSITIVE_QUERY_PARAMETERS = new Set([
   'apikey',
   'auth',
   'authorization',
+  'client_assertion',
+  'client_assertion_type',
+  'client_secret',
   'code',
   'credentials',
   'id_token',
@@ -19,16 +22,32 @@ const SENSITIVE_QUERY_PARAMETERS = new Set([
 ])
 
 export function normalizeHttpCacheUrl(url: string): string {
+  return inspectHttpCacheUrl(url).normalizedUrl
+}
+
+export function hasSensitiveHttpCacheQuery(url: string): boolean {
+  return inspectHttpCacheUrl(url).hasSensitiveQuery
+}
+
+function inspectHttpCacheUrl(url: string): { normalizedUrl: string; hasSensitiveQuery: boolean } {
   try {
     const parsed = new URL(url, 'http://localhost')
+    let hasSensitiveQuery = false
     for (const name of [...parsed.searchParams.keys()]) {
       if (SENSITIVE_QUERY_PARAMETERS.has(name.toLowerCase())) {
+        hasSensitiveQuery = true
         parsed.searchParams.delete(name)
       }
     }
     parsed.searchParams.sort()
-    return parsed.pathname + parsed.search
+    return {
+      normalizedUrl: parsed.pathname + parsed.search,
+      hasSensitiveQuery
+    }
   } catch {
-    return url
+    return {
+      normalizedUrl: url,
+      hasSensitiveQuery: true
+    }
   }
 }

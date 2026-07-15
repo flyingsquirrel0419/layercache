@@ -37,6 +37,21 @@ describe('RedisInvalidationBus', () => {
     subscriber.disconnect()
   })
 
+  it('warns when constructed without a signing secret', () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { warn: vi.fn() }
+
+    new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:unsigned-warning', logger })
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('without signingSecret'), {
+      channel: 'layercache:test:unsigned-warning'
+    })
+
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
   it('logs handler errors without breaking the subscription', async () => {
     const publisher = new Redis()
     const subscriber = publisher.duplicate()
@@ -330,6 +345,42 @@ describe('RedisInvalidationBus', () => {
     expect(logger.error).toHaveBeenCalled()
 
     await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('rejects non-object signed envelopes when a signing secret is configured', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { error: vi.fn() }
+    const channel = 'layercache:test:signed-non-object'
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel, signingSecret: 'shared-secret', logger })
+    const handler = vi.fn()
+
+    const unsubscribe = await bus.subscribe(handler)
+
+    await publisher.publish(channel, JSON.stringify(42))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(handler).not.toHaveBeenCalled()
+    expect(logger.error).toHaveBeenCalledWith('invalid invalidation payload', {
+      error: expect.any(Error)
+    })
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('keeps signing helper guarded when no signing secret is configured', () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:no-secret-helper' })
+
+    expect(() => (bus as unknown as { createSignature: (payload: string) => string }).createSignature('{}')).toThrow(
+      /signing key is not configured/i
+    )
+
     publisher.disconnect()
     subscriber.disconnect()
   })

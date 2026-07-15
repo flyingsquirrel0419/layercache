@@ -23,6 +23,11 @@ export interface PayloadProtectionOptions {
    * integrity via its authentication tag.
    */
   signingKey?: string | Buffer
+  /**
+   * Allows unprotected legacy payloads to be read even when protection is
+   * configured. This should only be enabled during controlled migrations.
+   */
+  allowLegacyPlaintext?: boolean
 }
 
 /**
@@ -44,8 +49,11 @@ export interface PayloadProtectionOptions {
 export class PayloadProtection {
   private readonly encryptionKey: Buffer | undefined
   private readonly signingKey: Buffer | undefined
+  private readonly allowLegacyPlaintext: boolean
 
   constructor(options: PayloadProtectionOptions) {
+    this.allowLegacyPlaintext = options.allowLegacyPlaintext === true
+
     if (options.encryptionKey) {
       const raw = Buffer.isBuffer(options.encryptionKey)
         ? options.encryptionKey
@@ -85,8 +93,7 @@ export class PayloadProtection {
    * - Legacy unprotected payloads pass through unchanged when **no** protection
    *   is configured.
    * - If protection **is** configured but the payload is not protected, the
-   *   payload is treated as a legacy entry. Callers can handle this case by
-   *   checking `isEnabled` separately.
+   *   payload is rejected unless `allowLegacyPlaintext` is explicitly enabled.
    */
   unprotect(payload: Buffer): Buffer {
     if (this.startsWith(payload, MAGIC_ENCRYPTED)) {
@@ -101,6 +108,12 @@ export class PayloadProtection {
         throw new PayloadProtectionError('Signed payload but no signingKey configured.')
       }
       return this.verify(payload, this.signingKey)
+    }
+
+    if (this.isEnabled && !this.allowLegacyPlaintext) {
+      throw new PayloadProtectionError(
+        'Unprotected plaintext payload rejected because payload protection is configured.'
+      )
     }
 
     return payload

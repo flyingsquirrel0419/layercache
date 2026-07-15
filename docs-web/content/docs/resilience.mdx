@@ -377,7 +377,7 @@ const cache = new CacheStack([...], {
   writeBehind: {
     maxQueueSize: 1000,       // Max pending writes
     flushIntervalMs: 100,     // Flush every 100ms
-    flushOnOverflow: true     // Flush when queue is full
+    batchSize: 100            // Flush when this batch size is reached
   }
 })
 
@@ -396,11 +396,17 @@ const cache = new CacheStack([...], {
   writeBehind: {
     maxQueueSize: 1000,       // Maximum queued writes
     flushIntervalMs: 100,     // Auto-flush interval
-    flushOnOverflow: true,    // Flush when queue is full
-    maxFlushBatchSize: 100    // Max writes per flush
+    batchSize: 100            // Maximum writes per flush
+  },
+  writeCoordination: {
+    maxPendingWrites: 10_000,       // Pending key-write units across operations
+    maxActiveKeys: 10_000,          // Distinct keys retained for ordering
+    maxPendingWritesPerKey: 1_000   // Operations queued behind one hot key
   }
 })
 ```
+
+Single-key and `mset()` paths share this ordering boundary because a stale write may need compensating cleanup after its backend call completes. The finite defaults prevent that promise chain from becoming an unbounded memory queue. Saturation rejects with `CacheWriteSaturationError`; handle it as backpressure.
 
 ### Use Cases
 
@@ -425,7 +431,8 @@ const analyticsCache = new CacheStack([...], {
   writeStrategy: 'write-behind',
   writeBehind: {
     maxQueueSize: 10_000,
-    flushIntervalMs: 1000
+    flushIntervalMs: 1000,
+    batchSize: 100
   }
 })
 ```

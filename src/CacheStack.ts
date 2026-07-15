@@ -9,14 +9,15 @@ import {
 } from './internal/CacheKeySerialization'
 import {
   generationPrefix,
-  planGenerationCleanupBatches,
   qualifyGenerationKey,
   qualifyGenerationPattern,
+  resolveGenerationCleanupBatchSize,
+  resolveGenerationCleanupMaxMatches,
   resolveGenerationCleanupTarget,
   stripGenerationPrefix
 } from './internal/CacheStackGeneration'
 import { CacheStackInvalidationSupport } from './internal/CacheStackInvalidationSupport'
-import { CacheStackLayerWriter, type CacheWriteKind } from './internal/CacheStackLayerWriter'
+import { CacheStackLayerWriter, type CacheWriteFence, type CacheWriteKind } from './internal/CacheStackLayerWriter'
 import { CacheStackMaintenance } from './internal/CacheStackMaintenance'
 import { CacheStackReader } from './internal/CacheStackReader'
 import {
@@ -159,7 +160,7 @@ export class CacheStack extends EventEmitter {
   private readonly layerWriter: CacheStackLayerWriter
   private readonly snapshots: CacheStackSnapshotManager
   private readonly layerDegradedUntil = new Map<string, number>()
-  private readonly maintenance = new CacheStackMaintenance()
+  private readonly maintenance: CacheStackMaintenance
   private readonly ttlResolver: TtlResolver
   private readonly circuitBreakerManager: CircuitBreakerManager
   private nextOperationId = 0
@@ -184,11 +185,13 @@ export class CacheStack extends EventEmitter {
     this.validateConfiguration()
 
     const maxProfileEntries = options.maxProfileEntries ?? DEFAULT_MAX_PROFILE_ENTRIES
+    this.maintenance = new CacheStackMaintenance(options.writeCoordination)
     this.ttlResolver = new TtlResolver({ maxProfileEntries })
     this.circuitBreakerManager = new CircuitBreakerManager({ maxEntries: maxProfileEntries })
     this.stampedeGuard = new StampedeGuard({
       maxInFlight: options.stampedeMaxInFlight,
-      entryTimeoutMs: options.stampedeEntryTimeoutMs
+      entryTimeoutMs: options.stampedeEntryTimeoutMs,
+      onEntryTimeout: (key) => this.maintenance.bumpKeyEpochs([key])
     })
     this.currentGeneration = options.generation
 
@@ -285,7 +288,7 @@ export class CacheStack extends EventEmitter {
       emit: (event, data) => this.emit(event, data as never),
       emitError: (operation, context) => this.emitError(operation, context),
       formatError: (error) => this.formatError(error),
-      storeEntry: (key, kind, value, options) => this.storeEntry(key, kind, value, options),
+      storeEntry: (key, kind, value, options, fence) => this.storeEntry(key, kind, value, options, fence),
       recordCircuitFailure: (key, breakerKey, options, error) =>
         this.recordCircuitFailure(key, breakerKey, options, error),
       resolveLayerMs: (layerName, override, globalDefault, fallback) =>
@@ -349,6 +352,10 @@ export class CacheStack extends EventEmitter {
       const userKey = validateCacheKey(key)
       const normalizedKey = this.qualifyKey(userKey)
       await this.awaitStartup('getEntry')
+      const readFence = {
+        clearEpoch: this.maintenance.currentClearEpoch(),
+        keyEpoch: this.maintenance.currentKeyEpoch(normalizedKey)
+      }
       let sawRetainableValue = false
 
       for (let index = 0; index < this.layers.length; index += 1) {
@@ -373,7 +380,7 @@ export class CacheStack extends EventEmitter {
 
         sawRetainableValue = true
         await this.tagIndex.touch(normalizedKey)
-        await this.reader.backfill(normalizedKey, stored, index - 1)
+        await this.reader.backfill(normalizedKey, stored, index - 1, undefined, readFence)
         this.metricsCollector.increment('hits')
         if (resolved.state === 'stale-while-revalidate' || resolved.state === 'stale-if-error') {
           this.metricsCollector.increment('staleHits')
@@ -653,6 +660,15 @@ export class CacheStack extends EventEmitter {
       const pending = new Set<string>()
       const indexesByKey = new Map<string, number[]>()
       const resultsByKey = new Map<string, T | null>()
+      const readFences = new Map(
+        normalizedEntries.map(({ key }) => [
+          key,
+          {
+            clearEpoch: this.maintenance.currentClearEpoch(),
+            keyEpoch: this.maintenance.currentKeyEpoch(key)
+          }
+        ])
+      )
 
       for (let index = 0; index < normalizedEntries.length; index += 1) {
         const entry = normalizedEntries[index]
@@ -694,7 +710,7 @@ export class CacheStack extends EventEmitter {
           }
 
           await this.tagIndex.touch(key)
-          await this.reader.backfill(key, stored, layerIndex - 1)
+          await this.reader.backfill(key, stored, layerIndex - 1, undefined, readFences.get(key))
           resultsByKey.set(key, resolved.value)
           pending.delete(key)
           this.metricsCollector.increment('hits', indexesByKey.get(key)?.length ?? 1)
@@ -1167,14 +1183,16 @@ export class CacheStack extends EventEmitter {
     key: string,
     kind: CacheWriteKind,
     value: unknown,
-    options?: CacheWriteOptions
-  ): Promise<void> {
+    options?: CacheWriteOptions,
+    fence?: CacheWriteFence
+  ): Promise<boolean> {
     const resolvedOptions = this.resolveContextOptions(key, kind, value, options)
     const clearEpoch = this.maintenance.currentClearEpoch()
     const keyEpoch = this.maintenance.currentKeyEpoch(key)
-    await this.layerWriter.writeAcrossLayers(key, kind, value, resolvedOptions)
+    const committed = await this.layerWriter.writeAcrossLayers(key, kind, value, resolvedOptions, fence)
+    if (!committed) return false
     if (this.maintenance.isWriteOutdated(key, clearEpoch, keyEpoch)) {
-      return
+      return false
     }
     if (resolvedOptions?.tags) {
       await this.tagIndex.track(key, resolvedOptions.tags)
@@ -1188,6 +1206,7 @@ export class CacheStack extends EventEmitter {
     if (this.shouldBroadcastL1Invalidation()) {
       await this.publishInvalidation({ scope: 'key', keys: [key], sourceId: this.instanceId, operation: 'write' })
     }
+    return true
   }
 
   private async writeBatch(
@@ -1497,16 +1516,36 @@ export class CacheStack extends EventEmitter {
 
   private async cleanupGeneration(generation: number): Promise<void> {
     const prefix = `v${generation}:`
-    const keys = await this.keyDiscovery.collectKeysWithPrefix(prefix)
-    for (const batch of planGenerationCleanupBatches(keys, this.options.generationCleanup)) {
-      await this.deleteKeys(batch)
+    const batchSize = resolveGenerationCleanupBatchSize(this.options.generationCleanup)
+    const maxMatches = resolveGenerationCleanupMaxMatches(this.options.generationCleanup)
+    let batch: string[] = []
+
+    const flushBatch = async (): Promise<void> => {
+      if (batch.length === 0) {
+        return
+      }
+      const keys = batch
+      batch = []
+      await this.deleteKeys(keys)
       await this.publishInvalidation({
         scope: 'keys',
-        keys: batch,
+        keys,
         sourceId: this.instanceId,
         operation: 'invalidate'
       })
     }
+
+    await this.keyDiscovery.forEachKeyWithPrefix(
+      prefix,
+      async (key) => {
+        batch.push(key)
+        if (batch.length >= batchSize) {
+          await flushBatch()
+        }
+      },
+      maxMatches
+    )
+    await flushBatch()
   }
 
   private initializeWriteBehind(options: CacheWriteBehindOptions | undefined): void {
@@ -1530,8 +1569,16 @@ export class CacheStack extends EventEmitter {
   }
 
   private async runWriteBehindBatch(batch: Array<() => Promise<void>>): Promise<void> {
-    const results = await Promise.allSettled(batch.map((operation) => operation()))
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    // Queue order is part of the stale-write fence: an older operation may
+    // perform compensating cleanup, so it must settle before a newer write.
+    const failures: unknown[] = []
+    for (const operation of batch) {
+      try {
+        await operation()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
     if (failures.length === 0) {
       return
     }
@@ -1540,7 +1587,7 @@ export class CacheStack extends EventEmitter {
     this.logger.error?.('write-behind-flush-failure', {
       failed: failures.length,
       total: batch.length,
-      errors: failures.map((failure) => this.formatError(failure.reason))
+      errors: failures.map((failure) => this.formatError(failure))
     })
     this.emitError('write-behind', { failed: failures.length, total: batch.length })
   }
@@ -1594,7 +1641,16 @@ export class CacheStack extends EventEmitter {
     validateCircuitBreakerOptions(this.options.circuitBreaker)
     if (typeof this.options.generationCleanup === 'object') {
       validatePositiveNumber('generationCleanup.batchSize', this.options.generationCleanup.batchSize)
+      if (this.options.generationCleanup.maxMatches !== false) {
+        validatePositiveNumber('generationCleanup.maxMatches', this.options.generationCleanup.maxMatches)
+      }
     }
+    validatePositiveNumber('writeCoordination.maxPendingWrites', this.options.writeCoordination?.maxPendingWrites)
+    validatePositiveNumber('writeCoordination.maxActiveKeys', this.options.writeCoordination?.maxActiveKeys)
+    validatePositiveNumber(
+      'writeCoordination.maxPendingWritesPerKey',
+      this.options.writeCoordination?.maxPendingWritesPerKey
+    )
     if (this.options.generation !== undefined) {
       validateNonNegativeNumber('generation', this.options.generation)
     }

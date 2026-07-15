@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,6 +18,10 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function hashCacheKey(key: string): string {
+  return createHash('sha256').update(key).digest('hex')
 }
 
 class ExplodingLayer implements CacheLayer {
@@ -78,6 +83,20 @@ describe('growth features', () => {
     await expect(wrapped('1')).resolves.toEqual({ value: '1', type: 'string' })
     await expect(wrapped(1)).resolves.toEqual({ value: 1, type: 'number' })
     expect(calls).toBe(2)
+  })
+
+  it('does not let plain objects forge built-in wrap() key identities', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    let calls = 0
+    const wrapped = cache.wrap('typed-object', async (value: Date | Record<string, unknown>) => {
+      calls += 1
+      return value instanceof Date ? 'native-date' : 'plain-object'
+    })
+    const iso = '2026-01-01T00:00:00.000Z'
+
+    await expect(wrapped(new Date(iso))).resolves.toBe('native-date')
+    expect(() => wrapped({ $type: 'Date', value: iso })).toThrow(/reserved cache-key type tag/i)
+    expect(calls).toBe(1)
   })
 
   it('supports snapshots on disk and export/import in memory', async () => {
@@ -521,7 +540,7 @@ describe('growth features', () => {
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_tag', expect.any(Object))
   })
 
-  it('supports spans without optional methods and attaches key attributes to set/delete', async () => {
+  it('supports spans without optional methods and hashes key attributes by default', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const tracer = {
       startSpan: vi.fn(() => ({
@@ -535,10 +554,48 @@ describe('growth features', () => {
     plugin.uninstall()
 
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
-      attributes: { 'layercache.key': 'otel:key' }
+      attributes: { 'layercache.key_hash': hashCacheKey('otel:key') }
     })
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.delete', {
+      attributes: { 'layercache.key_hash': hashCacheKey('otel:key') }
+    })
+  })
+
+  it('allows raw OpenTelemetry key attributes only when explicitly requested', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer, { includeRawKeyAttributes: true })
+    await cache.set('otel:key', 1)
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
       attributes: { 'layercache.key': 'otel:key' }
+    })
+  })
+
+  it('hashes undefined OpenTelemetry key attributes from manual operation events', () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const tracer = {
+      startSpan: vi.fn(() => ({
+        end: vi.fn()
+      }))
+    }
+
+    const plugin = createOpenTelemetryPlugin(cache, tracer)
+    cache.emit('operation-start', {
+      id: 123,
+      name: 'manual',
+      attributes: { 'layercache.key': undefined, other: 'kept' }
+    })
+    plugin.uninstall()
+
+    expect(tracer.startSpan).toHaveBeenCalledWith('manual', {
+      attributes: { other: 'kept', 'layercache.key_hash': hashCacheKey('') }
     })
   })
 
@@ -561,13 +618,13 @@ describe('growth features', () => {
     plugin.uninstall()
 
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.get', {
-      attributes: { 'layercache.key': '' }
+      attributes: { 'layercache.key_hash': hashCacheKey('') }
     })
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.set', {
-      attributes: { 'layercache.key': '' }
+      attributes: { 'layercache.key_hash': hashCacheKey('') }
     })
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.delete', {
-      attributes: { 'layercache.key': '' }
+      attributes: { 'layercache.key_hash': hashCacheKey('') }
     })
   })
 

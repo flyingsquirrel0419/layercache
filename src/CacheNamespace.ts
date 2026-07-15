@@ -146,7 +146,7 @@ export class CacheNamespace {
    * Clears all keys in this namespace by invalidating the namespace prefix.
    */
   async clear(): Promise<void> {
-    await this.trackMetrics(() => this.cache.invalidateByPrefix(this.prefix))
+    await this.trackMetrics(() => this.cache.invalidateByPrefix(this.namespaceKeyPrefix()))
   }
 
   /**
@@ -320,6 +320,10 @@ export class CacheNamespace {
    */
   qualify(key: string): string {
     return `${this.prefix}:${key}`
+  }
+
+  private namespaceKeyPrefix(): string {
+    return `${this.prefix}:`
   }
 
   private qualifyTag(tag: string): string {

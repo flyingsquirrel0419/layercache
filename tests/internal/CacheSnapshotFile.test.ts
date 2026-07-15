@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import { mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   atomicWriteTempPath,
@@ -21,6 +21,18 @@ describe('CacheSnapshotFile', () => {
 
       await writeFile(filePath, '[]', 'utf8')
       await expect(validateSnapshotFilePath(filePath, 'read', dir)).resolves.toBe(filePath)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows write validation when the existing target is a regular file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-existing-file-'))
+    const filePath = join(dir, 'snapshot.json')
+
+    try {
+      await writeFile(filePath, '[]', 'utf8')
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -151,6 +163,61 @@ describe('CacheSnapshotFile', () => {
       await expect(fs.promises.stat(tempPath)).rejects.toThrow()
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects commit when the validated parent was swapped to a symlink before rename', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-race-'))
+    const outsideDir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-race-outside-'))
+    const parentDir = join(dir, 'nested')
+    const targetPath = join(parentDir, 'snapshot.json')
+
+    try {
+      await fs.promises.mkdir(parentDir, { recursive: true })
+      const validatedTargetPath = await validateSnapshotFilePath(targetPath, 'write', dir)
+      const tempPath = atomicWriteTempPath(validatedTargetPath)
+
+      await rm(parentDir, { recursive: true, force: true })
+      await symlink(outsideDir, parentDir, 'dir')
+      await writeFile(tempPath, 'proof', 'utf8')
+
+      await expect(commitAtomicWrite(tempPath, validatedTargetPath, { snapshotBaseDir: dir })).rejects.toThrow(
+        /symbolic link/i
+      )
+      await expect(fs.promises.stat(join(outsideDir, 'snapshot.json'))).rejects.toThrow()
+      await expect(fs.promises.stat(tempPath)).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects commit when a validated ancestor was swapped to a symlink before rename', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-ancestor-race-'))
+    const outsideDir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-commit-ancestor-race-outside-'))
+    const ancestorDir = join(dir, 'a')
+    const parentDir = join(ancestorDir, 'b')
+    const targetPath = join(parentDir, 'snapshot.json')
+
+    try {
+      await fs.promises.mkdir(parentDir, { recursive: true })
+      const validatedTargetPath = await validateSnapshotFilePath(targetPath, 'write', dir)
+      const tempPath = atomicWriteTempPath(validatedTargetPath)
+      const tempName = basename(tempPath)
+
+      await rm(ancestorDir, { recursive: true, force: true })
+      await fs.promises.mkdir(join(outsideDir, 'b'), { recursive: true })
+      await symlink(outsideDir, ancestorDir, 'dir')
+      await writeFile(join(outsideDir, 'b', tempName), 'proof', 'utf8')
+
+      await expect(commitAtomicWrite(tempPath, validatedTargetPath, { snapshotBaseDir: dir })).rejects.toThrow(
+        /outside the allowed snapshot directory/i
+      )
+      await expect(fs.promises.stat(join(outsideDir, 'b', 'snapshot.json'))).rejects.toThrow()
+      await expect(fs.promises.stat(join(outsideDir, 'b', tempName))).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(outsideDir, { recursive: true, force: true })
     }
   })
 

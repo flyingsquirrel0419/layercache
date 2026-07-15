@@ -259,6 +259,8 @@ const tracer = trace.getTracer('my-app', '1.0.0')
 const plugin = createOpenTelemetryPlugin(cache, tracer)
 ```
 
+Key-based spans include `layercache.key_hash` by default. Raw cache keys are not exported unless you explicitly pass `{ includeRawKeyAttributes: true }`.
+
 ### Span Events
 
 The plugin emits two types of span events:

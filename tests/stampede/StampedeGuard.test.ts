@@ -100,17 +100,54 @@ describe('Stampede prevention', () => {
     ).rejects.toThrow(/timed out/)
   })
 
-  it('releases the entry after a timeout so subsequent calls can retry', async () => {
+  it('allows a same-key retry while retaining timed-out work against the global capacity limit', async () => {
     const guard = new StampedeGuard({ entryTimeoutMs: 30 })
+    let release!: () => void
+    let executions = 0
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
 
     await expect(
       guard.execute('retry-key', async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200))
+        executions += 1
+        await blocked
       })
     ).rejects.toThrow(/timed out/)
 
+    await expect(
+      guard.execute('retry-key', async () => {
+        executions += 1
+        return 'retry'
+      })
+    ).resolves.toBe('retry')
+    expect(executions).toBe(2)
+
+    release()
+    await blocked
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
     const result = await guard.execute('retry-key', async () => 'success')
     expect(result).toBe('success')
+  })
+
+  it('does not let timed-out work bypass maxInFlight', async () => {
+    const guard = new StampedeGuard({ maxInFlight: 1, entryTimeoutMs: 20 })
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    await expect(
+      guard.execute('slow-key', async () => {
+        await blocked
+      })
+    ).rejects.toThrow(/timed out/)
+    await expect(guard.execute('different-key', async () => 'bypass')).rejects.toThrow(/in-flight limit/)
+
+    release()
+    await blocked
+    await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
   it('truncates keys in timeout error messages', async () => {
@@ -141,5 +178,43 @@ describe('Stampede prevention', () => {
 
     const result = await guard.execute('reject-key', async () => 'recovered')
     expect(result).toBe('recovered')
+  })
+
+  it('makes repeated timeout release calls idempotent', () => {
+    const guard = new StampedeGuard()
+    guard.releaseTimedOut('missing')
+
+    const entry = {
+      promise: Promise.resolve('value'),
+      references: 0,
+      settled: false,
+      timedOut: true
+    }
+    ;(guard as unknown as { inFlight: Map<string, typeof entry> }).inFlight.set('timed-out', entry)
+    guard.releaseTimedOut('timed-out')
+
+    expect((guard as unknown as { inFlight: Map<string, unknown> }).inFlight.has('timed-out')).toBe(true)
+  })
+
+  it('removes a settled entry after its callers have released it', () => {
+    const guard = new StampedeGuard()
+    const entry = {
+      promise: Promise.resolve('value'),
+      references: 0,
+      settled: false,
+      timedOut: false
+    }
+    const internals = guard as unknown as {
+      activeTasks: number
+      inFlight: Map<string, typeof entry>
+      settleEntry: (key: string, value: typeof entry) => void
+    }
+    internals.activeTasks = 1
+    internals.inFlight.set('settled', entry)
+
+    internals.settleEntry('settled', entry)
+
+    expect(internals.inFlight.has('settled')).toBe(false)
+    expect(internals.activeTasks).toBe(0)
   })
 })

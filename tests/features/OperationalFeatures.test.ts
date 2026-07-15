@@ -244,7 +244,7 @@ describe('operational features', () => {
     })
   })
 
-  it('times out hung background refreshes so future refresh attempts are not blocked forever', async () => {
+  it('keeps hung background refreshes deduplicated after observer timeout', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       backgroundRefreshTimeoutMs: 20
     })
@@ -262,14 +262,14 @@ describe('operational features', () => {
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
     await waitForCondition(async () => {
-      expect(cache.getStats().backgroundRefreshes).toBe(0)
+      expect(cache.getMetrics().refreshErrors).toBe(1)
     })
 
-    expect(cache.getStats().backgroundRefreshes).toBe(0)
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
     expect(cache.getMetrics().refreshErrors).toBe(1)
 
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
   it('does not leak late background refresh rejections after a timeout', async () => {
@@ -295,11 +295,14 @@ describe('operational features', () => {
     try {
       await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
       await waitForCondition(async () => {
-        expect(cache.getStats().backgroundRefreshes).toBe(0)
+        expect(cache.getMetrics().refreshErrors).toBe(1)
       })
+      expect(cache.getStats().backgroundRefreshes).toBe(1)
 
       rejectFetch(new Error('late failure'))
-      await new Promise((resolve) => setImmediate(resolve))
+      await waitForCondition(async () => {
+        expect(cache.getStats().backgroundRefreshes).toBe(0)
+      })
 
       expect(unhandled).not.toHaveBeenCalled()
       expect(cache.getStats().backgroundRefreshes).toBe(0)
@@ -510,9 +513,9 @@ describe('operational features', () => {
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
     await waitForCondition(async () => {
-      expect(cache.getStats().backgroundRefreshes).toBe(0)
+      expect(cache.getMetrics().refreshErrors).toBe(1)
     })
-    expect(cache.getStats().backgroundRefreshes).toBe(0)
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
   })
 
   it('uses layer bulk writes for mset when available', async () => {
@@ -612,7 +615,7 @@ describe('operational features', () => {
     expect(maxConcurrent).toBeGreaterThan(1)
   })
 
-  it('does not fail fetches when shouldCache throws', async () => {
+  it('returns the fetched value but does not cache it when shouldCache throws', async () => {
     const warn = vi.fn()
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       logger: { warn }
@@ -626,7 +629,7 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ id: 1 })
 
-    await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
+    await expect(cache.get('user:1')).resolves.toBeNull()
     expect(warn).toHaveBeenCalled()
   })
 

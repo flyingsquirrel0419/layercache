@@ -8,25 +8,56 @@ interface CacheKeyDiscoveryOptions {
   handleLayerFailure: (layer: CacheLayer, operation: string, error: unknown) => Promise<void>
 }
 
+export class InvalidationLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidationLimitError'
+  }
+}
+
 export class CacheKeyDiscovery {
   constructor(private readonly options: CacheKeyDiscoveryOptions) {}
 
   async collectKeysWithPrefix(prefix: string, maxMatches: number | false = false): Promise<string[]> {
+    const matches = new Set<string>()
+    await this.forEachKeyWithPrefix(
+      prefix,
+      (key) => {
+        matches.add(key)
+      },
+      maxMatches
+    )
+
+    return [...matches]
+  }
+
+  async forEachKeyWithPrefix(
+    prefix: string,
+    visitor: (key: string) => void | Promise<void>,
+    maxMatches: number | false = false
+  ): Promise<void> {
     const { tagIndex } = this.options
     const matches = new Set<string>()
+    const visit = async (key: string): Promise<void> => {
+      const previousSize = matches.size
+      matches.add(key)
+      if (matches.size === previousSize) {
+        return
+      }
+      this.assertWithinMatchLimit(matches, maxMatches)
+      await visitor(key)
+    }
 
     if (tagIndex.forEachKeyForPrefix) {
       await tagIndex.forEachKeyForPrefix(prefix, async (key) => {
-        matches.add(key)
-        this.assertWithinMatchLimit(matches, maxMatches)
+        await visit(key)
       })
     } else {
       const initialMatches = tagIndex.keysForPrefix
         ? await tagIndex.keysForPrefix(prefix)
         : await tagIndex.matchPattern(`${prefix}*`)
       for (const key of initialMatches) {
-        matches.add(key)
-        this.assertWithinMatchLimit(matches, maxMatches)
+        await visit(key)
       }
     }
 
@@ -40,8 +71,7 @@ export class CacheKeyDiscovery {
           if (layer.forEachKey) {
             await layer.forEachKey(async (key) => {
               if (key.startsWith(prefix)) {
-                matches.add(key)
-                this.assertWithinMatchLimit(matches, maxMatches)
+                await visit(key)
               }
             })
             return
@@ -50,17 +80,15 @@ export class CacheKeyDiscovery {
           const keys = await layer.keys?.()
           for (const key of keys ?? []) {
             if (key.startsWith(prefix)) {
-              matches.add(key)
-              this.assertWithinMatchLimit(matches, maxMatches)
+              await visit(key)
             }
           }
         } catch (error) {
+          if (error instanceof InvalidationLimitError) throw error
           await this.options.handleLayerFailure(layer, 'invalidate-prefix-scan', error)
         }
       })
     )
-
-    return [...matches]
   }
 
   async collectKeysMatchingPattern(pattern: string, maxMatches: number | false = false): Promise<string[]> {
@@ -103,6 +131,7 @@ export class CacheKeyDiscovery {
             }
           }
         } catch (error) {
+          if (error instanceof InvalidationLimitError) throw error
           await this.options.handleLayerFailure(layer, 'invalidate-pattern-scan', error)
         }
       })
@@ -113,7 +142,7 @@ export class CacheKeyDiscovery {
 
   private assertWithinMatchLimit(matches: Set<string>, maxMatches: number | false): void {
     if (maxMatches !== false && matches.size > maxMatches) {
-      throw new Error(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
+      throw new InvalidationLimitError(`Invalidation matched too many keys (${matches.size} > ${maxMatches}).`)
     }
   }
 }

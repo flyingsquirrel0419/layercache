@@ -116,6 +116,26 @@ describe('RedisLayer', () => {
     await expect(layer.get('user:1')).resolves.toEqual({ id: 1 })
   })
 
+  it('refuses unprefixed key discovery unless bulk ownership is explicitly allowed', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client })
+
+    await expect(layer.keys()).rejects.toThrow(/requires a prefix or allowUnprefixedClear=true/i)
+    await expect(layer.forEachKey(async () => undefined)).rejects.toThrow(
+      /requires a prefix or allowUnprefixedClear=true/i
+    )
+  })
+
+  it('does not auto-decompress marked values when compression is disabled', async () => {
+    const client = new Redis()
+    const layer = new RedisLayer({ client })
+    const marked = Buffer.concat([Buffer.from('LCZ1:gzip:'), Buffer.from('untrusted')])
+
+    await expect(
+      (layer as { decodePayload: (payload: Buffer) => Promise<string | Buffer> }).decodePayload(marked)
+    ).resolves.toEqual(marked)
+  })
+
   it('clears prefixed keys without touching other redis data', async () => {
     const client = new Redis()
     const prefixedLayer = new RedisLayer({ client, prefix: 'cache:' })

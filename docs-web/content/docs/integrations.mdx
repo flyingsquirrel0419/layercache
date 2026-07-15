@@ -65,7 +65,7 @@ app.get('/api/users/:id',
 - `methods` - HTTP methods to cache (default: `['GET']`)
 - `ttl` - Time-to-live in milliseconds
 - `tags` - Tags for invalidation
-- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Implicit URL keys omit common sensitive query parameters such as `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token`; upgrading can therefore cause cache misses for older entries that included those parameters.
+- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Requests with common sensitive query parameters such as `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `client_assertion`, `client_assertion_type`, `client_secret`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token` bypass implicit caching unless you provide a custom `keyResolver`.
 
 Only 2xx JSON responses are written to the cache. 3xx, 4xx, and 5xx responses still return to the client but are not cached.
 
@@ -173,7 +173,7 @@ app.get('/api/users/:id',
 - `methods` - HTTP methods to cache (default: `['GET']`)
 - `ttl` - Time-to-live in milliseconds
 - `tags` - Tags for invalidation
-- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Implicit URL keys use the same sensitive query parameter filtering as the Express middleware.
+- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Requests with sensitive query parameters use the same bypass behavior as the Express middleware unless you provide a custom `keyResolver`.
 
 Only 2xx JSON responses are written to the cache. The middleware also respects status set via `context.status(500)` before `context.json(body)`.
 
@@ -393,9 +393,18 @@ plugin.uninstall()
 
 Each cache operation creates a span with the following attributes:
 
+- `layercache.key_hash` - SHA-256 hash of the cache key, included by default for key-based operations
 - `layercache.success` - Whether the operation succeeded
 - `layercache.result` - The result type (hit, miss, etc.)
 - Error details if the operation failed
+
+Raw cache keys are not exported by default. Enable them only for trusted telemetry sinks:
+
+```tsx
+const plugin = createOpenTelemetryPlugin(cache, tracer, {
+  includeRawKeyAttributes: true
+})
+```
 
 ### Custom Tracer
 
