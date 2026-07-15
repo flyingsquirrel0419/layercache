@@ -12,6 +12,7 @@ import {
   qualifyGenerationKey,
   qualifyGenerationPattern,
   resolveGenerationCleanupBatchSize,
+  resolveGenerationCleanupMaxMatches,
   resolveGenerationCleanupTarget,
   stripGenerationPrefix
 } from './internal/CacheStackGeneration'
@@ -159,7 +160,7 @@ export class CacheStack extends EventEmitter {
   private readonly layerWriter: CacheStackLayerWriter
   private readonly snapshots: CacheStackSnapshotManager
   private readonly layerDegradedUntil = new Map<string, number>()
-  private readonly maintenance = new CacheStackMaintenance()
+  private readonly maintenance: CacheStackMaintenance
   private readonly ttlResolver: TtlResolver
   private readonly circuitBreakerManager: CircuitBreakerManager
   private nextOperationId = 0
@@ -184,6 +185,7 @@ export class CacheStack extends EventEmitter {
     this.validateConfiguration()
 
     const maxProfileEntries = options.maxProfileEntries ?? DEFAULT_MAX_PROFILE_ENTRIES
+    this.maintenance = new CacheStackMaintenance(options.writeCoordination)
     this.ttlResolver = new TtlResolver({ maxProfileEntries })
     this.circuitBreakerManager = new CircuitBreakerManager({ maxEntries: maxProfileEntries })
     this.stampedeGuard = new StampedeGuard({
@@ -1515,6 +1517,7 @@ export class CacheStack extends EventEmitter {
   private async cleanupGeneration(generation: number): Promise<void> {
     const prefix = `v${generation}:`
     const batchSize = resolveGenerationCleanupBatchSize(this.options.generationCleanup)
+    const maxMatches = resolveGenerationCleanupMaxMatches(this.options.generationCleanup)
     let batch: string[] = []
 
     const flushBatch = async (): Promise<void> => {
@@ -1532,12 +1535,16 @@ export class CacheStack extends EventEmitter {
       })
     }
 
-    await this.keyDiscovery.forEachKeyWithPrefix(prefix, async (key) => {
-      batch.push(key)
-      if (batch.length >= batchSize) {
-        await flushBatch()
-      }
-    })
+    await this.keyDiscovery.forEachKeyWithPrefix(
+      prefix,
+      async (key) => {
+        batch.push(key)
+        if (batch.length >= batchSize) {
+          await flushBatch()
+        }
+      },
+      maxMatches
+    )
     await flushBatch()
   }
 
@@ -1562,8 +1569,16 @@ export class CacheStack extends EventEmitter {
   }
 
   private async runWriteBehindBatch(batch: Array<() => Promise<void>>): Promise<void> {
-    const results = await Promise.allSettled(batch.map((operation) => operation()))
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    // Queue order is part of the stale-write fence: an older operation may
+    // perform compensating cleanup, so it must settle before a newer write.
+    const failures: unknown[] = []
+    for (const operation of batch) {
+      try {
+        await operation()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
     if (failures.length === 0) {
       return
     }
@@ -1572,7 +1587,7 @@ export class CacheStack extends EventEmitter {
     this.logger.error?.('write-behind-flush-failure', {
       failed: failures.length,
       total: batch.length,
-      errors: failures.map((failure) => this.formatError(failure.reason))
+      errors: failures.map((failure) => this.formatError(failure))
     })
     this.emitError('write-behind', { failed: failures.length, total: batch.length })
   }
@@ -1626,7 +1641,16 @@ export class CacheStack extends EventEmitter {
     validateCircuitBreakerOptions(this.options.circuitBreaker)
     if (typeof this.options.generationCleanup === 'object') {
       validatePositiveNumber('generationCleanup.batchSize', this.options.generationCleanup.batchSize)
+      if (this.options.generationCleanup.maxMatches !== false) {
+        validatePositiveNumber('generationCleanup.maxMatches', this.options.generationCleanup.maxMatches)
+      }
     }
+    validatePositiveNumber('writeCoordination.maxPendingWrites', this.options.writeCoordination?.maxPendingWrites)
+    validatePositiveNumber('writeCoordination.maxActiveKeys', this.options.writeCoordination?.maxActiveKeys)
+    validatePositiveNumber(
+      'writeCoordination.maxPendingWritesPerKey',
+      this.options.writeCoordination?.maxPendingWritesPerKey
+    )
     if (this.options.generation !== undefined) {
       validateNonNegativeNumber('generation', this.options.generation)
     }

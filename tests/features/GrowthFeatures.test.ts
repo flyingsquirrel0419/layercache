@@ -85,6 +85,20 @@ describe('growth features', () => {
     expect(calls).toBe(2)
   })
 
+  it('does not let plain objects forge built-in wrap() key identities', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    let calls = 0
+    const wrapped = cache.wrap('typed-object', async (value: Date | Record<string, unknown>) => {
+      calls += 1
+      return value instanceof Date ? 'native-date' : 'plain-object'
+    })
+    const iso = '2026-01-01T00:00:00.000Z'
+
+    await expect(wrapped(new Date(iso))).resolves.toBe('native-date')
+    expect(() => wrapped({ $type: 'Date', value: iso })).toThrow(/reserved cache-key type tag/i)
+    expect(calls).toBe(1)
+  })
+
   it('supports snapshots on disk and export/import in memory', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-'))
     const filePath = join(dir, 'snapshot.json')

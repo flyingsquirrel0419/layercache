@@ -8,11 +8,24 @@ Step-by-step instructions for migrating to layercache from other caching librari
 
 ## Table of Contents
 
+- [Unreleased security hardening](#unreleased-security-hardening)
 - [Upgrading to 3.0](#upgrading-to-30)
 - [From node-cache-manager](#from-node-cache-manager)
 - [From keyv](#from-keyv)
 - [From cacheable](#from-cacheable)
 - [Operational Migration Tips](#operational-migration-tips)
+
+---
+
+## Unreleased security hardening
+
+This release deliberately changes three cache and operator safety boundaries:
+
+- Automatically derived structured `wrap()` argument keys now use the `j2:` schema. Existing `j:` entries are left to expire and will be cold misses; no data migration is required. Plain objects with reserved native `$type` tags (`Date`, `URL`, `RegExp`, `Map`, or `Set`) now throw instead of colliding with native values. Use a `keyResolver` when those objects are intentional inputs.
+- `generationCleanup: true` now stops after discovering 10,000 unique old-generation keys in one cleanup run. Set `generationCleanup: { batchSize, maxMatches }` to choose a lower deployment-specific bound. `maxMatches: false` is an explicit opt-out and should only be used when the keyspace is bounded elsewhere.
+- Write-through, write-behind, single-key, and `mset()` writes share finite ordering state. The defaults admit 10,000 pending key-write units, 10,000 active keys, and 1,000 pending operations per key. Tune `writeCoordination` for known bursts and handle `CacheWriteSaturationError` as backpressure rather than retrying without a limit.
+
+Wildcard-only CLI invalidation patterns now all require `--force`, including combinations of `*` and `?` such as `**` and `?*`.
 
 ---
 
@@ -46,7 +59,7 @@ NODE_ENV=production npx layercache stats --redis redis://localhost:6379 --allow-
 
 Express and Hono middleware now bypass implicit URL-only caching when common sensitive query parameters are present. This avoids both storing secrets in cache keys and collapsing private responses into one scrubbed URL key. Provide a custom `keyResolver` when private responses are selected by query credentials.
 
-The sensitive parameter names are `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token`. The same list is documented in the integration options.
+The sensitive parameter names are `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `client_assertion`, `client_assertion_type`, `client_secret`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token`. The same list is documented in the integration options.
 
 ### DiskLayer protected entries
 

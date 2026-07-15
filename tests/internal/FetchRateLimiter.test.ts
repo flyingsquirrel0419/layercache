@@ -216,6 +216,43 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('lets a ready key preempt an unrelated bucket interval timer', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const order: string[] = []
+    const options = { intervalMs: 400, maxPerInterval: 1, scope: 'key' as const }
+
+    try {
+      const firstA = limiter.schedule(options, { key: 'a', fetcher: async () => 'a1' }, async () => {
+        order.push('a1')
+        return 'a1'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(firstA).resolves.toBe('a1')
+
+      const secondA = limiter.schedule(options, { key: 'a', fetcher: async () => 'a2' }, async () => {
+        order.push('a2')
+        return 'a2'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      const firstB = limiter.schedule(options, { key: 'b', fetcher: async () => 'b1' }, async () => {
+        order.push('b1')
+        return 'b1'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      await expect(firstB).resolves.toBe('b1')
+      expect(order).toEqual(['a1', 'b1'])
+
+      await vi.advanceTimersByTimeAsync(400)
+      await expect(secondA).resolves.toBe('a2')
+    } finally {
+      limiter.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('continues draining after a queued task rejects', async () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()

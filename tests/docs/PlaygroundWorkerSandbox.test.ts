@@ -103,4 +103,47 @@ describe('playground sandbox runner', () => {
       })
     )
   })
+
+  it('does not let sandbox code replace the trusted sender and steal the runner token', async () => {
+    const { context, outboundMessages } = createWorkerContext()
+    vm.runInContext(createPlaygroundWorkerSource(), context)
+
+    await context.onmessage?.({
+      data: {
+        type: 'run',
+        runId: 'run-1',
+        messageToken: 'trusted-token',
+        code: `
+          const realGlobal = console.log.constructor('return globalThis')();
+          const originalSend = realGlobal.send;
+          realGlobal.send = (token, message) => {
+            realGlobal.postMessage({
+              type: 'done',
+              runId: message.runId,
+              messageToken: token,
+              layerInfo: [{ forged: true }],
+              stats: {}
+            });
+          };
+          console.log('capture');
+          realGlobal.send = originalSend;
+        `
+      }
+    })
+
+    const trustedMessages = outboundMessages.filter((message) =>
+      isTrustedPlaygroundWorkerMessage(message, 'trusted-token')
+    )
+    expect(trustedMessages).not.toContainEqual(
+      expect.objectContaining({
+        layerInfo: [{ forged: true }]
+      })
+    )
+    expect(trustedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'log', message: 'capture' }),
+        expect.objectContaining({ type: 'done' })
+      ])
+    )
+  })
 })

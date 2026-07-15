@@ -969,6 +969,38 @@ describe('createHonoCacheMiddleware', () => {
     expect(setSpy).not.toHaveBeenCalled()
   })
 
+  it('bypasses implicit hono caching for OAuth client credentials omitted from the generic token list', async () => {
+    const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async (clientSecret: string) => {
+      const context = {
+        req: {
+          method: 'GET',
+          path: '/oauth/callback',
+          url: `/oauth/callback?client_secret=${clientSecret}`
+        },
+        header: vi.fn(),
+        json: vi.fn((body) => body)
+      }
+
+      await middleware(context, async () => {
+        calls += 1
+        context.json({ calls })
+      })
+    }
+
+    await run('first-secret')
+    await run('second-secret')
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
   it('allows custom hono key resolvers to cache sensitive query URLs', async () => {
     const cache = makeCache()
     const setSpy = vi.spyOn(cache, 'set')

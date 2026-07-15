@@ -319,6 +319,8 @@ await cache.expireByPrefix('user:123:')
 
 Wraps an async function so every call is transparently cached. The key is derived from function arguments unless you supply a `keyResolver`.
 
+Structured arguments use the versioned `j2:` key schema. Plain objects cannot use reserved native `$type` tags (`Date`, `URL`, `RegExp`, `Map`, or `Set`); provide a `keyResolver` if your domain objects intentionally contain one of those tags.
+
 ```ts
 const getUser = cache.wrap('user', (id: number) => db.findUser(id))
 const user = await getUser(123) // key -> "user:123"
@@ -462,9 +464,11 @@ cache.bumpGeneration() // now reads use v2:user:123
 // Optional: auto-cleanup old generation keys
 const cache = new CacheStack([...], {
   generation: 1,
-  generationCleanup: { batchSize: 500 }
+  generationCleanup: { batchSize: 500, maxMatches: 10_000 }
 })
 ```
+
+Cleanup retains a de-duplication set while scanning layers, so `maxMatches` defaults to 10,000 unique keys per run. Exceeding the limit stops the cleanup and emits the existing `generation-cleanup-error` warning. Set `maxMatches: false` only when the deployment bounds the keyspace elsewhere.
 
 Persist the active generation outside the process when you deploy multiple
 instances or restart workers:
@@ -649,7 +653,7 @@ class MyCustomLayer implements CacheLayer {
 | `invalidationBus` | `RedisInvalidationBus` | - | Distributed L1 invalidation |
 | `tagIndex` | `TagIndex \| RedisTagIndex` | in-memory | Custom tag tracking |
 | `generation` | `number` | - | Generation prefix for bulk invalidation |
-| `generationCleanup` | `boolean \| { batchSize: number }` | - | Auto-prune stale generation keys |
+| `generationCleanup` | `boolean \| { batchSize?: number; maxMatches?: number \| false }` | - | Auto-prune stale generation keys; discovery defaults to 10,000 unique matches |
 | `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
 | `negativeCaching` | `boolean` | `false` | Cache nulls globally |
 | `cacheNullValues` | `boolean` | `false` | Cache null fetcher results as regular values |
@@ -664,6 +668,7 @@ class MyCustomLayer implements CacheLayer {
 | `writePolicy` | `'strict' \| 'best-effort'` | `'strict'` | Write failure behavior |
 | `writeStrategy` | `'write-through' \| 'write-behind'` | `'write-through'` | Write batching strategy |
 | `writeBehind` | `WriteBehindOptions` | - | Batch size, flush interval, max queue |
+| `writeCoordination` | `{ maxPendingWrites?; maxActiveKeys?; maxPendingWritesPerKey? }` | `10000 / 10000 / 1000` | Finite admission limits for per-key write ordering state |
 | `fetcherRateLimit` | `RateLimitOptions` | - | Global rate limiting |
 | `backgroundRefreshTimeoutMs` | `number` | `30000` | Max time for stale refresh attempts |
 | `singleFlightCoordinator` | `RedisSingleFlightCoordinator` | - | Distributed deduplication |
@@ -676,6 +681,8 @@ class MyCustomLayer implements CacheLayer {
 | `snapshotMaxEntries` | `number \| false` | - | Max entries in a snapshot |
 | `invalidationMaxKeys` | `number \| false` | - | Safety limit for invalidation scans |
 | `maxProfileEntries` | `number` | `100000` | Max size before pruning internal maps |
+
+All single-key and bulk writes use the same per-key ordering boundary so stale cleanup cannot overtake newer data. When a `writeCoordination` limit is reached, the write rejects with `CacheWriteSaturationError`; treat it as backpressure or increase a limit only after sizing the expected burst.
 
 ### CircuitBreakerOptions
 
@@ -1143,10 +1150,11 @@ npx layercache invalidate --redis redis://localhost:6379 --tag user:123
 npx layercache invalidate --redis redis://localhost:6379 --pattern "session:*"
 ```
 
-Full-cache invalidation requires `--force`, both for the default `*` pattern and for explicit `--pattern "*"`:
+Full-cache invalidation requires `--force`, both for the default pattern and for every wildcard-only combination of `*` and `?` such as `*`, `**`, and `?*`:
 
 ```bash
 npx layercache invalidate --redis redis://localhost:6379 --pattern "*" --force
+npx layercache invalidate --redis redis://localhost:6379 --pattern "?*" --force
 ```
 
 ---

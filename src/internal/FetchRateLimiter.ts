@@ -40,6 +40,7 @@ export class FetchRateLimiter {
   private readonly fetcherBuckets = new WeakMap<(...args: never[]) => unknown, string>()
   private nextFetcherBucketId = 0
   private drainTimer?: ReturnType<typeof setTimeout>
+  private drainTimerDeadline?: number
   private drainScheduled = false
   private isDisposed = false
   rateLimitBypasses = 0
@@ -103,6 +104,7 @@ export class FetchRateLimiter {
     if (this.drainTimer) {
       clearTimeout(this.drainTimer)
       this.drainTimer = undefined
+      this.drainTimerDeadline = undefined
     }
     this.drainScheduled = false
 
@@ -175,6 +177,7 @@ export class FetchRateLimiter {
     if (this.drainTimer) {
       clearTimeout(this.drainTimer)
       this.drainTimer = undefined
+      this.drainTimerDeadline = undefined
     }
 
     let nextWaitMs = Number.POSITIVE_INFINITY
@@ -241,8 +244,14 @@ export class FetchRateLimiter {
   }
 
   private scheduleDrain(delayMs: number): void {
-    if (this.isDisposed || this.drainTimer || this.drainScheduled || !Number.isFinite(delayMs)) return
+    if (this.isDisposed || !Number.isFinite(delayMs)) return
     if (delayMs <= 0) {
+      if (this.drainTimer) {
+        clearTimeout(this.drainTimer)
+        this.drainTimer = undefined
+        this.drainTimerDeadline = undefined
+      }
+      if (this.drainScheduled) return
       this.drainScheduled = true
       queueMicrotask(() => {
         this.drainScheduled = false
@@ -250,12 +259,26 @@ export class FetchRateLimiter {
       })
       return
     }
+
+    if (this.drainScheduled) return
+    const deadline = Date.now() + delayMs
+    if (this.drainTimer) {
+      // Buckets are independent even though they share a timer. A newly-ready
+      // bucket must therefore replace a later deadline chosen by another key.
+      if (this.drainTimerDeadline !== undefined && this.drainTimerDeadline <= deadline) return
+      clearTimeout(this.drainTimer)
+      this.drainTimer = undefined
+      this.drainTimerDeadline = undefined
+    }
+
+    this.drainTimerDeadline = deadline
     this.drainTimer = setTimeout(
       () => {
         this.drainTimer = undefined
+        this.drainTimerDeadline = undefined
         this.drain()
       },
-      Math.max(0, delayMs)
+      Math.max(0, deadline - Date.now())
     )
     this.drainTimer.unref?.()
   }

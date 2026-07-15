@@ -287,6 +287,76 @@ describe('CacheStackMaintenance', () => {
     expect(order).toEqual(['start:1', 'end:1', 'run:2', 'run:4'])
   })
 
+  it('rejects retained writes at global, active-key, and per-key admission limits', async () => {
+    let releaseActive!: () => void
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve
+    })
+    const activeLimited = new CacheStackMaintenance({
+      maxPendingWrites: 10,
+      maxActiveKeys: 1,
+      maxPendingWritesPerKey: 10
+    })
+    const firstActive = activeLimited.runFencedWrite(
+      'a',
+      0,
+      0,
+      () => activeGate,
+      async () => undefined
+    )
+
+    await expect(
+      activeLimited.runFencedWrite(
+        'b',
+        0,
+        0,
+        async () => undefined,
+        async () => undefined
+      )
+    ).rejects.toMatchObject({ name: 'CacheWriteSaturationError', scope: 'active-keys' })
+    releaseActive()
+    await firstActive
+
+    let releasePerKey!: () => void
+    const perKeyGate = new Promise<void>((resolve) => {
+      releasePerKey = resolve
+    })
+    const perKeyLimited = new CacheStackMaintenance({
+      maxPendingWrites: 10,
+      maxActiveKeys: 10,
+      maxPendingWritesPerKey: 1
+    })
+    const firstPerKey = perKeyLimited.runFencedWrite(
+      'same',
+      0,
+      0,
+      () => perKeyGate,
+      async () => undefined
+    )
+
+    await expect(
+      perKeyLimited.runFencedWrite(
+        'same',
+        0,
+        0,
+        async () => undefined,
+        async () => undefined
+      )
+    ).rejects.toMatchObject({ name: 'CacheWriteSaturationError', scope: 'per-key' })
+    releasePerKey()
+    await firstPerKey
+
+    const pendingLimited = new CacheStackMaintenance({
+      maxPendingWrites: 1,
+      maxActiveKeys: 10,
+      maxPendingWritesPerKey: 10
+    })
+    await expect(pendingLimited.runSerializedWrites(['a', 'b'], async () => undefined)).rejects.toMatchObject({
+      name: 'CacheWriteSaturationError',
+      scope: 'pending-writes'
+    })
+  })
+
   describe('pruneKeyEpochsIfNeeded', () => {
     it('keeps keyEpochs bounded when exceeding MAX_KEY_EPOCHS', () => {
       const maintenance = new CacheStackMaintenance()
@@ -336,6 +406,17 @@ describe('CacheStackMaintenance', () => {
 
       expect(sort).not.toHaveBeenCalled()
       sort.mockRestore()
+    })
+
+    it('never makes a pruned invalidation epoch current again', () => {
+      const maintenance = new CacheStackMaintenance()
+      const victimEpoch = maintenance.currentKeyEpoch('victim')
+
+      maintenance.bumpKeyEpochs(['victim'])
+      maintenance.bumpKeyEpochs(Array.from({ length: 50_000 }, (_, index) => `later:${index}`))
+
+      expect(maintenance.currentKeyEpoch('victim')).not.toBe(victimEpoch)
+      expect(maintenance.isWriteOutdated('victim', maintenance.currentClearEpoch(), victimEpoch)).toBe(true)
     })
   })
 

@@ -65,7 +65,7 @@ app.get('/api/users/:id',
 - `methods` - HTTP methods to cache (default: `['GET']`)
 - `ttl` - Time-to-live in milliseconds
 - `tags` - Tags for invalidation
-- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Requests with common sensitive query parameters such as `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token` bypass implicit caching unless you provide a custom `keyResolver`.
+- `allowPrivateCaching` - Allow implicit URL-based keys (default: false). Requests with common sensitive query parameters such as `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `client_assertion`, `client_assertion_type`, `client_secret`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token` bypass implicit caching unless you provide a custom `keyResolver`.
 
 Only 2xx JSON responses are written to the cache. 3xx, 4xx, and 5xx responses still return to the client but are not cached.
 

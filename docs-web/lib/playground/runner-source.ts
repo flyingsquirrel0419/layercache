@@ -24,10 +24,13 @@ export function isTrustedPlaygroundWorkerMessage(
 
 export function createPlaygroundWorkerSource(): string {
   return `
+(() => {
 const blockedPlaygroundWorkerGlobals = ${JSON.stringify(blockedPlaygroundWorkerGlobals)};
+// Keep the token-bearing sender lexical: user code runs through Function(),
+// which can reach worker globals even when those globals are shadowed.
 const originalPostMessage = self.postMessage.bind(self);
 
-function send(messageToken, message) {
+function sendTrusted(messageToken, message) {
   originalPostMessage({ ...message, messageToken });
 }
 
@@ -503,7 +506,7 @@ self.onmessage = async (event) => {
   }
 
   const postLog = (type, message) => {
-    send(messageToken, { type, message, timestamp: Date.now(), runId });
+    sendTrusted(messageToken, { type, message, timestamp: Date.now(), runId });
   };
 
   const originalLog = console.log;
@@ -526,7 +529,7 @@ self.onmessage = async (event) => {
 
     await asyncFn(...Object.values(sandbox));
 
-    send(messageToken, {
+    sendTrusted(messageToken, {
       type: "done",
       layerInfo: getActiveCache().getLayerInfo(),
       stats: getActiveCache().getStats(),
@@ -534,11 +537,12 @@ self.onmessage = async (event) => {
     });
   } catch (error) {
     postLog("error", error instanceof Error ? error.message : String(error));
-    send(messageToken, { type: "done", layerInfo: undefined, stats: undefined, runId });
+    sendTrusted(messageToken, { type: "done", layerInfo: undefined, stats: undefined, runId });
   } finally {
     console.log = originalLog;
     console.error = originalError;
   }
 };
+})();
 `;
 }

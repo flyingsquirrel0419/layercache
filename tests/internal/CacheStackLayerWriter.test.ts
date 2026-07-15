@@ -90,6 +90,45 @@ describe('CacheStackLayerWriter', () => {
       await expect(writer.writeAcrossLayers('key1', 'value', 'stale')).resolves.toBe(false)
       expect(options.handleLayerFailure).toHaveBeenCalledWith(layer, 'stale-write-cleanup', expect.any(Error))
     })
+
+    it('cleans a write-behind layer when invalidation completes during its set', async () => {
+      const maintenance = new CacheStackMaintenance()
+      let releaseSet!: () => void
+      let markStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve
+      })
+      const setGate = new Promise<void>((resolve) => {
+        releaseSet = resolve
+      })
+      const layer = createMockLayer('remote', {
+        isLocal: false,
+        set: vi.fn(async () => {
+          markStarted()
+          await setGate
+        })
+      })
+      const queued: Array<() => Promise<void>> = []
+      const writer = new CacheStackLayerWriter(
+        createWriterOptions({
+          layers: [layer],
+          maintenance,
+          shouldWriteBehind: vi.fn(() => true),
+          enqueueWriteBehind: vi.fn(async (operation) => {
+            queued.push(operation)
+          })
+        })
+      )
+
+      await writer.writeAcrossLayers('key1', 'value', 'stale')
+      const flush = queued[0]?.()
+      await started
+      maintenance.bumpKeyEpochs(['key1'])
+      releaseSet()
+      await flush
+
+      expect(layer.delete).toHaveBeenCalledWith('key1')
+    })
   })
 
   describe('writeBatch', () => {
@@ -223,6 +262,49 @@ describe('CacheStackLayerWriter', () => {
       expect(writeBehindOps).toHaveLength(1)
       await writeBehindOps[0]()
       expect(remoteLayer.set).toHaveBeenCalledTimes(1)
+    })
+
+    it('serializes a newer batch write after stale single-write cleanup', async () => {
+      const maintenance = new CacheStackMaintenance()
+      const stored = new Map<string, unknown>()
+      let releaseOldSet!: () => void
+      let markOldStarted!: () => void
+      const oldStarted = new Promise<void>((resolve) => {
+        markOldStarted = resolve
+      })
+      const oldSetGate = new Promise<void>((resolve) => {
+        releaseOldSet = resolve
+      })
+      let setCalls = 0
+      const layer = createMockLayer('ordered', {
+        set: vi.fn(async (key, value) => {
+          setCalls += 1
+          stored.set(key, value)
+          if (setCalls === 1) {
+            markOldStarted()
+            await oldSetGate
+          }
+        }),
+        setMany: vi.fn(async (entries: CacheLayerSetManyEntry[]) => {
+          for (const entry of entries) stored.set(entry.key, entry.value)
+        }),
+        delete: vi.fn(async (key) => {
+          stored.delete(key)
+        })
+      })
+      const writer = new CacheStackLayerWriter(createWriterOptions({ layers: [layer], maintenance }))
+
+      const oldWrite = writer.writeAcrossLayers('key1', 'value', 'old')
+      await oldStarted
+      maintenance.bumpKeyEpochs(['key1'])
+      const newerBatch = writer.writeBatch([{ key: 'key1', value: 'new' }])
+
+      releaseOldSet()
+      await Promise.all([oldWrite, newerBatch])
+
+      expect(stored.has('key1')).toBe(true)
+      expect(layer.setMany).toHaveBeenCalledTimes(1)
+      expect(layer.delete).toHaveBeenCalledBefore(layer.setMany as ReturnType<typeof vi.fn>)
     })
   })
 

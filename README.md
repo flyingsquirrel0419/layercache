@@ -291,7 +291,7 @@ const cache = new CacheStack([
 | **Fetcher rate limiting** | Scoped to global, per-key, or per-fetcher; `queueOverflow: 'reject'` rejects saturated queues and `'bypass'` runs overflow work directly |
 | **Write policies** | `strict` (fail if any layer fails) or `best-effort` |
 | **Write-behind** | Batch writes with configurable flush interval |
-| **Bounded disk writes** | `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized write buildup |
+| **Bounded write coordination** | `CacheStack.writeCoordination` bounds retained per-key ordering state, and `DiskLayer.maxWriteQueueDepth` bounds serialized disk work |
 | **Compression** | gzip / brotli in RedisLayer with configurable threshold |
 | **MessagePack** | Pluggable serializers (JSON default, MessagePack alternative) |
 | **Persistence** | Export/import snapshots to memory or disk |

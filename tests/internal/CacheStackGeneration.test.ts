@@ -5,6 +5,7 @@ import {
   qualifyGenerationKey,
   qualifyGenerationPattern,
   resolveGenerationCleanupBatchSize,
+  resolveGenerationCleanupMaxMatches,
   resolveGenerationCleanupTarget,
   stripGenerationPrefix
 } from '../../src/internal/CacheStackGeneration'
@@ -64,6 +65,14 @@ describe('CacheStackGeneration', () => {
     expect(resolveGenerationCleanupBatchSize(true)).toBe(500)
     expect(resolveGenerationCleanupBatchSize({})).toBe(500)
     expect(resolveGenerationCleanupBatchSize({ batchSize: 25 })).toBe(25)
+  })
+
+  it('uses a finite generation cleanup discovery limit by default', () => {
+    expect(resolveGenerationCleanupMaxMatches(undefined)).toBe(10_000)
+    expect(resolveGenerationCleanupMaxMatches(true)).toBe(10_000)
+    expect(resolveGenerationCleanupMaxMatches({})).toBe(10_000)
+    expect(resolveGenerationCleanupMaxMatches({ maxMatches: 250 })).toBe(250)
+    expect(resolveGenerationCleanupMaxMatches({ maxMatches: false })).toBe(false)
   })
 
   it('plans generation cleanup batches using the resolved batch size', () => {

@@ -130,6 +130,15 @@ describe('CLI — main()', () => {
     expect(delCalls).toEqual([])
   })
 
+  it.each(['**', '***', '?*', '*?*'])('requires --force for wildcard-only broad pattern %s', async (pattern) => {
+    const { main } = await import('../src/cli')
+    await main(['invalidate', '--redis', 'redis://localhost:6379', '--pattern', pattern])
+
+    expect(stderrOutput.join('')).toContain('Use --force')
+    expect(stdoutOutput.join('')).toBe('')
+    expect(delCalls).toEqual([])
+  })
+
   it('allows explicit broad invalidate patterns when --force is provided', async () => {
     const { main } = await import('../src/cli')
     await main(['invalidate', '--redis', 'redis://localhost:6379', '--pattern', '*', '--force'])

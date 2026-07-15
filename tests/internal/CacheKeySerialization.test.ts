@@ -11,7 +11,7 @@ describe('CacheKeySerialization', () => {
     expect(serializeKeyPart('1')).toBe('s:1')
     expect(serializeKeyPart(1)).toBe('n:1')
     expect(serializeKeyPart(true)).toBe('b:true')
-    expect(serializeKeyPart({ b: 2, a: 1, __proto__: { polluted: true } })).toBe('j:{"a":1,"b":2}')
+    expect(serializeKeyPart({ b: 2, a: 1, __proto__: { polluted: true } })).toBe('j2:{"a":1,"b":2}')
   })
 
   it('normalizes nested structures and strips dangerous object keys', () => {
@@ -80,6 +80,14 @@ describe('CacheKeySerialization', () => {
     expect(() => normalizeForSerialization(() => undefined)).toThrow(/function/i)
     expect(() => normalizeForSerialization(Symbol('tenant'))).toThrow(/symbol/i)
     expect(() => normalizeForSerialization(Object.create({ constructor: undefined }))).toThrow(/unknown/i)
+    expect(() => normalizeForSerialization({ $type: 'Date', value: '2026-01-01T00:00:00.000Z' })).toThrow(
+      /reserved cache-key type tag/i
+    )
+    expect(() =>
+      normalizeForSerialization({
+        nested: [{ $type: 'Map', entries: [] }]
+      })
+    ).toThrow(/reserved cache-key type tag/i)
   })
 
   it('rejects circular cache-key state', () => {

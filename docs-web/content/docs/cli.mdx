@@ -195,7 +195,7 @@ layercache invalidate --redis redis://localhost:6379 --tag "user:123"
 
 #### Safety Guard for Untargeted Invalidation
 
-Running `invalidate` without `--pattern` or `--tag` defaults to matching all keys (`*`). Explicit `--pattern "*"` is also treated as a full-cache invalidation. Both forms require `--force` to prevent accidental cache wipes:
+Running `invalidate` without `--pattern` or `--tag` defaults to matching all keys (`*`). Every explicit pattern made only from `*` and `?`, including `*`, `**`, and `?*`, is also treated as a full-cache invalidation. These forms require `--force` to prevent accidental cache wipes:
 
 ```bash
 # This shows a warning and aborts
@@ -204,6 +204,7 @@ layercache invalidate --redis redis://localhost:6379
 # Explicitly confirm full invalidation
 layercache invalidate --redis redis://localhost:6379 --force
 layercache invalidate --redis redis://localhost:6379 --pattern "*" --force
+layercache invalidate --redis redis://localhost:6379 --pattern "?*" --force
 ```
 
 #### Custom Tag Index Prefix
@@ -363,7 +364,7 @@ NODE_ENV=production layercache stats --redis redis://localhost:6379 --allow-plai
 
 #### `--force`
 
-Bypass the safety guard for full-cache `invalidate` operations. Required when running `invalidate` without `--pattern` or `--tag`, and when using explicit `--pattern "*"`.
+Bypass the safety guard for full-cache `invalidate` operations. Required when running `invalidate` without `--pattern` or `--tag`, and when using a wildcard-only pattern made from `*` and `?`.
 
 ```bash
 # Without --force: warns and aborts
@@ -372,6 +373,7 @@ layercache invalidate --redis redis://localhost:6379
 # With --force: proceeds with full invalidation
 layercache invalidate --redis redis://localhost:6379 --force
 layercache invalidate --redis redis://localhost:6379 --pattern "*" --force
+layercache invalidate --redis redis://localhost:6379 --pattern "?*" --force
 ```
 
 ## Usage Examples

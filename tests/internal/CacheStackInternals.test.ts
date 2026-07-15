@@ -263,6 +263,26 @@ describe('CacheStack internals', () => {
         })
     ).toThrow(/stampedePrevention/i)
 
+    expect(
+      () =>
+        new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+          generationCleanup: { maxMatches: 0 }
+        })
+    ).toThrow(/generationCleanup\.maxMatches/i)
+
+    for (const [option, value] of [
+      ['maxPendingWrites', 0],
+      ['maxActiveKeys', -1],
+      ['maxPendingWritesPerKey', Number.NaN]
+    ] as const) {
+      expect(
+        () =>
+          new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+            writeCoordination: { [option]: value }
+          })
+      ).toThrow(new RegExp(`writeCoordination\\.${option}`, 'i'))
+    }
+
     const warn = vi.fn()
     const bus = {
       subscribe: vi.fn(async () => () => undefined),
@@ -731,7 +751,7 @@ describe('CacheStack internals', () => {
     await (cache as { cleanupGeneration: (generation: number) => Promise<void> }).cleanupGeneration(1)
 
     expect(collectSpy).not.toHaveBeenCalled()
-    expect(forEachSpy).toHaveBeenCalledWith('v1:', expect.any(Function))
+    expect(forEachSpy).toHaveBeenCalledWith('v1:', expect.any(Function), 10_000)
     expect(deleteKeysSpy.mock.calls.map(([keys]) => keys)).toEqual([['v1:a', 'v1:b'], ['v1:c']])
   })
 

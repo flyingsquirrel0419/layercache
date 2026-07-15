@@ -371,7 +371,7 @@ function maskRedisUrlsInText(text: string): string {
 }
 
 function requiresForceForInvalidationPattern(pattern: string): boolean {
-  return pattern.trim() === '*'
+  return /^[*?]+$/.test(pattern.trim())
 }
 
 function validateCliInput(value: string, validator: (v: string) => void): boolean {

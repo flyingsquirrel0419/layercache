@@ -1,6 +1,7 @@
 import type { CacheGetOptions } from '../types'
 
 export const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const RESERVED_TYPE_TAGS = new Set(['Date', 'URL', 'RegExp', 'Map', 'Set'])
 
 export function normalizeForSerialization(value: unknown): unknown {
   return normalizeValue(value, new WeakSet<object>())
@@ -37,6 +38,13 @@ function normalizeValue(value: unknown, ancestors: WeakSet<object>): unknown {
     const constructorName = prototype?.constructor?.name
     if (prototype !== null && constructorName !== 'Object') {
       throw new TypeError(`Unsupported cache-key object type: ${prototype?.constructor?.name ?? 'unknown'}.`)
+    }
+
+    const suppliedType = Object.hasOwn(value, '$type') ? (value as Record<string, unknown>).$type : undefined
+    // Native values use these internal tags in the canonical form. Accepting
+    // the same tags from plain objects would let different inputs share a key.
+    if (typeof suppliedType === 'string' && RESERVED_TYPE_TAGS.has(suppliedType)) {
+      throw new TypeError(`Reserved cache-key type tag: ${suppliedType}.`)
     }
 
     return withAncestor(value, ancestors, () =>
@@ -84,7 +92,7 @@ export function serializeKeyPart(value: unknown): string {
     return `b:${value}`
   }
 
-  return `j:${JSON.stringify(normalizeForSerialization(value))}`
+  return `j2:${JSON.stringify(normalizeForSerialization(value))}`
 }
 
 export function serializeOptions(options: CacheGetOptions | undefined): string {
