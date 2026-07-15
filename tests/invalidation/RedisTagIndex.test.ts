@@ -10,7 +10,7 @@ describe('RedisTagIndex', () => {
     await index.track('user:1', ['team:a', 'role:admin'])
     await index.track('user:2', ['team:a'])
 
-    await expect(index.keysForTag('team:a')).resolves.toEqual(['user:1', 'user:2'])
+    expect((await index.keysForTag('team:a')).sort()).toEqual(['user:1', 'user:2'])
     await expect(index.tagsForKey('user:1')).resolves.toEqual(expect.arrayContaining(['role:admin', 'team:a']))
 
     await index.remove('user:1')
@@ -44,7 +44,7 @@ describe('RedisTagIndex', () => {
     await index.touch('user:2')
     await index.touch('post:1')
 
-    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+    expect((await index.keysForPrefix('user:')).sort()).toEqual(['user:1', 'user:2'])
   })
 
   it('filters prefix scan results with startsWith for literal safety', async () => {
@@ -65,7 +65,7 @@ describe('RedisTagIndex', () => {
     await index.touch('user:2')
     await index.touch('post:1')
 
-    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+    expect((await index.keysForPrefix('user:')).sort()).toEqual(['user:1', 'user:2'])
   })
 
   it('defaults known-key tracking to 16 shards', async () => {
@@ -80,7 +80,7 @@ describe('RedisTagIndex', () => {
 
     expect(indexKeys).toEqual(expect.arrayContaining([expect.stringMatching(/^tags:default-shards:keys:\d+$/)]))
     expect(indexKeys).not.toContain('tags:default-shards:keys')
-    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+    expect((await index.keysForPrefix('user:')).sort()).toEqual(['user:1', 'user:2'])
   })
 
   it('reads and warns about legacy unsharded known-key sets after the default shard upgrade', async () => {
@@ -106,7 +106,7 @@ describe('RedisTagIndex', () => {
 
     await expect(index.migrateLegacyKnownKeys()).resolves.toEqual({ migratedKeys: 3 })
     await expect(redis.smembers('tags:migrate:keys')).resolves.toEqual([])
-    await expect(index.keysForPrefix('user:')).resolves.toEqual(['user:1', 'user:2'])
+    expect((await index.keysForPrefix('user:')).sort()).toEqual(['user:1', 'user:2'])
   })
 
   it('supports pattern scans and async visitor helpers', async () => {
@@ -117,19 +117,19 @@ describe('RedisTagIndex', () => {
     await index.track('user:2', ['people'])
     await index.track('post:1', ['posts'])
 
-    await expect(index.matchPattern('user:*')).resolves.toEqual(['user:1', 'user:2'])
+    expect((await index.matchPattern('user:*')).sort()).toEqual(['user:1', 'user:2'])
 
     const byTag: string[] = []
     await index.forEachKeyForTag('people', async (key) => {
       byTag.push(key)
     })
-    expect(byTag).toEqual(['user:1', 'user:2'])
+    expect(byTag.sort()).toEqual(['user:1', 'user:2'])
 
     const byPrefix: string[] = []
     await index.forEachKeyForPrefix('user:', async (key) => {
       byPrefix.push(key)
     })
-    expect(byPrefix).toEqual(['user:1', 'user:2'])
+    expect(byPrefix.sort()).toEqual(['user:1', 'user:2'])
 
     const byPattern: string[] = []
     await index.forEachKeyMatchingPattern('post:*', async (key) => {
