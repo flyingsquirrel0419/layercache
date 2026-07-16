@@ -176,7 +176,8 @@ describe('operational features', () => {
 
   it('supports negative caching for null fetch results', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
-      negativeCaching: true
+      negativeCaching: true,
+      cacheNullValues: false
     })
     let fetches = 0
 
@@ -189,7 +190,7 @@ describe('operational features', () => {
         },
         { negativeTtl: 1_000 }
       )
-    ).resolves.toBeNull()
+    ).resolves.toBeUndefined()
 
     await expect(
       cache.get(
@@ -200,7 +201,7 @@ describe('operational features', () => {
         },
         { negativeTtl: 1_000 }
       )
-    ).resolves.toBeNull()
+    ).resolves.toBeUndefined()
 
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
@@ -328,10 +329,10 @@ describe('operational features', () => {
     await cache.clear()
     releaseFetch()
     await waitForCondition(async () => {
-      await expect(cache.get('user:1')).resolves.toBeNull()
+      await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
   })
 
   it('does not repopulate deleted keys from in-flight background refreshes', async () => {
@@ -351,10 +352,10 @@ describe('operational features', () => {
     await cache.delete('user:1')
     releaseFetch()
     await waitForCondition(async () => {
-      await expect(cache.get('user:1')).resolves.toBeNull()
+      await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
   })
 
   it('does not repopulate deleted keys with negative-cache markers after refresh completes', async () => {
@@ -376,10 +377,10 @@ describe('operational features', () => {
     await cache.delete('user:1')
     releaseFetch()
     await waitForCondition(async () => {
-      await expect(cache.get('user:1')).resolves.toBeNull()
+      await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
     expect(cache.getMetrics().negativeCacheHits).toBe(0)
   })
 
@@ -629,7 +630,7 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ id: 1 })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
     expect(warn).toHaveBeenCalled()
   })
 
@@ -642,7 +643,7 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ id: 1, cacheable: false })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
   })
 
   it('supports context-aware entry options for fetched values', async () => {
@@ -698,7 +699,7 @@ describe('operational features', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
-    await expect(cache.get('report:daily')).resolves.toBeNull()
+    await expect(cache.get('report:daily')).resolves.toBeUndefined()
   })
 
   it('falls back to static entry options when context-aware overrides are omitted', async () => {
@@ -770,12 +771,12 @@ describe('operational features', () => {
     ).rejects.toThrow(/async resolvers are not supported/i)
   })
 
-  it('does not negative-cache null fetch results unless explicitly enabled', async () => {
+  it('can treat null fetch results as uncached misses when explicitly disabled', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const fetcher = vi.fn(async () => null)
 
-    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
-    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
+    await expect(cache.get('user:404', fetcher, { cacheNullValues: false })).resolves.toBeUndefined()
+    await expect(cache.get('user:404', fetcher, { cacheNullValues: false })).resolves.toBeUndefined()
 
     expect(fetcher).toHaveBeenCalledTimes(2)
   })

@@ -42,7 +42,7 @@ import {
 import { CircuitBreakerManager } from './internal/CircuitBreakerManager'
 import { FetchRateLimiter } from './internal/FetchRateLimiter'
 import { MetricsCollector } from './internal/MetricsCollector'
-import { resolveStoredValue } from './internal/StoredValue'
+import { isStoredValueEnvelope, resolveStoredValue } from './internal/StoredValue'
 import { TtlResolver } from './internal/TtlResolver'
 import { TagIndex } from './invalidation/TagIndex'
 import { JsonSerializer } from './serialization/JsonSerializer'
@@ -323,10 +323,10 @@ export class CacheStack extends EventEmitter {
   /**
    * Read-through cache get.
    * Returns the cached value if present and fresh, or invokes `fetcher` on a miss
-   * and stores the result across all layers. Returns `null` if the key is not found
+   * and stores the result across all layers. Returns `undefined` if the key is not found
    * and no `fetcher` is provided.
    */
-  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
+  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | undefined> {
     return this.observeOperation('layercache.get', { 'layercache.key': String(key ?? '') }, async () => {
       const normalizedKey = this.qualifyKey(validateCacheKey(key))
       this.validateWriteOptions(options)
@@ -339,7 +339,7 @@ export class CacheStack extends EventEmitter {
    * Alias for `get(key, fetcher, options)` — explicit get-or-set pattern.
    * Fetches and caches the value if not already present.
    */
-  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
+  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | undefined> {
     return this.get(key, fetcher, options)
   }
 
@@ -413,13 +413,13 @@ export class CacheStack extends EventEmitter {
   }
 
   /**
-   * Like `get()`, but throws `CacheMissError` instead of returning `null`.
+   * Like `get()`, but throws `CacheMissError` instead of returning `undefined`.
    * Useful when the value is expected to exist or the fetcher is expected to
    * return non-null.
    */
   async getOrThrow<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T> {
     const value = await this.get(key, fetcher, options)
-    if (value === null) {
+    if (value === undefined) {
       throw new CacheMissError(key)
     }
     return value
@@ -608,7 +608,7 @@ export class CacheStack extends EventEmitter {
    * Reads many keys concurrently. Simple reads use layer-level bulk fast paths;
    * entries with fetchers or options fall back to per-entry read-through logic.
    */
-  async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
+  async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | undefined>> {
     return this.observeOperation('layercache.mget', undefined, async () => {
       this.assertActive('mget')
       if (entries.length === 0) {
@@ -626,7 +626,7 @@ export class CacheStack extends EventEmitter {
         const pendingReads = new Map<
           string,
           {
-            promise: Promise<T | null>
+            promise: Promise<T | undefined>
             fetch?: CacheFetcher<T>
             optionsSignature: string
           }
@@ -659,7 +659,7 @@ export class CacheStack extends EventEmitter {
       await this.awaitStartup('mget')
       const pending = new Set<string>()
       const indexesByKey = new Map<string, number[]>()
-      const resultsByKey = new Map<string, T | null>()
+      const resultsByKey = new Map<string, T | undefined>()
       const readFences = new Map(
         normalizedEntries.map(({ key }) => [
           key,
@@ -711,7 +711,10 @@ export class CacheStack extends EventEmitter {
 
           await this.tagIndex.touch(key)
           await this.reader.backfill(key, stored, layerIndex - 1, undefined, readFences.get(key))
-          resultsByKey.set(key, resolved.value)
+          resultsByKey.set(
+            key,
+            isStoredValueEnvelope(stored) && stored.kind === 'empty' ? undefined : (resolved.value as T)
+          )
           pending.delete(key)
           this.metricsCollector.increment('hits', indexesByKey.get(key)?.length ?? 1)
         }
@@ -724,7 +727,7 @@ export class CacheStack extends EventEmitter {
         }
       }
 
-      return normalizedEntries.map((entry) => resultsByKey.get(entry.key) ?? null)
+      return normalizedEntries.map((entry) => resultsByKey.get(entry.key))
     })
   }
 
@@ -791,7 +794,7 @@ export class CacheStack extends EventEmitter {
     prefix: string,
     fetcher: (...args: TArgs) => Promise<TResult>,
     options: CacheWrapOptions<TArgs> = {}
-  ): (...args: TArgs) => Promise<TResult | null> {
+  ): (...args: TArgs) => Promise<TResult | undefined> {
     return (...args: TArgs) => {
       const suffix = options.keyResolver
         ? options.keyResolver(...args)
@@ -1486,7 +1489,7 @@ export class CacheStack extends EventEmitter {
         name,
         attributes,
         success: true,
-        result: result === null ? 'null' : undefined
+        result: result === null ? 'null' : result === undefined ? 'undefined' : undefined
       })
       return result
     } catch (error) {

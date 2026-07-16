@@ -15,7 +15,7 @@ interface CachedMethodDecoratorOptions<TArgs extends unknown[]> extends CacheWra
 export function createCachedMethodDecorator<TArgs extends unknown[] = unknown[]>(
   options: CachedMethodDecoratorOptions<TArgs>
 ): MethodDecorator {
-  const wrappedByInstance = new WeakMap<object, (...args: unknown[]) => Promise<unknown | null>>()
+  const wrappedByInstance = new WeakMap<object, (...args: unknown[]) => Promise<unknown | undefined>>()
 
   return ((_: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
     const original = descriptor.value as ((...args: unknown[]) => Promise<unknown>) | undefined

@@ -27,6 +27,11 @@ describe('JsonSerializer', () => {
     expect(serializer.deserialize(serializer.serialize(true))).toBe(true)
   })
 
+  it('follows JSON undefined semantics inside containers', () => {
+    expect(serializer.serialize({ omitted: undefined })).toBe('{}')
+    expect(serializer.deserialize(serializer.serialize([undefined]))).toEqual([null])
+  })
+
   it('serializes to a string', () => {
     expect(typeof serializer.serialize({ a: 1 })).toBe('string')
   })
@@ -93,6 +98,10 @@ describe('MsgpackSerializer', () => {
     expect(serializer.deserialize(serializer.serialize('hello'))).toBe('hello')
     expect(serializer.deserialize(serializer.serialize(null))).toBeNull()
     expect(serializer.deserialize(serializer.serialize(true))).toBe(true)
+  })
+
+  it('encodes undefined as MessagePack nil', () => {
+    expect(serializer.deserialize(serializer.serialize(undefined))).toBeNull()
   })
 
   it('serializes to a Buffer', () => {

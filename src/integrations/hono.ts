@@ -57,7 +57,7 @@ export function createHonoCacheMiddleware(cache: CacheStack, options: HonoCacheM
     const key = options.keyResolver ? options.keyResolver(context.req) : `${method}:${normalizeHttpCacheUrl(rawPath)}`
 
     const cached = await cache.get(key, undefined, options)
-    if (cached !== null) {
+    if (cached !== undefined) {
       context.header?.('x-cache', 'HIT')
       context.header?.('content-type', 'application/json; charset=utf-8')
       return context.json(cached)

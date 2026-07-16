@@ -500,9 +500,9 @@ describe('createTrpcCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
-  it('falls back to next() when cache returns null without invoking the fetch wrapper', async () => {
+  it('falls back to next() when cache returns undefined without invoking the fetch wrapper', async () => {
     const cache = makeCache()
-    const getSpy = vi.spyOn(cache, 'get').mockResolvedValueOnce(null)
+    const getSpy = vi.spyOn(cache, 'get').mockResolvedValueOnce(undefined)
     const middleware = createTrpcCacheMiddleware(cache, 'proc', { allowImplicitContextCaching: true })
     const next = vi.fn(async () => ({ ok: true, data: { id: 1 } }))
 

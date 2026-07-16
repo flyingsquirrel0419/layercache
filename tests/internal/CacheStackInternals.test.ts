@@ -398,7 +398,7 @@ describe('CacheStack internals', () => {
 
     await expect(cache.mdelete([])).resolves.toBeUndefined()
     await expect(cache.mget([])).resolves.toEqual([])
-    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual([null, null])
+    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual([undefined, undefined])
     expect(deleteSpy).toHaveBeenCalledWith('a')
 
     await expect(

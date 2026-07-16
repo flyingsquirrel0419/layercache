@@ -362,11 +362,11 @@ describe('RedisInvalidationBus', () => {
     const unsubscribe = await bus.subscribe(handler)
 
     await publisher.publish(channel, JSON.stringify(42))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).not.toHaveBeenCalled()
-    expect(logger.error).toHaveBeenCalledWith('invalid invalidation payload', {
-      error: expect.any(Error)
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalledWith('invalid invalidation payload', {
+        error: expect.any(Error)
+      })
     })
 
     await unsubscribe()

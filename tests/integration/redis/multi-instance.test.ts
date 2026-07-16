@@ -88,7 +88,7 @@ describe_integration('Multi-instance distributed caching (real Redis)', () => {
     await sleep(300)
 
     const after = await cacheB.get('tagged:item')
-    expect(after).toBeNull()
+    expect(after).toBeUndefined()
   })
 
   it('stampede prevention deduplicates across instances', async () => {

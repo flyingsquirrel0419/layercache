@@ -59,12 +59,12 @@ const cache = new CacheStack(layers, options?)
 
 ### Read Operations
 
-#### `cache.get<T>(key, fetcher?, options?): Promise<T | null>`
+#### `cache.get<T>(key, fetcher?, options?): Promise<T | undefined>`
 
 Reads through all layers in order. On a partial hit (found in L2 but not L1), backfills the upper layers automatically. On a full miss, runs the fetcher if provided.
 
 ```ts
-// Without fetcher - returns null on miss
+// Without fetcher - returns undefined on miss
 const user = await cache.get<User>('user:123')
 
 // With fetcher - runs once on miss, fills all layers
@@ -84,7 +84,7 @@ const user = await cache.get<User>('user:123', () => db.findUser(123), {
 
 #### `cache.getOrThrow<T>(key, fetcher?, options?): Promise<T>`
 
-Like `get()`, but throws `CacheMissError` instead of returning `null`.
+Like `get()`, but throws `CacheMissError` instead of returning `undefined`. A stored `null` is a cache hit and is returned normally.
 
 ```ts
 import { CacheMissError } from 'layercache'
@@ -98,7 +98,7 @@ try {
 }
 ```
 
-#### `cache.mget<T>(entries): Promise<Array<T | null>>`
+#### `cache.mget<T>(entries): Promise<Array<T | undefined>>`
 
 Concurrent multi-key fetch. Uses layer-level `getMany()` fast paths when all entries are simple reads.
 
@@ -156,11 +156,13 @@ const miss = await cache.getEntry('user:missing')
 // null
 ```
 
-`cache.set()` stores `null` values directly. `cacheNullValues` applies to
-read-through fetchers that return `null`, not to direct writes.
+`cache.set()` stores `null` values directly. In v4, read-through fetchers also
+store `null` as a regular value by default, so misses and negative-cache entries
+remain distinguishable as `undefined`. Set `cacheNullValues: false` only when a
+fetcher uses `null` to mean absence.
 
 ```ts
-await cache.get('user:deleted', async () => null, { cacheNullValues: true })
+await cache.get('user:deleted', async () => null)
 ```
 
 ---
@@ -655,8 +657,8 @@ class MyCustomLayer implements CacheLayer {
 | `generation` | `number` | - | Generation prefix for bulk invalidation |
 | `generationCleanup` | `boolean \| { batchSize?: number; maxMatches?: number \| false }` | - | Auto-prune stale generation keys; discovery defaults to 10,000 unique matches |
 | `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
-| `negativeCaching` | `boolean` | `false` | Cache nulls globally |
-| `cacheNullValues` | `boolean` | `false` | Cache null fetcher results as regular values |
+| `negativeCaching` | `boolean` | `false` | Cache absent results as empty entries |
+| `cacheNullValues` | `boolean` | `true` | Cache null fetcher results as regular values |
 | `negativeTtl` | `number \| LayerTtlMap` | - | Global TTL for negative cache entries |
 | `staleWhileRevalidate` | `number \| LayerTtlMap` | - | Global stale-while-revalidate window (milliseconds) |
 | `staleIfError` | `number \| LayerTtlMap` | - | Global stale-if-error window (milliseconds) |
@@ -727,8 +729,8 @@ await cache.get('user:1', fetchFromApi, {
 | `tags` | `string[]` | Tags for tag-based invalidation |
 | `ttl` | `number \| LayerTtlMap` | TTL in milliseconds, or per-layer overrides |
 | `ttlPolicy` | `string \| object \| function` | `'until-midnight'`, `'next-hour'`, `{ alignTo }`, or custom |
-| `negativeCache` | `boolean` | Cache null results |
-| `cacheNullValues` | `boolean` | Cache null fetcher results as regular values |
+| `negativeCache` | `boolean` | Cache absent results as empty entries |
+| `cacheNullValues` | `boolean` | Cache null fetcher results as regular values (default `true`) |
 | `negativeTtl` | `number` | Short TTL for misses |
 | `staleWhileRevalidate` | `number \| LayerTtlMap` | Return stale and refresh in background |
 | `staleIfError` | `number \| LayerTtlMap` | Keep serving stale if refresh fails |

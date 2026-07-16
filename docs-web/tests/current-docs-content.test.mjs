@@ -62,11 +62,12 @@ test("API docs describe generation persistence and context-aware entry options",
   assert.match(source, /contextOptions: \(\{ value \}\)/);
 });
 
-test("API docs describe null entry introspection and new resilience options", async () => {
+test("API docs describe v4 miss/null semantics and new resilience options", async () => {
   const source = await readDoc("content/docs/api.mdx");
 
   assert.match(source, /cache\.getEntry/);
-  assert.match(source, /cacheNullValues: true/);
+  assert.match(source, /Promise<T \| undefined>/);
+  assert.match(source, /`cacheNullValues` \| `boolean` \| `true`/);
   assert.match(source, /CircuitBreakerOptions/);
   assert.match(source, /breakerKey/);
   assert.match(source, /RateLimitOptions/);

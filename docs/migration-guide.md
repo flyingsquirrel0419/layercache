@@ -8,7 +8,7 @@ Step-by-step instructions for migrating to layercache from other caching librari
 
 ## Table of Contents
 
-- [Unreleased security hardening](#unreleased-security-hardening)
+- [Upgrading to 4.0](#upgrading-to-40)
 - [Upgrading to 3.0](#upgrading-to-30)
 - [From node-cache-manager](#from-node-cache-manager)
 - [From keyv](#from-keyv)
@@ -17,9 +17,32 @@ Step-by-step instructions for migrating to layercache from other caching librari
 
 ---
 
-## Unreleased security hardening
+## Upgrading to 4.0
 
-This release deliberately changes three cache and operator safety boundaries:
+Layercache 4.0 resolves [issue #90](https://github.com/flyingsquirrel0419/layercache/issues/90) by giving cache misses a JavaScript-native `undefined` result while preserving intentional `null` values.
+
+### Miss and null semantics
+
+- `get()`, `getOrSet()`, `mget()`, `wrap()`, and namespace reads return `undefined` on a miss or negative-cache hit.
+- `getOrThrow()` throws only for `undefined`; a cached `null` is returned normally.
+- Read-through fetchers cache `null` as a regular value by default. Set `cacheNullValues: false` only when your fetcher uses `null` to mean absence.
+- `getEntry()` keeps its metadata contract: it returns `null` when no entry exists and exposes negative entries with `kind: 'empty'`.
+- Custom `CacheLayer` implementations keep returning `null` from their low-level read methods. Only the public stack and namespace APIs changed.
+
+Replace public miss checks such as `value === null` with `value === undefined`. If your application previously used `null` as a fetcher miss, opt out explicitly:
+
+```ts
+const user = await cache.get('user:missing', fetchUser, {
+  cacheNullValues: false,
+  negativeCache: true
+})
+```
+
+Serializers retain their format-specific behavior: JSON omits `undefined` object properties and converts `undefined` array elements to `null`; MessagePack encodes `undefined` as nil and decodes it as `null`. Layercache does not store an `undefined` fetch result.
+
+### Security and operational boundaries
+
+This release also deliberately changes cache and operator safety boundaries:
 
 - Automatically derived structured `wrap()` argument keys now use the `j2:` schema. Existing `j:` entries are left to expire and will be cold misses; no data migration is required. Plain objects with reserved native `$type` tags (`Date`, `URL`, `RegExp`, `Map`, or `Set`) now throw instead of colliding with native values. Use a `keyResolver` when those objects are intentional inputs.
 - `generationCleanup: true` now stops after discovering 10,000 unique old-generation keys in one cleanup run. Set `generationCleanup: { batchSize, maxMatches }` to choose a lower deployment-specific bound. `maxMatches: false` is an explicit opt-out and should only be used when the keyspace is bounded elsewhere.

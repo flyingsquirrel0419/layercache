@@ -258,7 +258,7 @@ describe('CacheStackReader', () => {
       options.layers = [createMockLayer('L0'), createMockLayer('L1')]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.misses).toBe(1)
     })
 
@@ -298,7 +298,7 @@ describe('CacheStackReader', () => {
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => expired) })]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.misses).toBe(1)
     })
 
@@ -478,12 +478,12 @@ describe('CacheStackReader', () => {
   // --- getPrepared — miss path ---
 
   describe('getPrepared — miss path', () => {
-    it('returns null on miss without fetcher', async () => {
+    it('returns undefined on miss without fetcher', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.misses).toBe(1)
     })
 
@@ -526,7 +526,7 @@ describe('CacheStackReader', () => {
       expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', { name: 'test' }, undefined, expect.anything())
     })
 
-    it('null fetch result returns null without negative caching', async () => {
+    it('null fetch result is cached as a regular value by default', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
       options.storeEntry = vi.fn(async () => {})
@@ -534,18 +534,19 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBeNull()
-      expect(options.storeEntry).not.toHaveBeenCalled()
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', null, undefined, expect.anything())
     })
 
     it('null fetch result stores empty with negative caching enabled', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
       options.negativeCaching = true
+      options.cacheNullValues = false
       options.storeEntry = vi.fn(async () => {})
       const fetcher = vi.fn(async () => null)
 
       const result = await reader.getPrepared('key:1', fetcher)
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined, expect.anything())
     })
 
@@ -589,7 +590,7 @@ describe('CacheStackReader', () => {
       const fetcher = vi.fn(async () => undefined)
 
       const result = await reader.getPrepared('key:1', fetcher)
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined, expect.anything())
     })
 
@@ -990,7 +991,7 @@ describe('CacheStackReader', () => {
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => negative) })]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.negativeCacheHits).toBe(1)
     })
   })

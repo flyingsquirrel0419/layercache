@@ -67,9 +67,13 @@ const serializer = new JsonSerializer()
 serializer.serialize({ date: new Date('2024-04-11') })
 // '{"date":"2024-04-11T00:00:00.000Z"}'
 
-// undefined becomes null (or omitted)
+// undefined object properties are omitted
 serializer.serialize({ foo: undefined })
-// '{"foo":null}' or '{}'
+// '{}'
+
+// undefined array elements become null
+serializer.serialize([undefined])
+// '[null]'
 
 // Functions are removed
 serializer.serialize({ foo: () => {} })
@@ -107,6 +111,10 @@ npm install @msgpack/msgpack
 import { MsgpackSerializer } from 'layercache'
 
 const serializer = new MsgpackSerializer()
+
+// MessagePack nil has no undefined/null distinction
+serializer.deserialize(serializer.serialize(undefined))
+// null
 
 // Serialize
 const payload = serializer.serialize({ foo: 'bar', num: 42 })

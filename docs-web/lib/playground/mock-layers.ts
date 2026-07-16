@@ -39,7 +39,7 @@ function resolveOperationOptions(options: CacheOperationOptions = DEFAULT_TTL_MS
       staleWhileRevalidateMs: 0,
       tags: undefined,
       negativeCache: false,
-      cacheNullValues: false,
+      cacheNullValues: true,
       circuitBreaker: undefined,
       shouldCache: undefined,
     };
@@ -50,7 +50,7 @@ function resolveOperationOptions(options: CacheOperationOptions = DEFAULT_TTL_MS
     staleWhileRevalidateMs: options.staleWhileRevalidate ?? 0,
     tags: options.tags,
     negativeCache: options.negativeCache ?? false,
-    cacheNullValues: options.cacheNullValues ?? false,
+    cacheNullValues: options.cacheNullValues ?? true,
     circuitBreaker: options.circuitBreaker,
     shouldCache: options.shouldCache,
   };
@@ -176,7 +176,7 @@ export class MockCacheStack {
     key: string,
     fetcher?: (context: { key: string; currentValue: T | undefined; state: "miss" | "stale-while-revalidate" }) => Promise<T>,
     options: CacheOperationOptions = DEFAULT_TTL_MS
-  ): Promise<T | null> {
+  ): Promise<T | undefined> {
     const operation = resolveOperationOptions(options);
     const storageKey = this.qualifyKey(key);
 
@@ -188,7 +188,7 @@ export class MockCacheStack {
         if (entry.kind === "empty") {
           this.stats.negativeCacheHits++;
           this.log(`[${layer.name}] NEGATIVE HIT for key "${storageKey}"`);
-          return null;
+          return undefined;
         }
         if (entry.state === "stale-while-revalidate") {
           this.stats.staleHits++;
@@ -214,7 +214,7 @@ export class MockCacheStack {
       return this.fetchAndStore(storageKey, key, fetcher, operation);
     }
 
-    return null;
+    return undefined;
   }
 
   async getEntry<T>(key: string): Promise<{
@@ -383,11 +383,11 @@ export class MockCacheStack {
     userKey: string,
     fetcher: (context: { key: string; currentValue: T | undefined; state: "miss" }) => Promise<T>,
     operation: ReturnType<typeof resolveOperationOptions>
-  ): Promise<T | null> {
+  ): Promise<T | undefined> {
     const existing = this.inFlight.get(storageKey);
     if (existing) {
       this.log(`[STAMPEDE-PREVENT] Deduplicating request for "${storageKey}"`);
-      return existing as Promise<T | null>;
+      return existing as Promise<T | undefined>;
     }
 
     this.log(`[FETCH] Calling fetcher for "${storageKey}"...`);
@@ -418,7 +418,7 @@ export class MockCacheStack {
     })();
 
     this.inFlight.set(storageKey, fetchPromise);
-    return fetchPromise as Promise<T | null>;
+    return fetchPromise as Promise<T | undefined>;
   }
 
   private refreshStale<T>(

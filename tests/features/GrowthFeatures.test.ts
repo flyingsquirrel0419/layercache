@@ -67,7 +67,7 @@ describe('growth features', () => {
     await cache.set('other:key', 1)
     await namespace.clear()
 
-    await expect(namespace.get('top')).resolves.toBeNull()
+    await expect(namespace.get('top')).resolves.toBeUndefined()
     await expect(cache.get('other:key')).resolves.toBe(1)
     expect(namespace.getMetrics().sets).toBeGreaterThanOrEqual(1)
   })
@@ -416,14 +416,14 @@ describe('growth features', () => {
     await cache.set('post:1', { id: 1 }, { tags: ['posts', 'tenant:a'] })
 
     await cache.invalidateByTags(['users', 'tenant:a'], 'all')
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
     await expect(cache.get('user:2')).resolves.toEqual({ id: 2 })
 
     await cache.invalidateByPrefix('post:')
-    await expect(cache.get('post:1')).resolves.toBeNull()
+    await expect(cache.get('post:1')).resolves.toBeUndefined()
 
     cache.bumpGeneration()
-    await expect(cache.get('user:2')).resolves.toBeNull()
+    await expect(cache.get('user:2')).resolves.toBeUndefined()
   })
 
   it('supports health checks and ttl policies', async () => {
@@ -519,7 +519,7 @@ describe('growth features', () => {
     expect(tracer.startSpan).toHaveBeenCalledTimes(spanCallsBefore)
   })
 
-  it('records null OpenTelemetry results and instruments invalidation methods', async () => {
+  it('records undefined OpenTelemetry miss results and instruments invalidation methods', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const setAttribute = vi.fn()
     const tracer = {
@@ -536,7 +536,7 @@ describe('growth features', () => {
     await cache.invalidateByTag('group')
     plugin.uninstall()
 
-    expect(setAttribute).toHaveBeenCalledWith('layercache.result', 'null')
+    expect(setAttribute).toHaveBeenCalledWith('layercache.result', 'undefined')
     expect(tracer.startSpan).toHaveBeenCalledWith('layercache.invalidate_by_tag', expect.any(Object))
   })
 
@@ -663,12 +663,12 @@ describe('growth features', () => {
     await cache.get('profile:1')
     // After delete the key should be gone from all layers
     await cache.delete('profile:1')
-    expect(await cache.get('profile:1')).toBeNull()
+    expect(await cache.get('profile:1')).toBeUndefined()
 
     await cache.set('profile:2', { id: 2 })
     await cache.get('profile:2')
     await cache.clear()
-    expect(await cache.get('profile:2')).toBeNull()
+    expect(await cache.get('profile:2')).toBeUndefined()
   })
 
   it('does not invoke tRPC next twice when the result is null', async () => {

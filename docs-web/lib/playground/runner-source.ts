@@ -43,7 +43,7 @@ function resolveOperationOptions(options = DEFAULT_TTL_MS) {
       staleWhileRevalidateMs: 0,
       tags: undefined,
       negativeCache: false,
-      cacheNullValues: false,
+      cacheNullValues: true,
       circuitBreaker: undefined,
       shouldCache: undefined,
     };
@@ -54,7 +54,7 @@ function resolveOperationOptions(options = DEFAULT_TTL_MS) {
     staleWhileRevalidateMs: options.staleWhileRevalidate ?? 0,
     tags: options.tags,
     negativeCache: options.negativeCache ?? false,
-    cacheNullValues: options.cacheNullValues ?? false,
+    cacheNullValues: options.cacheNullValues ?? true,
     circuitBreaker: options.circuitBreaker,
     shouldCache: options.shouldCache,
   };
@@ -172,7 +172,7 @@ class MockCacheStack {
         if (entry.kind === "empty") {
           this.stats.negativeCacheHits++;
           this.log("[" + layer.name + "] NEGATIVE HIT for key \\"" + storageKey + "\\"");
-          return null;
+          return undefined;
         }
         if (entry.state === "stale-while-revalidate") {
           this.stats.staleHits++;
@@ -197,7 +197,7 @@ class MockCacheStack {
       return this.fetchAndStore(storageKey, key, fetcher, operation);
     }
 
-    return null;
+    return undefined;
   }
 
   async getEntry(key) {

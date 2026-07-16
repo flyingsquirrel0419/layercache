@@ -60,6 +60,26 @@ The runtime is TypeScript on Node.js and edge-compatible JavaScript. Vitest fake
 - 다른 대안 대신 이 방식을 선택한 이유: A preemptible shared timer preserves bounded timer state, wildcard-only classification directly captures whole-keyspace patterns, and lexical authority remains unavailable even when dynamically constructed code reaches globals.
 - 장점, 단점 및 영향: Independent keys are not delayed by another bucket, destructive CLI intent is explicit, and forged playground completion messages are rejected. The worker sandbox remains defense in depth rather than a general-purpose secure JavaScript VM.
 
+## Decision: separate public misses from stored null values
+
+[Decision Log]
+- 목적과 의도: Resolve issue #90 in the v4 boundary so callers can distinguish an absent cache entry from an intentionally cached `null` without requiring entry metadata.
+- 기존 구현 및 제약 조건: Public reads and low-level `CacheLayer` reads both used `null` for a miss. Version 3 added opt-in null caching, but ordinary `get()` and `getOrThrow()` still could not consistently distinguish a stored null from absence. Existing third-party layers implement the documented `null` miss contract.
+- 검토한 주요 대안: Change every layer to return `undefined`; return a discriminated result object from all reads; retain `null` misses and require `getEntry()`; translate only the public stack and namespace boundary.
+- 선택한 방식: Keep the internal `CacheLayer` contract unchanged, translate public misses and empty entries to `undefined`, cache fetched `null` values by default, and make `getOrThrow()` throw only for `undefined`. `getEntry()` retains its metadata-oriented null-on-no-entry contract.
+- 다른 대안 대신 이 방식을 선택한 이유: Public translation delivers idiomatic JavaScript miss semantics without breaking custom storage adapters or forcing result wrappers onto the common read path. Default null caching makes the two public values stable and unambiguous.
+- 장점, 단점 및 영향: Public code can test `value === undefined` and safely use stored nulls. This is intentionally breaking for callers that test `=== null` on misses; fetchers that use null as absence must set `cacheNullValues: false`. Serializer-specific undefined behavior remains documented because undefined itself is never stored as a cache value.
+
+## Decision: validate snapshots against a stable logical and real base
+
+[Decision Log]
+- 목적과 의도: Allow a configured snapshot base reached through a trusted symlink while still rejecting path escapes or parent substitution during commit.
+- 기존 구현 및 제약 조건: Comparing only lexical paths rejected legitimate symlinked base directories, while trusting only a precomputed real path could miss a changed logical mapping before rename.
+- 검토한 주요 대안: Reject every symlink in the base path; compare lexical paths only; compare real paths only; retain both the configured logical base and its resolved real base and revalidate at commit time.
+- 선택한 방식: Resolve and retain the logical-to-real base mapping, validate the target under both boundaries, and repeat parent validation immediately before the atomic rename.
+- 다른 대안 대신 이 방식을 선택한 이유: Dual validation supports common deployment layouts without weakening the time-of-check boundary. Lexical-only or real-only checks each omit one half of the intended trust decision.
+- 장점, 단점 및 영향: Symlinked deployment roots work cross-platform and target-parent swaps remain rejected. Snapshot commits perform additional filesystem resolution, and operators must keep the configured base mapping stable for the duration of a save.
+
 ## Verification and operations
 
 Use the same gates as CI and the release package:

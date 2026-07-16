@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-07-16
+
+### Breaking
+
+- Public `CacheStack`, namespace, `wrap()`, `getOrSet()`, and `mget()` reads now return `undefined` for misses and negative-cache entries instead of `null`, resolving issue #90.
+- Read-through fetchers now cache `null` as a regular value by default, and `getOrThrow()` returns stored nulls while throwing only for `undefined`. Set `cacheNullValues: false` when null represents absence.
+- Automatically derived structured `wrap()` keys use the `j2:` schema, so old `j:` entries become cold misses and expire naturally.
+- Write coordination and generation cleanup now apply finite default limits and can reject saturated work with `CacheWriteSaturationError`.
+
 ### Security
 
 - Fixed implicit Express/Hono private URL caching so requests containing sensitive query parameters, including OAuth `client_secret` and client assertions, bypass implicit URL-only caching unless a custom `keyResolver` is supplied.
@@ -27,11 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Updated API, migration, resilience, integration, architecture-decision, and security documentation for the finite cleanup/write limits, structured-key rotation, HTTP credential handling, CLI guard, and playground isolation boundary.
+- Updated Vite and related development-only transitive dependencies to resolve the release audit finding.
+- Updated API, migration, serialization, resilience, integration, architecture-decision, and security documentation for v4 miss/null semantics, finite cleanup/write limits, structured-key rotation, HTTP credential handling, CLI guard, and playground isolation boundary.
 
 ### Tests
 
-- Added regression coverage for all security fixes and hardening changes. The coverage suite reports 665 passing tests and 24 skipped tests; the real Redis integration suite adds 25 passing tests.
+- Added regression coverage for all security fixes and hardening changes, including shared drain-timer preemption, disposal of queued rate-limited work, epoch rollover, empty serialized writes, symlinked snapshot bases, and serializer undefined behavior. The unit suite reports 672 passing tests and 24 skipped tests; the real Redis integration suite adds 25 passing tests.
 - Added docs-web content assertions for the updated security-sensitive documentation.
 
 ## [3.1.1] — 2026-06-14

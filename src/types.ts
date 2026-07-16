@@ -76,9 +76,9 @@ export interface CacheContextOptionsContext {
 
 /** Options accepted by write operations and read-through fetch writes. */
 export interface CacheWriteOptions extends CacheEntryWriteOptions {
-  /** Cache `null` fetcher results using `negativeTtl` instead of treating them as misses. */
+  /** Cache `undefined` results, and `null` when `cacheNullValues` is false, as empty entries. */
   negativeCache?: boolean
-  /** Cache `null` fetcher results as regular values instead of negative/empty entries. */
+  /** Cache `null` fetcher results as regular values. Defaults to true in v4. */
   cacheNullValues?: boolean
   /** Extend a key's TTL on fresh reads. */
   slidingTtl?: boolean
@@ -394,9 +394,9 @@ export interface CacheStackOptions {
    * @deprecated Use `broadcastL1Invalidation` instead.
    */
   publishSetInvalidation?: boolean
-  /** Cache null fetcher results as negative entries. */
+  /** Cache absence-like fetcher results as negative entries. */
   negativeCaching?: boolean
-  /** Cache null fetcher results as regular values instead of negative/empty entries. */
+  /** Cache null fetcher results as regular values. Defaults to true in v4. */
   cacheNullValues?: boolean
   /** Default negative-cache TTL in milliseconds. */
   negativeTtl?: number | LayerTtlMap
@@ -692,7 +692,7 @@ export interface CacheStackEvents {
     name: string
     attributes?: Record<string, unknown>
     success: boolean
-    result?: 'null'
+    result?: 'null' | 'undefined'
     error?: unknown
   }
   /** Fired when an error occurs (layer failure, circuit breaker, etc.). */

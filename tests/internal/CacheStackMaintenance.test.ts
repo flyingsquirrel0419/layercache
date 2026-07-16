@@ -288,6 +288,9 @@ describe('CacheStackMaintenance', () => {
   })
 
   it('rejects retained writes at global, active-key, and per-key admission limits', async () => {
+    const direct = new CacheStackMaintenance()
+    await expect(direct.runSerializedWrites([], async () => 'unkeyed')).resolves.toBe('unkeyed')
+
     let releaseActive!: () => void
     const activeGate = new Promise<void>((resolve) => {
       releaseActive = resolve
@@ -417,6 +420,24 @@ describe('CacheStackMaintenance', () => {
 
       expect(maintenance.currentKeyEpoch('victim')).not.toBe(victimEpoch)
       expect(maintenance.isWriteOutdated('victim', maintenance.currentClearEpoch(), victimEpoch)).toBe(true)
+    })
+
+    it('advances the clear epoch before the monotonic key token can wrap', () => {
+      const maintenance = new CacheStackMaintenance()
+      const internals = maintenance as unknown as {
+        nextKeyEpoch: number
+        keyEpochs: Map<string, number>
+      }
+      maintenance.bumpKeyEpochs(['before-rollover'])
+      const clearEpoch = maintenance.currentClearEpoch()
+      internals.nextKeyEpoch = Number.MAX_SAFE_INTEGER
+
+      maintenance.bumpKeyEpochs(['after-rollover'])
+
+      expect(maintenance.currentClearEpoch()).toBe(clearEpoch + 1)
+      expect(internals.keyEpochs.size).toBe(1)
+      expect(maintenance.currentKeyEpoch('before-rollover')).toBe(0)
+      expect(maintenance.currentKeyEpoch('after-rollover')).toBe(1)
     })
   })
 

@@ -19,8 +19,8 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
-  <img src="https://img.shields.io/badge/tests-601_passing-brightgreen" alt="tests">
-  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260517" alt="Coveralls"></a>
+  <img src="https://img.shields.io/badge/tests-672_passing-brightgreen" alt="tests">
+  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260716" alt="Coveralls"></a>
 </p>
 
 <p align="center">
@@ -50,6 +50,10 @@ const results = await Promise.all(
 ```
 
 layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stampede prevention, tag invalidation, and distributed consistency are built in — no extra config required.
+
+### Version 4.0
+
+Public reads now return `undefined` on cache miss while preserving an intentional cached `null`. Read-through fetchers cache `null` by default, and `getOrThrow()` throws only for `undefined`. See the [4.0 migration guide](./docs/migration-guide.md#upgrading-to-40) before upgrading.
 
 ---
 
@@ -262,7 +266,7 @@ const cache = new CacheStack([
 | **Namespaces** | Scoped cache views with hierarchical prefix support |
 | **Cache warming** | Pre-populate layers at startup with priority-based loading |
 | **Negative caching** | Cache misses (e.g., "user not found") for short TTLs |
-| **Stored null values** | `cacheNullValues` keeps intentional `null` values distinct from misses |
+| **Stored null values** | Intentional `null` values are cached by default and remain distinct from `undefined` misses |
 | **Entry introspection** | `getEntry()` reports value, kind, state, key, and source layer |
 
 ### Invalidation & Freshness

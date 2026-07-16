@@ -68,7 +68,7 @@ export function createTrpcCacheMiddleware<TInput = unknown, TResult = unknown, T
       cacheOptions
     )
 
-    if (cached !== null) {
+    if (cached !== undefined) {
       return cached
     }
 

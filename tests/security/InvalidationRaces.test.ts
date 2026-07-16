@@ -50,7 +50,7 @@ describe('invalidation race regressions', () => {
     layer.releaseSet.resolve()
     await write
 
-    await expect(cache.get('authorization:user-1')).resolves.toBeNull()
+    await expect(cache.get('authorization:user-1')).resolves.toBeUndefined()
   })
 
   it('does not persist a foreground fetch completed after invalidation', async () => {
@@ -69,6 +69,6 @@ describe('invalidation race regressions', () => {
     await cache.delete('authorization:user-2')
     releaseFetch.resolve()
     await expect(request).resolves.toBe('allowed')
-    await expect(cache.get('authorization:user-2')).resolves.toBeNull()
+    await expect(cache.get('authorization:user-2')).resolves.toBeUndefined()
   })
 })

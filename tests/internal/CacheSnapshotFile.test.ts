@@ -27,6 +27,24 @@ describe('CacheSnapshotFile', () => {
     }
   })
 
+  it('maps a symlinked logical snapshot base onto its real directory', async () => {
+    const physicalBase = await mkdtemp(join(tmpdir(), 'layercache-snapshot-physical-'))
+    const logicalParent = await mkdtemp(join(tmpdir(), 'layercache-snapshot-logical-'))
+    const logicalBase = join(logicalParent, 'cache')
+    const logicalFile = join(logicalBase, 'nested', 'snapshot.json')
+    const realFile = join(await realpath(physicalBase), 'nested', 'snapshot.json')
+
+    try {
+      await symlink(physicalBase, logicalBase, 'dir')
+      await expect(validateSnapshotFilePath(logicalFile, 'write', logicalBase)).resolves.toBe(realFile)
+      await writeFile(logicalFile, '[]', 'utf8')
+      await expect(validateSnapshotFilePath(logicalFile, 'read', logicalBase)).resolves.toBe(realFile)
+    } finally {
+      await rm(logicalParent, { recursive: true, force: true })
+      await rm(physicalBase, { recursive: true, force: true })
+    }
+  })
+
   it('allows write validation when the existing target is a regular file', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-existing-file-'))
     const filePath = join(dir, 'snapshot.json')

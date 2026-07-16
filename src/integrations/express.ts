@@ -75,7 +75,7 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
       const key = options.keyResolver ? options.keyResolver(req) : `${method}:${normalizeHttpCacheUrl(rawUrl)}`
 
       const cached = await cache.get<unknown>(key, undefined, options)
-      if (cached !== null) {
+      if (cached !== undefined) {
         res.setHeader?.('content-type', 'application/json; charset=utf-8')
         res.setHeader?.('x-cache', 'HIT')
         if (res.json) {

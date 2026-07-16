@@ -37,13 +37,13 @@ type ReadMode = 'allow-stale' | 'fresh-only'
 type ReadHit<T> =
   | {
       found: true
-      value: T | null
+      value: T | undefined
       stored: unknown
       state: 'fresh' | 'stale-while-revalidate' | 'stale-if-error'
       layerIndex: number
       layerName: string
     }
-  | { found: false; value: null; stored: null; state: 'miss' }
+  | { found: false; value: undefined; stored: null; state: 'miss' }
 
 interface CacheStackReaderOptions {
   // Direct service objects
@@ -118,7 +118,11 @@ export class CacheStackReader {
     return this.backgroundRefreshes.size
   }
 
-  async getPrepared<T>(normalizedKey: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
+  async getPrepared<T>(
+    normalizedKey: string,
+    fetcher?: CacheFetcher<T>,
+    options?: CacheGetOptions
+  ): Promise<T | undefined> {
     const operationFence = {
       clearEpoch: this.options.maintenance.currentClearEpoch(),
       keyEpoch: this.options.maintenance.currentKeyEpoch(normalizedKey)
@@ -176,7 +180,7 @@ export class CacheStackReader {
 
     this.options.metricsCollector.increment('misses')
     if (!fetcher) {
-      return null
+      return undefined
     }
 
     return this.fetchWithGuards(
@@ -328,7 +332,7 @@ export class CacheStackReader {
       })
       return {
         found: true,
-        value: resolved.value,
+        value: this.isNegativeStoredValue(stored) ? undefined : (resolved.value as T),
         stored,
         state: resolved.state,
         layerIndex: index,
@@ -342,7 +346,7 @@ export class CacheStackReader {
 
     this.options.logger.debug?.('miss', { key, mode })
     this.options.emit('miss', { key, mode })
-    return { found: false, value: null, stored: null, state: 'miss' }
+    return { found: false, value: undefined, stored: null, state: 'miss' }
   }
 
   private async fetchWithGuards<T>(
@@ -357,10 +361,10 @@ export class CacheStackReader {
       currentValue: undefined,
       state: 'miss'
     }
-  ): Promise<T | null> {
+  ): Promise<T | undefined> {
     const clearEpoch = expectedClearEpoch ?? this.options.maintenance.currentClearEpoch()
     const keyEpoch = expectedKeyEpoch ?? this.options.maintenance.currentKeyEpoch(key)
-    const fetchTask = async (): Promise<T | null> => {
+    const fetchTask = async (): Promise<T | undefined> => {
       const shouldRecheckFreshLayers = !(initialMissConfirmed && this.options.singleFlightCoordinator)
       if (shouldRecheckFreshLayers) {
         const secondHit = await this.readFromLayers<T>(key, options, 'fresh-only')
@@ -373,7 +377,7 @@ export class CacheStackReader {
       return this.fetchAndPopulate(key, fetcher, options, clearEpoch, keyEpoch, fetcherContext)
     }
 
-    const singleFlightTask = async (): Promise<T | null> => {
+    const singleFlightTask = async (): Promise<T | undefined> => {
       if (!this.options.singleFlightCoordinator) {
         return fetchTask()
       }
@@ -424,7 +428,7 @@ export class CacheStackReader {
     },
     deadline?: number,
     coordinatorRetries = 0
-  ): Promise<T | null> {
+  ): Promise<T | undefined> {
     const timeoutMs = this.options.singleFlightTimeoutMs ?? DEFAULT_SINGLE_FLIGHT_TIMEOUT_MS
     const pollIntervalMs = this.options.singleFlightPollMs ?? DEFAULT_SINGLE_FLIGHT_POLL_MS
     const operationDeadline = deadline ?? Date.now() + timeoutMs
@@ -486,7 +490,7 @@ export class CacheStackReader {
       currentValue: undefined,
       state: 'miss'
     }
-  ): Promise<T | null> {
+  ): Promise<T | undefined> {
     const circuitBreakerOptions = options?.circuitBreaker ?? this.options.circuitBreaker
     const breakerKey = this.resolveCircuitBreakerKey(key, circuitBreakerOptions)
     this.options.circuitBreakerManager.assertClosed(breakerKey, circuitBreakerOptions)
@@ -511,7 +515,7 @@ export class CacheStackReader {
 
     if (fetched === undefined || (fetched === null && !this.shouldCacheNullValues(options))) {
       if (!this.shouldNegativeCache(options)) {
-        return null
+        return undefined
       }
 
       if (this.options.maintenance.isWriteOutdated(key, expectedClearEpoch, expectedKeyEpoch)) {
@@ -522,14 +526,14 @@ export class CacheStackReader {
           expectedKeyEpoch,
           keyEpoch: this.options.maintenance.currentKeyEpoch(key)
         })
-        return null
+        return undefined
       }
 
       await this.options.storeEntry(key, 'empty', null, options, {
         clearEpoch: expectedClearEpoch ?? this.options.maintenance.currentClearEpoch(),
         keyEpoch: expectedKeyEpoch ?? this.options.maintenance.currentKeyEpoch(key)
       })
-      return null
+      return undefined
     }
 
     // Conditional caching: skip storage if shouldCache returns false
@@ -716,7 +720,7 @@ export class CacheStackReader {
   private createFetcherContext<T>(key: string, hit: Extract<ReadHit<T>, { found: true }>): CacheFetcherContext<T> {
     return {
       key,
-      currentValue: hit.value === null ? undefined : hit.value,
+      currentValue: hit.value,
       state: hit.state,
       layer: hit.layerName
     }
@@ -736,7 +740,7 @@ export class CacheStackReader {
   }
 
   private shouldCacheNullValues(options?: CacheGetOptions): boolean {
-    return options?.cacheNullValues ?? this.options.cacheNullValues ?? false
+    return options?.cacheNullValues ?? this.options.cacheNullValues ?? true
   }
 
   private isNegativeStoredValue(stored: unknown): boolean {
