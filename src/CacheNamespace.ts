@@ -45,14 +45,14 @@ export class CacheNamespace {
    * Reads a key inside this namespace and optionally runs a read-through fetcher
    * on miss or refresh.
    */
-  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
+  async get<T>(key: string, fetcher?: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | undefined> {
     return this.trackMetrics(() => this.cache.get(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
   /**
    * Alias for `get(key, fetcher, options)` that makes the get-or-set behavior explicit.
    */
-  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | null> {
+  async getOrSet<T>(key: string, fetcher: CacheFetcher<T>, options?: CacheGetOptions): Promise<T | undefined> {
     return this.trackMetrics(() => this.cache.getOrSet(this.qualify(key), fetcher, this.qualifyGetOptions(options)))
   }
 
@@ -146,13 +146,13 @@ export class CacheNamespace {
    * Clears all keys in this namespace by invalidating the namespace prefix.
    */
   async clear(): Promise<void> {
-    await this.trackMetrics(() => this.cache.invalidateByPrefix(this.prefix))
+    await this.trackMetrics(() => this.cache.invalidateByPrefix(this.namespaceKeyPrefix()))
   }
 
   /**
    * Reads many namespaced keys concurrently.
    */
-  async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | null>> {
+  async mget<T>(entries: CacheMGetEntry<T>[]): Promise<Array<T | undefined>> {
     return this.trackMetrics(() =>
       this.cache.mget(
         entries.map((entry) => ({
@@ -269,7 +269,7 @@ export class CacheNamespace {
     keyPrefix: string,
     fetcher: (...args: TArgs) => Promise<TResult>,
     options?: CacheWrapOptions<TArgs>
-  ): (...args: TArgs) => Promise<TResult | null> {
+  ): (...args: TArgs) => Promise<TResult | undefined> {
     return this.cache.wrap(`${this.prefix}:${keyPrefix}`, fetcher, this.qualifyWrapOptions(options))
   }
 
@@ -320,6 +320,10 @@ export class CacheNamespace {
    */
   qualify(key: string): string {
     return `${this.prefix}:${key}`
+  }
+
+  private namespaceKeyPrefix(): string {
+    return `${this.prefix}:`
   }
 
   private qualifyTag(tag: string): string {

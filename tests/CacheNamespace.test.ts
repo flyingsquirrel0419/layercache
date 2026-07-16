@@ -32,7 +32,7 @@ describe('CacheNamespace', () => {
     const ns = cache.namespace('orders')
     await ns.set('1', { total: 100 })
     await ns.delete('1')
-    expect(await ns.get('1')).toBeNull()
+    expect(await ns.get('1')).toBeUndefined()
   })
 
   it('mdelete removes multiple qualified keys', async () => {
@@ -41,8 +41,8 @@ describe('CacheNamespace', () => {
     await ns.set('1', 'a')
     await ns.set('2', 'b')
     await ns.mdelete(['1', '2'])
-    expect(await ns.get('1')).toBeNull()
-    expect(await ns.get('2')).toBeNull()
+    expect(await ns.get('1')).toBeUndefined()
+    expect(await ns.get('2')).toBeUndefined()
   })
 
   it('invalidates exact keys within the namespace only', async () => {
@@ -55,12 +55,12 @@ describe('CacheNamespace', () => {
     await tenantB.set('user:1', { id: 2 })
 
     await tenantA.invalidateByKey('user:1')
-    await expect(tenantA.get('user:1')).resolves.toBeNull()
+    await expect(tenantA.get('user:1')).resolves.toBeUndefined()
     await expect(tenantA.get('user:1:posts')).resolves.toEqual([{ id: 9 }])
     await expect(tenantB.get('user:1')).resolves.toEqual({ id: 2 })
 
     await tenantA.invalidateByKeys(['user:1:posts'])
-    await expect(tenantA.get('user:1:posts')).resolves.toBeNull()
+    await expect(tenantA.get('user:1:posts')).resolves.toBeUndefined()
   })
 
   it('expires exact keys within the namespace only', async () => {
@@ -103,8 +103,22 @@ describe('CacheNamespace', () => {
     await ns1.set('k', 1)
     await ns2.set('k', 2)
     await ns1.clear()
-    expect(await ns1.get('k')).toBeNull()
+    expect(await ns1.get('k')).toBeUndefined()
     expect(await ns2.get('k')).toBe(2)
+  })
+
+  it('clear() does not remove overlapping sibling namespace prefixes', async () => {
+    const cache = makeCache()
+    const nsA = cache.namespace('a')
+    const nsAB = cache.namespace('ab')
+
+    await nsA.set('k', 1)
+    await nsAB.set('k', 2)
+
+    await nsA.clear()
+
+    expect(await nsA.get('k')).toBeUndefined()
+    expect(await nsAB.get('k')).toBe(2)
   })
 
   it('mget returns values for multiple keys', async () => {
@@ -112,7 +126,7 @@ describe('CacheNamespace', () => {
     await ns.set('a', 1)
     await ns.set('b', 2)
     const results = await ns.mget([{ key: 'a' }, { key: 'b' }, { key: 'c' }])
-    expect(results).toEqual([1, 2, null])
+    expect(results).toEqual([1, 2, undefined])
   })
 
   it('mset stores multiple values', async () => {
@@ -180,7 +194,7 @@ describe('CacheNamespace', () => {
 
     await tenantA.invalidateByTag('user')
 
-    await expect(tenantA.get('user:1')).resolves.toBeNull()
+    await expect(tenantA.get('user:1')).resolves.toBeUndefined()
     await expect(tenantB.get('user:1')).resolves.toEqual({ id: 2 })
   })
 
@@ -310,11 +324,11 @@ describe('CacheNamespace', () => {
     await posts.set('2', { id: 2 }, { tags: ['draft'] })
 
     await posts.invalidateByTags(['published', 'feed'], 'all')
-    await expect(posts.get('1')).resolves.toBeNull()
+    await expect(posts.get('1')).resolves.toBeUndefined()
     await expect(posts.get('2')).resolves.toEqual({ id: 2 })
 
     await posts.invalidateByPattern('*')
-    await expect(posts.get('2')).resolves.toBeNull()
+    await expect(posts.get('2')).resolves.toBeUndefined()
   })
 
   it('supports nested namespaces plus expireByTags and expireByPattern', async () => {
@@ -343,8 +357,8 @@ describe('CacheNamespace', () => {
     await ns.set('prefix:a', 1)
     await ns.set('prefix:b', 2)
     await ns.invalidateByPrefix('prefix:')
-    await expect(ns.get('prefix:a')).resolves.toBeNull()
-    await expect(ns.get('prefix:b')).resolves.toBeNull()
+    await expect(ns.get('prefix:a')).resolves.toBeUndefined()
+    await expect(ns.get('prefix:b')).resolves.toBeUndefined()
   })
 
   it('throws CacheMissError through namespace getOrThrow and validates prefixes', async () => {

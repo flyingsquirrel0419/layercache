@@ -112,8 +112,8 @@ describe('CacheStack', () => {
     await cache.set('user:1:posts', [{ id: 9 }], { tags: ['user', 'user:1'] })
     await cache.invalidateByTag('user:1')
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
-    await expect(cache.get('user:1:posts')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
+    await expect(cache.get('user:1:posts')).resolves.toBeUndefined()
   })
 
   it('expires tagged entries without deleting stale values', async () => {
@@ -148,12 +148,12 @@ describe('CacheStack', () => {
     ])
 
     await cache.invalidateByKey('user:1')
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
     await expect(cache.get('user:1:posts')).resolves.toEqual([{ id: 9 }])
 
     await cache.invalidateByKeys(['user:1:posts', 'post:1'])
-    await expect(cache.get('user:1:posts')).resolves.toBeNull()
-    await expect(cache.get('post:1')).resolves.toBeNull()
+    await expect(cache.get('user:1:posts')).resolves.toBeUndefined()
+    await expect(cache.get('post:1')).resolves.toBeUndefined()
   })
 
   it('expires exact keys without deleting stale values or touching similarly prefixed keys', async () => {
@@ -260,8 +260,8 @@ describe('CacheStack', () => {
     ])
     await cache.invalidateByPattern('user:*')
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
-    await expect(cache.get('user:2')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
+    await expect(cache.get('user:2')).resolves.toBeUndefined()
     await expect(cache.get('post:1')).resolves.toEqual({ id: 1 })
   })
 
@@ -400,6 +400,7 @@ describe('CacheStack', () => {
 
     await cache.set('stored-null', null)
     await expect(cache.get('stored-null')).resolves.toBeNull()
+    await expect(cache.getOrThrow<null>('stored-null')).resolves.toBeNull()
     await expect(cache.getEntry('stored-null')).resolves.toEqual(
       expect.objectContaining({
         key: 'stored-null',
@@ -410,7 +411,7 @@ describe('CacheStack', () => {
       })
     )
 
-    await cache.get('negative-null', async () => null, { negativeCache: true })
+    await cache.get('negative-null', async () => null, { negativeCache: true, cacheNullValues: false })
     await expect(cache.getEntry('negative-null')).resolves.toEqual(
       expect.objectContaining({
         key: 'negative-null',
@@ -420,6 +421,19 @@ describe('CacheStack', () => {
       })
     )
     await expect(cache.getEntry('missing')).resolves.toBeNull()
+    await expect(cache.get('missing')).resolves.toBeUndefined()
+    await expect(cache.getOrThrow('missing')).rejects.toThrow(/cache miss/i)
+  })
+
+  it('uses undefined for public misses while caching null fetch results by default', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
+    const fetcher = vi.fn(async () => null)
+
+    await expect(cache.get('missing')).resolves.toBeUndefined()
+    await expect(cache.get('nullable', fetcher)).resolves.toBeNull()
+    await expect(cache.get('nullable', fetcher)).resolves.toBeNull()
+    expect(fetcher).toHaveBeenCalledOnce()
+    await expect(cache.mget([{ key: 'nullable' }, { key: 'missing' }])).resolves.toEqual([null, undefined])
   })
 
   it('getEntry records read side effects and backfills faster layers', async () => {
@@ -627,7 +641,7 @@ describe('CacheStack', () => {
       gracefulDegradation: true
     })
 
-    await expect(cache.get('missing')).resolves.toBeNull()
+    await expect(cache.get('missing')).resolves.toBeUndefined()
     expect(cache.getStats().layers.find((layer) => layer.name === 'degraded-sliding')?.degradedUntil).not.toBeNull()
 
     await healthyLayer.set(
@@ -709,8 +723,8 @@ describe('CacheStack', () => {
 
     await cacheA.invalidateByTag('user:1')
 
-    await expect(cacheA.get('user:1')).resolves.toBeNull()
-    await expect(cacheB.get('user:1:posts')).resolves.toBeNull()
+    await expect(cacheA.get('user:1')).resolves.toBeUndefined()
+    await expect(cacheB.get('user:1:posts')).resolves.toBeUndefined()
     await expect(memoryB.get('user:1')).resolves.toBeNull()
 
     await Promise.all([cacheA.disconnect(), cacheB.disconnect()])
@@ -832,7 +846,7 @@ describe('CacheStack', () => {
     await cache.set('session:1', { id: 1 }, { tags: ['session'] })
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
-    await expect(cache.get('session:1')).resolves.toBeNull()
+    await expect(cache.get('session:1')).resolves.toBeUndefined()
     await cache.invalidateByTag('session')
 
     expect(cache.getMetrics().deletes).toBe(0)

@@ -1,38 +1,42 @@
-type CacheOperationOptions =
-  | number
-  | {
-      ttl?: number;
-      staleWhileRevalidate?: number;
-      tags?: string[];
-      negativeCache?: boolean;
-      cacheNullValues?: boolean;
-      circuitBreaker?: {
-        failureThreshold?: number;
-        cooldownMs?: number;
-        scope?: "key" | "shared";
-        breakerKey?: string;
-      };
-      shouldCache?: (value: unknown) => boolean;
-    };
+export const blockedPlaygroundWorkerGlobals = [
+  "self",
+  "globalThis",
+  "fetch",
+  "postMessage",
+  "importScripts",
+  "Worker",
+  "XMLHttpRequest",
+  "Function",
+  "eval",
+] as const;
 
-type PlaygroundCacheOptions = {
-  generation?: number;
-  onLog?: (message: string) => void;
+export type PlaygroundWorkerMessage = {
+  type?: unknown;
+  messageToken?: unknown;
 };
 
-type CacheEntryState = "fresh" | "stale-while-revalidate";
-type CacheEntryKind = "value" | "empty";
+export function isTrustedPlaygroundWorkerMessage(
+  message: PlaygroundWorkerMessage,
+  messageToken: string
+): boolean {
+  return message.messageToken === messageToken;
+}
 
-type CacheEntry = {
-  value: unknown;
-  kind: CacheEntryKind;
-  freshUntil: number;
-  expiresAt: number;
-};
+export function createPlaygroundWorkerSource(): string {
+  return `
+(() => {
+const blockedPlaygroundWorkerGlobals = ${JSON.stringify(blockedPlaygroundWorkerGlobals)};
+// Keep the token-bearing sender lexical: user code runs through Function(),
+// which can reach worker globals even when those globals are shadowed.
+const originalPostMessage = self.postMessage.bind(self);
 
-const DEFAULT_TTL_MS = 60_000;
+function sendTrusted(messageToken, message) {
+  originalPostMessage({ ...message, messageToken });
+}
 
-function resolveOperationOptions(options: CacheOperationOptions = DEFAULT_TTL_MS) {
+const DEFAULT_TTL_MS = 60000;
+
+function resolveOperationOptions(options = DEFAULT_TTL_MS) {
   if (typeof options === "number") {
     return {
       ttlMs: options,
@@ -56,23 +60,19 @@ function resolveOperationOptions(options: CacheOperationOptions = DEFAULT_TTL_MS
   };
 }
 
-// Simple in-memory cache layer mock
-export class MockCacheLayer {
-  private store = new Map<string, CacheEntry>();
-  readonly name: string;
-  readonly latencyMs: number;
-
-  constructor(name: string, latencyMs: number) {
+class MockCacheLayer {
+  constructor(name, latencyMs) {
+    this.store = new Map();
     this.name = name;
     this.latencyMs = latencyMs;
   }
 
-  async get(key: string): Promise<unknown> {
+  async get(key) {
     const entry = await this.getEntry(key);
     return entry?.state === "fresh" ? entry.value : undefined;
   }
 
-  async getEntry(key: string): Promise<{ value: unknown; kind: CacheEntryKind; state: CacheEntryState } | undefined> {
+  async getEntry(key) {
     await this.simulateLatency();
     const entry = this.store.get(key);
     if (!entry) return undefined;
@@ -90,24 +90,18 @@ export class MockCacheLayer {
     };
   }
 
-  async set(
-    key: string,
-    value: unknown,
-    ttlMs: number,
-    staleWhileRevalidateMs = 0,
-    kind: CacheEntryKind = "value"
-  ): Promise<void> {
+  async set(key, value, ttlMs, staleWhileRevalidateMs = 0, kind = "value") {
     await this.simulateLatency();
     const freshUntil = Date.now() + ttlMs;
     this.store.set(key, { value, kind, freshUntil, expiresAt: freshUntil + staleWhileRevalidateMs });
   }
 
-  async delete(key: string): Promise<boolean> {
+  async delete(key) {
     await this.simulateLatency();
     return this.store.delete(key);
   }
 
-  async expire(key: string): Promise<boolean> {
+  async expire(key) {
     await this.simulateLatency();
     const entry = this.store.get(key);
     if (!entry) return false;
@@ -116,22 +110,22 @@ export class MockCacheLayer {
     return true;
   }
 
-  async clear(): Promise<void> {
+  async clear() {
     await this.simulateLatency();
     this.store.clear();
   }
 
-  size(): number {
+  size() {
     this.pruneExpired();
     return this.store.size;
   }
 
-  keys(): string[] {
+  keys() {
     this.pruneExpired();
     return Array.from(this.store.keys());
   }
 
-  private pruneExpired() {
+  pruneExpired() {
     const now = Date.now();
     for (const [key, entry] of this.store) {
       if (now > entry.expiresAt) {
@@ -140,76 +134,65 @@ export class MockCacheLayer {
     }
   }
 
-  private simulateLatency(): Promise<void> {
+  simulateLatency() {
     return new Promise((resolve) => setTimeout(resolve, this.latencyMs));
   }
 }
 
-// Mock CacheStack that simulates the real behavior
-export class MockCacheStack {
-  private layers: MockCacheLayer[];
-  private tags = new Map<string, Set<string>>(); // tag -> keys
-  private keyTags = new Map<string, Set<string>>(); // key -> tags
-  private stats = {
-    hits: 0,
-    misses: 0,
-    sets: 0,
-    deletes: 0,
-    backfills: 0,
-    staleHits: 0,
-    refreshes: 0,
-    negativeCacheHits: 0,
-    circuitBreakerTrips: 0,
-  };
-  private inFlight = new Map<string, Promise<unknown>>();
-  private circuitBreakers = new Map<string, { failures: number; openUntil: number | null }>();
-  private generation: number | undefined;
-  private onLog?: (message: string) => void;
-
-  constructor(layers: MockCacheLayer[], options?: PlaygroundCacheOptions) {
+class MockCacheStack {
+  constructor(layers, options) {
     this.layers = layers;
+    this.tags = new Map();
+    this.keyTags = new Map();
+    this.stats = {
+      hits: 0,
+      misses: 0,
+      sets: 0,
+      deletes: 0,
+      backfills: 0,
+      staleHits: 0,
+      refreshes: 0,
+      negativeCacheHits: 0,
+      circuitBreakerTrips: 0,
+    };
+    this.inFlight = new Map();
+    this.circuitBreakers = new Map();
     this.generation = options?.generation;
     this.onLog = options?.onLog;
   }
 
-  async get<T>(
-    key: string,
-    fetcher?: (context: { key: string; currentValue: T | undefined; state: "miss" | "stale-while-revalidate" }) => Promise<T>,
-    options: CacheOperationOptions = DEFAULT_TTL_MS
-  ): Promise<T | undefined> {
+  async get(key, fetcher, options = DEFAULT_TTL_MS) {
     const operation = resolveOperationOptions(options);
     const storageKey = this.qualifyKey(key);
 
-    // Try each layer
     for (const [index, layer] of this.layers.entries()) {
       const entry = await layer.getEntry(storageKey);
       if (entry) {
         this.stats.hits++;
         if (entry.kind === "empty") {
           this.stats.negativeCacheHits++;
-          this.log(`[${layer.name}] NEGATIVE HIT for key "${storageKey}"`);
+          this.log("[" + layer.name + "] NEGATIVE HIT for key \\"" + storageKey + "\\"");
           return undefined;
         }
         if (entry.state === "stale-while-revalidate") {
           this.stats.staleHits++;
-          this.log(`[${layer.name}] STALE for key "${storageKey}"`);
+          this.log("[" + layer.name + "] STALE for key \\"" + storageKey + "\\"");
           if (fetcher) {
-            this.refreshStale(storageKey, key, entry.value as T, fetcher, operation);
+            this.refreshStale(storageKey, key, entry.value, fetcher, operation);
           }
         } else {
-          this.log(`[${layer.name}] HIT for key "${storageKey}"`);
+          this.log("[" + layer.name + "] HIT for key \\"" + storageKey + "\\"");
         }
         if (index > 0) {
-          await this.backfillUpperLayers(storageKey, entry.value as T, operation, index);
+          await this.backfillUpperLayers(storageKey, entry.value, operation, index);
         }
-        return entry.value as T;
+        return entry.value;
       }
     }
 
     this.stats.misses++;
-    this.log(`[MISS] Key "${storageKey}" not found in any layer`);
+    this.log("[MISS] Key \\"" + storageKey + "\\" not found in any layer");
 
-    // Stampede prevention: reuse in-flight fetcher for same key
     if (fetcher) {
       return this.fetchAndStore(storageKey, key, fetcher, operation);
     }
@@ -217,13 +200,7 @@ export class MockCacheStack {
     return undefined;
   }
 
-  async getEntry<T>(key: string): Promise<{
-    key: string;
-    value: T | null;
-    kind: CacheEntryKind;
-    state: "fresh" | "stale";
-    layer: string;
-  } | null> {
+  async getEntry(key) {
     const storageKey = this.qualifyKey(key);
 
     for (const [index, layer] of this.layers.entries()) {
@@ -231,12 +208,12 @@ export class MockCacheStack {
       if (!entry) continue;
 
       if (index > 0) {
-        await this.backfillUpperLayers(storageKey, entry.value as T, resolveOperationOptions(), index, entry.kind);
+        await this.backfillUpperLayers(storageKey, entry.value, resolveOperationOptions(), index, entry.kind);
       }
 
       return {
         key,
-        value: entry.value as T | null,
+        value: entry.value,
         kind: entry.kind,
         state: entry.state === "fresh" ? "fresh" : "stale",
         layer: layer.name,
@@ -246,17 +223,12 @@ export class MockCacheStack {
     return null;
   }
 
-  async set<T>(key: string, value: T, options: CacheOperationOptions = DEFAULT_TTL_MS): Promise<void> {
+  async set(key, value, options = DEFAULT_TTL_MS) {
     const operation = resolveOperationOptions(options);
     await this.storeInLayers(this.qualifyKey(key), value, operation);
   }
 
-  private async storeInLayers<T>(
-    key: string,
-    value: T,
-    operation: ReturnType<typeof resolveOperationOptions>,
-    kind: CacheEntryKind = "value"
-  ): Promise<void> {
+  async storeInLayers(key, value, operation, kind = "value") {
     this.stats.sets++;
     await Promise.all(
       this.layers.map((layer) => layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs, kind))
@@ -264,14 +236,13 @@ export class MockCacheStack {
     if (operation.tags) {
       this.trackTags(key, operation.tags);
     }
-    this.log(`[SET] Stored "${key}" in ${this.layers.length} layers`);
+    this.log("[SET] Stored \\"" + key + "\\" in " + this.layers.length + " layers");
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key) {
     const storageKey = this.qualifyKey(key);
     this.stats.deletes++;
     await Promise.all(this.layers.map((layer) => layer.delete(storageKey)));
-    // Clean up tags
     const keyTagSet = this.keyTags.get(storageKey);
     if (keyTagSet) {
       for (const tag of keyTagSet) {
@@ -279,71 +250,71 @@ export class MockCacheStack {
       }
       this.keyTags.delete(storageKey);
     }
-    this.log(`[DELETE] Removed "${storageKey}" from all layers`);
+    this.log("[DELETE] Removed \\"" + storageKey + "\\" from all layers");
   }
 
-  async invalidateByKey(key: string): Promise<void> {
+  async invalidateByKey(key) {
     await this.delete(key);
   }
 
-  async invalidateByKeys(keys: string[]): Promise<void> {
+  async invalidateByKeys(keys) {
     for (const key of keys) {
       await this.delete(key);
     }
   }
 
-  async expireByKey(key: string): Promise<void> {
+  async expireByKey(key) {
     const storageKey = this.qualifyKey(key);
     await Promise.all(this.layers.map((layer) => layer.expire(storageKey)));
-    this.log(`[EXPIRE] Marked "${storageKey}" stale in all layers`);
+    this.log("[EXPIRE] Marked \\"" + storageKey + "\\" stale in all layers");
   }
 
-  async expireByKeys(keys: string[]): Promise<void> {
+  async expireByKeys(keys) {
     for (const key of keys) {
       await this.expireByKey(key);
     }
   }
 
-  async invalidateByTag(tag: string): Promise<number> {
+  async invalidateByTag(tag) {
     const keys = this.tags.get(tag);
     if (!keys || keys.size === 0) return 0;
     const count = keys.size;
     for (const key of keys) {
       await this.delete(key);
     }
-    this.log(`[INVALIDATE] Removed ${count} keys with tag "${tag}"`);
+    this.log("[INVALIDATE] Removed " + count + " keys with tag \\"" + tag + "\\"");
     return count;
   }
 
-  async tag(key: string, ...tags: string[]): Promise<void> {
+  async tag(key, ...tags) {
     const storageKey = this.qualifyKey(key);
     this.trackTags(storageKey, tags);
-    this.log(`[TAG] Tagged "${storageKey}" with: ${tags.join(", ")}`);
+    this.log("[TAG] Tagged \\"" + storageKey + "\\" with: " + tags.join(", "));
   }
 
-  private trackTags(key: string, tags: string[]): void {
+  trackTags(key, tags) {
     if (!this.keyTags.has(key)) this.keyTags.set(key, new Set());
     for (const tag of tags) {
       if (!this.tags.has(tag)) this.tags.set(tag, new Set());
-      this.tags.get(tag)!.add(key);
-      this.keyTags.get(key)!.add(tag);
+      this.tags.get(tag).add(key);
+      this.keyTags.get(key).add(tag);
     }
   }
 
-  async warm(entries: Array<{ key: string; value: unknown; ttlMs?: number }>): Promise<void> {
+  async warm(entries) {
     for (const entry of entries) {
-      await this.set(entry.key, entry.value, entry.ttlMs ?? 60_000);
+      await this.set(entry.key, entry.value, entry.ttlMs ?? 60000);
     }
-    this.log(`[WARM] Warmed ${entries.length} keys`);
+    this.log("[WARM] Warmed " + entries.length + " keys");
   }
 
-  getGeneration(): number | undefined {
+  getGeneration() {
     return this.generation;
   }
 
-  bumpGeneration(nextGeneration = (this.generation ?? 0) + 1): number {
+  bumpGeneration(nextGeneration = (this.generation ?? 0) + 1) {
     this.generation = nextGeneration;
-    this.log(`[GENERATION] Active generation is now v${nextGeneration}`);
+    this.log("[GENERATION] Active generation is now v" + nextGeneration);
     return nextGeneration;
   }
 
@@ -355,42 +326,31 @@ export class MockCacheStack {
     return this.layers.map((l) => ({ name: l.name, latencyMs: l.latencyMs, size: l.size(), keys: l.keys() }));
   }
 
-  private log(message: string) {
+  log(message) {
     this.onLog?.(message);
   }
 
-  private qualifyKey(key: string): string {
-    return this.generation === undefined ? key : `v${this.generation}:${key}`;
+  qualifyKey(key) {
+    return this.generation === undefined ? key : "v" + this.generation + ":" + key;
   }
 
-  private async backfillUpperLayers<T>(
-    key: string,
-    value: T,
-    operation: ReturnType<typeof resolveOperationOptions>,
-    hitIndex: number,
-    kind: CacheEntryKind = "value"
-  ): Promise<void> {
+  async backfillUpperLayers(key, value, operation, hitIndex, kind = "value") {
     const upperLayers = this.layers.slice(0, hitIndex);
     await Promise.all(
       upperLayers.map((layer) => layer.set(key, value, operation.ttlMs, operation.staleWhileRevalidateMs, kind))
     );
     this.stats.backfills += upperLayers.length;
-    this.log(`[BACKFILL] Filled ${upperLayers.length} upper layer(s) for "${key}" in parallel`);
+    this.log("[BACKFILL] Filled " + upperLayers.length + " upper layer(s) for \\"" + key + "\\" in parallel");
   }
 
-  private async fetchAndStore<T>(
-    storageKey: string,
-    userKey: string,
-    fetcher: (context: { key: string; currentValue: T | undefined; state: "miss" }) => Promise<T>,
-    operation: ReturnType<typeof resolveOperationOptions>
-  ): Promise<T | undefined> {
+  async fetchAndStore(storageKey, userKey, fetcher, operation) {
     const existing = this.inFlight.get(storageKey);
     if (existing) {
-      this.log(`[STAMPEDE-PREVENT] Deduplicating request for "${storageKey}"`);
-      return existing as Promise<T | undefined>;
+      this.log("[STAMPEDE-PREVENT] Deduplicating request for \\"" + storageKey + "\\"");
+      return existing;
     }
 
-    this.log(`[FETCH] Calling fetcher for "${storageKey}"...`);
+    this.log("[FETCH] Calling fetcher for \\"" + storageKey + "\\"...");
     const fetchPromise = (async () => {
       const breakerKey = this.resolveCircuitBreakerKey(storageKey, operation.circuitBreaker);
 
@@ -404,7 +364,7 @@ export class MockCacheStack {
           const kind = value === null && operation.negativeCache && !operation.cacheNullValues ? "empty" : "value";
           await this.storeInLayers(storageKey, value, operation, kind);
           this.stats.backfills++;
-          this.log(`[BACKFILL] Stored "${storageKey}" in all layers`);
+          this.log("[BACKFILL] Stored \\"" + storageKey + "\\" in all layers");
         }
         return value;
       } catch (error) {
@@ -418,22 +378,16 @@ export class MockCacheStack {
     })();
 
     this.inFlight.set(storageKey, fetchPromise);
-    return fetchPromise as Promise<T | undefined>;
+    return fetchPromise;
   }
 
-  private refreshStale<T>(
-    storageKey: string,
-    userKey: string,
-    currentValue: T,
-    fetcher: (context: { key: string; currentValue: T | undefined; state: "stale-while-revalidate" }) => Promise<T>,
-    operation: ReturnType<typeof resolveOperationOptions>
-  ) {
+  refreshStale(storageKey, userKey, currentValue, fetcher, operation) {
     if (this.inFlight.has(storageKey)) {
-      this.log(`[SWR] Refresh already in progress for "${storageKey}"`);
+      this.log("[SWR] Refresh already in progress for \\"" + storageKey + "\\"");
       return;
     }
 
-    this.log(`[SWR] Serving stale "${storageKey}" while refreshing in background`);
+    this.log("[SWR] Serving stale \\"" + storageKey + "\\" while refreshing in background");
     this.stats.refreshes++;
 
     const refreshPromise = (async () => {
@@ -449,13 +403,13 @@ export class MockCacheStack {
           const kind = value === null && operation.negativeCache && !operation.cacheNullValues ? "empty" : "value";
           await this.storeInLayers(storageKey, value, operation, kind);
           this.stats.backfills++;
-          this.log(`[SWR] Refreshed "${storageKey}" in all layers`);
+          this.log("[SWR] Refreshed \\"" + storageKey + "\\" in all layers");
         }
       } catch (error) {
         if (!(error instanceof Error && error.message.startsWith("Circuit breaker is open"))) {
           this.recordCircuitFailure(breakerKey, operation.circuitBreaker);
         }
-        this.log(`[SWR] Refresh failed for "${storageKey}": ${error instanceof Error ? error.message : String(error)}`);
+        this.log("[SWR] Refresh failed for \\"" + storageKey + "\\": " + (error instanceof Error ? error.message : String(error)));
       } finally {
         this.inFlight.delete(storageKey);
       }
@@ -464,48 +418,131 @@ export class MockCacheStack {
     this.inFlight.set(storageKey, refreshPromise);
   }
 
-  private resolveCircuitBreakerKey(
-    key: string,
-    options: ReturnType<typeof resolveOperationOptions>["circuitBreaker"]
-  ): string {
-    if (!options) return `key:${key}`;
-    if (options.breakerKey) return `custom:${options.breakerKey}`;
+  resolveCircuitBreakerKey(key, options) {
+    if (!options) return "key:" + key;
+    if (options.breakerKey) return "custom:" + options.breakerKey;
     if (options.scope === "shared") return "scope:shared";
-    return `key:${key}`;
+    return "key:" + key;
   }
 
-  private assertCircuitClosed(breakerKey: string): void {
+  assertCircuitClosed(breakerKey) {
     const state = this.circuitBreakers.get(breakerKey);
     if (!state?.openUntil) return;
     if (state.openUntil <= Date.now()) {
       this.circuitBreakers.delete(breakerKey);
       return;
     }
-    throw new Error(`Circuit breaker is open for "${breakerKey}"`);
+    throw new Error("Circuit breaker is open for \\"" + breakerKey + "\\"");
   }
 
-  private recordCircuitFailure(
-    breakerKey: string,
-    options: ReturnType<typeof resolveOperationOptions>["circuitBreaker"]
-  ): void {
+  recordCircuitFailure(breakerKey, options) {
     if (!options) return;
     const state = this.circuitBreakers.get(breakerKey) ?? { failures: 0, openUntil: null };
     state.failures += 1;
     if (state.failures >= (options.failureThreshold ?? 3)) {
-      state.openUntil = Date.now() + (options.cooldownMs ?? 30_000);
+      state.openUntil = Date.now() + (options.cooldownMs ?? 30000);
       this.stats.circuitBreakerTrips++;
-      this.log(`[CIRCUIT-BREAKER] Opened "${breakerKey}"`);
+      this.log("[CIRCUIT-BREAKER] Opened \\"" + breakerKey + "\\"");
     }
     this.circuitBreakers.set(breakerKey, state);
   }
 }
 
-// Factory function to create a typical setup
-export function createPlaygroundCache(optionsOrLog?: PlaygroundCacheOptions | ((message: string) => void)) {
+function createPlaygroundCache(optionsOrLog) {
   const options = typeof optionsOrLog === "function" ? { onLog: optionsOrLog } : optionsOrLog;
   const memory = new MockCacheLayer("Memory", 1);
   const redis = new MockCacheLayer("Redis", 5);
   const disk = new MockCacheLayer("Disk", 20);
   const cache = new MockCacheStack([memory, redis, disk], options);
   return { cache, layers: { memory, redis, disk } };
+}
+
+function createPlaygroundSandbox(postLog) {
+  const { cache } = createPlaygroundCache((message) => {
+    postLog("cache", message);
+  });
+  let activeCache = cache;
+  const blockedGlobals = Object.fromEntries(blockedPlaygroundWorkerGlobals.map((name) => [name, undefined]));
+
+  const sandbox = {
+    cache,
+    createPlaygroundCache: (options = {}) => {
+      const instance = createPlaygroundCache({
+        ...options,
+        onLog: (msg) => postLog("cache", msg),
+      });
+      activeCache = instance.cache;
+      return instance;
+    },
+    console,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    Promise,
+    JSON,
+    Date,
+    Map,
+    Set,
+    Array,
+    Object,
+    Math,
+    Error,
+    TypeError,
+    RangeError,
+    ...blockedGlobals,
+  };
+
+  return {
+    sandbox,
+    getActiveCache: () => activeCache,
+  };
+}
+
+self.onmessage = async (event) => {
+  const { type, code, runId, messageToken } = event.data || {};
+  if (type !== "run" || typeof code !== "string" || typeof runId !== "string" || typeof messageToken !== "string") {
+    return;
+  }
+
+  const postLog = (type, message) => {
+    sendTrusted(messageToken, { type, message, timestamp: Date.now(), runId });
+  };
+
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args) => {
+    const message = args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+    postLog("log", message);
+  };
+  console.error = (...args) => {
+    const message = args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+    postLog("error", message);
+  };
+
+  try {
+    const { sandbox, getActiveCache } = createPlaygroundSandbox(postLog);
+    const asyncFn = new Function(
+      ...Object.keys(sandbox),
+      "return (async () => {\\n" + code + "\\n})();"
+    );
+
+    await asyncFn(...Object.values(sandbox));
+
+    sendTrusted(messageToken, {
+      type: "done",
+      layerInfo: getActiveCache().getLayerInfo(),
+      stats: getActiveCache().getStats(),
+      runId,
+    });
+  } catch (error) {
+    postLog("error", error instanceof Error ? error.message : String(error));
+    sendTrusted(messageToken, { type: "done", layerInfo: undefined, stats: undefined, runId });
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+};
+})();
+`;
 }

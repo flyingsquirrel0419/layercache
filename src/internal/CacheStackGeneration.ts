@@ -3,6 +3,7 @@ import type { CacheGenerationCleanupOptions } from '../types'
 type GenerationCleanupConfig = boolean | CacheGenerationCleanupOptions | undefined
 
 const DEFAULT_GENERATION_CLEANUP_BATCH_SIZE = 500
+const DEFAULT_GENERATION_CLEANUP_MAX_MATCHES = 10_000
 
 export function generationPrefix(generation: number | undefined): string {
   return generation === undefined ? '' : `v${generation}:`
@@ -48,6 +49,14 @@ export function resolveGenerationCleanupBatchSize(generationCleanup: GenerationC
   }
 
   return generationCleanup.batchSize ?? DEFAULT_GENERATION_CLEANUP_BATCH_SIZE
+}
+
+export function resolveGenerationCleanupMaxMatches(generationCleanup: GenerationCleanupConfig): number | false {
+  if (typeof generationCleanup !== 'object' || generationCleanup === null) {
+    return DEFAULT_GENERATION_CLEANUP_MAX_MATCHES
+  }
+
+  return generationCleanup.maxMatches ?? DEFAULT_GENERATION_CLEANUP_MAX_MATCHES
 }
 
 export function planGenerationCleanupBatches(keys: string[], generationCleanup: GenerationCleanupConfig): string[][] {

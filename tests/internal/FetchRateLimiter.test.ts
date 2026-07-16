@@ -216,6 +216,43 @@ describe('FetchRateLimiter', () => {
     }
   })
 
+  it('lets a ready key preempt an unrelated bucket interval timer', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const order: string[] = []
+    const options = { intervalMs: 400, maxPerInterval: 1, scope: 'key' as const }
+
+    try {
+      const firstA = limiter.schedule(options, { key: 'a', fetcher: async () => 'a1' }, async () => {
+        order.push('a1')
+        return 'a1'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(firstA).resolves.toBe('a1')
+
+      const secondA = limiter.schedule(options, { key: 'a', fetcher: async () => 'a2' }, async () => {
+        order.push('a2')
+        return 'a2'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      const firstB = limiter.schedule(options, { key: 'b', fetcher: async () => 'b1' }, async () => {
+        order.push('b1')
+        return 'b1'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      await expect(firstB).resolves.toBe('b1')
+      expect(order).toEqual(['a1', 'b1'])
+
+      await vi.advanceTimersByTimeAsync(400)
+      await expect(secondA).resolves.toBe('a2')
+    } finally {
+      limiter.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('continues draining after a queued task rejects', async () => {
     vi.useFakeTimers()
     const limiter = new FetchRateLimiter()
@@ -268,6 +305,62 @@ describe('FetchRateLimiter', () => {
 
     expect(queuesByBucket.has('sparse')).toBe(false)
     expect(pendingBuckets.has('sparse')).toBe(false)
+  })
+
+  it('cleans empty pending buckets and ignores drains after disposal', () => {
+    const limiter = new FetchRateLimiter()
+    const internals = limiter as unknown as {
+      drain: () => void
+      pendingBuckets: Set<string>
+      queuesByBucket: Map<string, Array<unknown>>
+    }
+    internals.pendingBuckets.add('empty')
+    internals.queuesByBucket.set('empty', [])
+
+    internals.drain()
+    expect(internals.pendingBuckets.has('empty')).toBe(false)
+    expect(internals.queuesByBucket.has('empty')).toBe(false)
+
+    limiter.dispose()
+    expect(() => internals.drain()).not.toThrow()
+  })
+
+  it('clears a scheduled drain timer before processing pending work', () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const internals = limiter as unknown as {
+      drain: () => void
+      drainTimer?: ReturnType<typeof setTimeout>
+    }
+    internals.drainTimer = setTimeout(() => undefined, 1_000)
+
+    internals.drain()
+
+    expect(internals.drainTimer).toBeUndefined()
+    vi.useRealTimers()
+  })
+
+  it('replaces a later shared drain timer with an earlier positive deadline', () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    const internals = limiter as unknown as {
+      scheduleDrain: (delayMs: number) => void
+      drainTimer?: ReturnType<typeof setTimeout>
+      drainTimerDeadline?: number
+    }
+
+    try {
+      internals.scheduleDrain(1_000)
+      const laterTimer = internals.drainTimer
+      internals.scheduleDrain(100)
+
+      expect(internals.drainTimer).toBeDefined()
+      expect(internals.drainTimer).not.toBe(laterTimer)
+      expect(internals.drainTimerDeadline).toBe(Date.now() + 100)
+    } finally {
+      limiter.dispose()
+      vi.useRealTimers()
+    }
   })
 
   it('drops buckets when a queued entry disappears before shifting', () => {
@@ -522,5 +615,29 @@ describe('FetchRateLimiter', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('rejects queued work when disposed while another task is active', async () => {
+    vi.useFakeTimers()
+    const limiter = new FetchRateLimiter()
+    let releaseActive!: () => void
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve
+    })
+    const options = { maxConcurrent: 1, scope: 'global' as const }
+
+    const active = limiter.schedule(options, { key: 'active', fetcher: async () => 'active' }, async () => {
+      await activeGate
+      return 'active'
+    })
+    const queued = limiter.schedule(options, { key: 'queued', fetcher: async () => 'queued' }, async () => 'queued')
+
+    await vi.advanceTimersByTimeAsync(0)
+    limiter.dispose()
+
+    await expect(queued).rejects.toThrow(/disposed/i)
+    releaseActive()
+    await expect(active).resolves.toBe('active')
+    vi.useRealTimers()
   })
 })

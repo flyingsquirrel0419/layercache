@@ -56,14 +56,14 @@ test("playground cache supports exact-key invalidation aliases", async () => {
 
   await cache.invalidateByKey("user:1");
 
-  assert.equal(await cache.get("user:1"), null);
+  assert.equal(await cache.get("user:1"), undefined);
   assert.deepEqual(await cache.get("user:1:posts"), [{ id: 1 }]);
   assert.deepEqual(await cache.get("user:2"), { name: "Bob" });
 
   await cache.invalidateByKeys(["user:1:posts", "user:2"]);
 
-  assert.equal(await cache.get("user:1:posts"), null);
-  assert.equal(await cache.get("user:2"), null);
+  assert.equal(await cache.get("user:1:posts"), undefined);
+  assert.equal(await cache.get("user:2"), undefined);
 });
 
 test("playground cache supports exact-key expiration while serving stale values", async () => {
@@ -139,7 +139,7 @@ test("playground presets use current write options for tags instead of cache.tag
   assert.doesNotMatch(source, /cache\.tag\(/);
 });
 
-test("playground cache supports shouldCache and null misses", async () => {
+test("playground cache supports shouldCache and undefined misses", async () => {
   const { cache } = createPlaygroundCache();
   let attempts = 0;
 
@@ -154,7 +154,7 @@ test("playground cache supports shouldCache and null misses", async () => {
   );
 
   assert.deepEqual(failed, { ok: false });
-  assert.equal(await cache.get("http:profile"), null);
+  assert.equal(await cache.get("http:profile"), undefined);
 
   const successful = await cache.get(
     "http:profile",
@@ -192,8 +192,12 @@ test("playground cache distinguishes stored nulls from negative-cache entries an
     }
   );
 
-  await cache.get("profile:not-found", async () => null, { ttl: 1_000, negativeCache: true });
-  assert.equal(await cache.get("profile:not-found"), null);
+  await cache.get("profile:not-found", async () => null, {
+    ttl: 1_000,
+    negativeCache: true,
+    cacheNullValues: false,
+  });
+  assert.equal(await cache.get("profile:not-found"), undefined);
   const negativeEntry = await cache.getEntry("profile:not-found");
   assert.equal(typeof negativeEntry?.layer, "string");
   assert.deepEqual(
@@ -247,7 +251,7 @@ test("playground cache supports generation rotation", async () => {
 
   assert.equal(nextGeneration, 2);
   assert.equal(cache.getGeneration(), 2);
-  assert.equal(await cache.get("user:1"), null);
+  assert.equal(await cache.get("user:1"), undefined);
 
   await cache.set("user:1", { version: 2 });
   assert.deepEqual(await cache.get("user:1"), { version: 2 });

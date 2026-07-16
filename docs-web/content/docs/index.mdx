@@ -19,17 +19,17 @@ Every read follows the same path:
 
 Layercache keeps responses stable under pressure with stale serving, circuit breakers, and timeout guards.
 
-## Version 3.0 Highlights
+## Version 4.0 Highlights
 
-Layercache 3.0 tightens production defaults and updates the docs/runtime surface for distributed deployments:
+Layercache 4.0 makes missing values unambiguous and hardens production coordination boundaries:
 
-- `RedisTagIndex` now uses 16 known-key shards by default, with a `migrate-tag-index` CLI command for older single-set indexes.
-- Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed.
-- Express and Hono implicit URL cache keys strip sensitive query parameters, and non-2xx JSON responses are skipped by default.
-- `RedisInvalidationBus` supports signed invalidation messages, and `RedisGenerationStore` persists generation rotations across instances.
-- The documentation site now runs on Rspress and deploys through GitHub Pages.
+- Public cache reads return `undefined` on misses while preserving intentional cached `null` values.
+- Read-through fetchers cache `null` by default; `cacheNullValues: false` retains legacy null-as-absence behavior.
+- Structured `wrap()` keys use the collision-resistant `j2:` schema, and write ordering plus generation cleanup have finite limits.
+- Snapshot commits, signed invalidation, HTTP credential handling, destructive CLI patterns, and playground isolation are hardened.
+- Regression coverage includes the merged scheduler, snapshot, invalidation, and epoch rollover fixes.
 
-Read the [migration guide](./migration#upgrading-to-30) before upgrading an existing Redis-backed deployment.
+Read the [migration guide](./migration#upgrading-to-40) before upgrading an existing deployment.
 
 ## Quick Links
 

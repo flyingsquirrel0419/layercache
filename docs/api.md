@@ -58,12 +58,12 @@ const cache = new CacheStack(layers, options?)
 
 ### Read Operations
 
-#### `cache.get<T>(key, fetcher?, options?): Promise<T | null>`
+#### `cache.get<T>(key, fetcher?, options?): Promise<T | undefined>`
 
 Reads through all layers in order. On a partial hit (found in L2 but not L1), backfills the upper layers automatically. On a full miss, runs the fetcher if provided.
 
 ```ts
-// Without fetcher - returns null on miss
+// Without fetcher - returns undefined on miss
 const user = await cache.get<User>('user:123')
 
 // With fetcher - runs once on miss, fills all layers
@@ -83,7 +83,7 @@ const user = await cache.get<User>('user:123', () => db.findUser(123), {
 
 #### `cache.getOrThrow<T>(key, fetcher?, options?): Promise<T>`
 
-Like `get()`, but throws `CacheMissError` instead of returning `null`.
+Like `get()`, but throws `CacheMissError` instead of returning `undefined`. A stored `null` is a cache hit and is returned normally.
 
 ```ts
 import { CacheMissError } from 'layercache'
@@ -97,7 +97,7 @@ try {
 }
 ```
 
-#### `cache.mget<T>(entries): Promise<Array<T | null>>`
+#### `cache.mget<T>(entries): Promise<Array<T | undefined>>`
 
 Concurrent multi-key fetch. Uses layer-level `getMany()` fast paths when all entries are simple reads.
 
@@ -155,11 +155,13 @@ const miss = await cache.getEntry('user:missing')
 // null
 ```
 
-`cache.set()` stores `null` values directly. `cacheNullValues` applies to
-read-through fetchers that return `null`, not to direct writes.
+`cache.set()` stores `null` values directly. In v4, read-through fetchers also
+store `null` as a regular value by default, so misses and negative-cache entries
+remain distinguishable as `undefined`. Set `cacheNullValues: false` only when a
+fetcher uses `null` to mean absence.
 
 ```ts
-await cache.get('user:deleted', async () => null, { cacheNullValues: true })
+await cache.get('user:deleted', async () => null)
 ```
 
 ---
@@ -318,6 +320,8 @@ await cache.expireByPrefix('user:123:')
 
 Wraps an async function so every call is transparently cached. The key is derived from function arguments unless you supply a `keyResolver`.
 
+Structured arguments use the versioned `j2:` key schema. Plain objects cannot use reserved native `$type` tags (`Date`, `URL`, `RegExp`, `Map`, or `Set`); provide a `keyResolver` if your domain objects intentionally contain one of those tags.
+
 ```ts
 const getUser = cache.wrap('user', (id: number) => db.findUser(id))
 const user = await getUser(123) // key -> "user:123"
@@ -385,6 +389,8 @@ Disk-based snapshot persistence. Restricted to `process.cwd()` by default (confi
 await cache.persistToFile('./cache-snapshot.json')
 await cache.restoreFromFile('./cache-snapshot.json')
 ```
+
+Keep `snapshotBaseDir` process-owned and avoid group/world-writable parent directories. Snapshot writes validate paths and reject symlinked target parents before commit, but shared writable directories are still a poor snapshot boundary.
 
 ---
 
@@ -459,9 +465,11 @@ cache.bumpGeneration() // now reads use v2:user:123
 // Optional: auto-cleanup old generation keys
 const cache = new CacheStack([...], {
   generation: 1,
-  generationCleanup: { batchSize: 500 }
+  generationCleanup: { batchSize: 500, maxMatches: 10_000 }
 })
 ```
+
+Cleanup retains a de-duplication set while scanning layers, so `maxMatches` defaults to 10,000 unique keys per run. Exceeding the limit stops the cleanup and emits the existing `generation-cleanup-error` warning. Set `maxMatches: false` only when the deployment bounds the keyspace elsewhere.
 
 Persist the active generation outside the process when you deploy multiple
 instances or restart workers:
@@ -591,6 +599,16 @@ new DiskLayer({
 
 Encryption also provides authenticated integrity — a separate `signingKey` is unnecessary when `encryptionKey` is provided.
 
+When `encryptionKey` or `signingKey` is configured, plaintext legacy entries are rejected by default. Use `allowLegacyPlaintext: true` only during a controlled migration window:
+
+```ts
+new DiskLayer({
+  directory: resolve('./var/cache/layercache'),
+  signingKey: process.env.CACHE_SIGNING_KEY,
+  allowLegacyPlaintext: true // migration only
+})
+```
+
 ### MemcachedLayer
 
 Memcached support with pluggable serializers and bulk operations.
@@ -636,10 +654,10 @@ class MyCustomLayer implements CacheLayer {
 | `invalidationBus` | `RedisInvalidationBus` | - | Distributed L1 invalidation |
 | `tagIndex` | `TagIndex \| RedisTagIndex` | in-memory | Custom tag tracking |
 | `generation` | `number` | - | Generation prefix for bulk invalidation |
-| `generationCleanup` | `boolean \| { batchSize: number }` | - | Auto-prune stale generation keys |
+| `generationCleanup` | `boolean \| { batchSize?: number; maxMatches?: number \| false }` | - | Auto-prune stale generation keys; discovery defaults to 10,000 unique matches |
 | `broadcastL1Invalidation` | `boolean` | `false` | Publish writes to peer memory layers |
-| `negativeCaching` | `boolean` | `false` | Cache nulls globally |
-| `cacheNullValues` | `boolean` | `false` | Cache null fetcher results as regular values |
+| `negativeCaching` | `boolean` | `false` | Cache absent results as empty entries |
+| `cacheNullValues` | `boolean` | `true` | Cache null fetcher results as regular values |
 | `negativeTtl` | `number \| LayerTtlMap` | - | Global TTL for negative cache entries |
 | `staleWhileRevalidate` | `number \| LayerTtlMap` | - | Global stale-while-revalidate window (milliseconds) |
 | `staleIfError` | `number \| LayerTtlMap` | - | Global stale-if-error window (milliseconds) |
@@ -651,6 +669,7 @@ class MyCustomLayer implements CacheLayer {
 | `writePolicy` | `'strict' \| 'best-effort'` | `'strict'` | Write failure behavior |
 | `writeStrategy` | `'write-through' \| 'write-behind'` | `'write-through'` | Write batching strategy |
 | `writeBehind` | `WriteBehindOptions` | - | Batch size, flush interval, max queue |
+| `writeCoordination` | `{ maxPendingWrites?; maxActiveKeys?; maxPendingWritesPerKey? }` | `10000 / 10000 / 1000` | Finite admission limits for per-key write ordering state |
 | `fetcherRateLimit` | `RateLimitOptions` | - | Global rate limiting |
 | `backgroundRefreshTimeoutMs` | `number` | `30000` | Max time for stale refresh attempts |
 | `singleFlightCoordinator` | `RedisSingleFlightCoordinator` | - | Distributed deduplication |
@@ -663,6 +682,8 @@ class MyCustomLayer implements CacheLayer {
 | `snapshotMaxEntries` | `number \| false` | - | Max entries in a snapshot |
 | `invalidationMaxKeys` | `number \| false` | - | Safety limit for invalidation scans |
 | `maxProfileEntries` | `number` | `100000` | Max size before pruning internal maps |
+
+All single-key and bulk writes use the same per-key ordering boundary so stale cleanup cannot overtake newer data. When a `writeCoordination` limit is reached, the write rejects with `CacheWriteSaturationError`; treat it as backpressure or increase a limit only after sizing the expected burst.
 
 ### CircuitBreakerOptions
 
@@ -707,8 +728,8 @@ await cache.get('user:1', fetchFromApi, {
 | `tags` | `string[]` | Tags for tag-based invalidation |
 | `ttl` | `number \| LayerTtlMap` | TTL in milliseconds, or per-layer overrides |
 | `ttlPolicy` | `string \| object \| function` | `'until-midnight'`, `'next-hour'`, `{ alignTo }`, or custom |
-| `negativeCache` | `boolean` | Cache null results |
-| `cacheNullValues` | `boolean` | Cache null fetcher results as regular values |
+| `negativeCache` | `boolean` | Cache absent results as empty entries |
+| `cacheNullValues` | `boolean` | Cache null fetcher results as regular values (default `true`) |
 | `negativeTtl` | `number` | Short TTL for misses |
 | `staleWhileRevalidate` | `number \| LayerTtlMap` | Return stale and refresh in background |
 | `staleIfError` | `number \| LayerTtlMap` | Keep serving stale if refresh fails |
@@ -1101,6 +1122,12 @@ import { createOpenTelemetryPlugin } from 'layercache'
 createOpenTelemetryPlugin(cache, tracer)
 ```
 
+By default the plugin exports `layercache.key_hash` instead of raw cache keys. Raw key attributes are available only when explicitly requested:
+
+```ts
+createOpenTelemetryPlugin(cache, tracer, { includeRawKeyAttributes: true })
+```
+
 ### Stats HTTP Handler
 
 ```ts
@@ -1122,6 +1149,13 @@ npx layercache stats      --redis redis://localhost:6379
 npx layercache keys       --redis redis://localhost:6379 --pattern "user:*"
 npx layercache invalidate --redis redis://localhost:6379 --tag user:123
 npx layercache invalidate --redis redis://localhost:6379 --pattern "session:*"
+```
+
+Full-cache invalidation requires `--force`, both for the default pattern and for every wildcard-only combination of `*` and `?` such as `*`, `**`, and `?*`:
+
+```bash
+npx layercache invalidate --redis redis://localhost:6379 --pattern "*" --force
+npx layercache invalidate --redis redis://localhost:6379 --pattern "?*" --force
 ```
 
 ---

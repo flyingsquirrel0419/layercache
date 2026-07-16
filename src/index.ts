@@ -19,13 +19,14 @@ export { RedisLayer } from './layers/RedisLayer'
 export { DiskLayer } from './layers/DiskLayer'
 export { MemcachedLayer } from './layers/MemcachedLayer'
 export type { MemcachedClient } from './layers/MemcachedLayer'
-export { JsonSerializer } from './serialization/JsonSerializer'
-export { MsgpackSerializer } from './serialization/MsgpackSerializer'
+export { JsonSerializer, type JsonSerializerOptions } from './serialization/JsonSerializer'
+export { MsgpackSerializer, type MsgpackSerializerOptions } from './serialization/MsgpackSerializer'
 export { RedisSingleFlightCoordinator } from './singleflight/RedisSingleFlightCoordinator'
 export { StampedeGuard } from './stampede/StampedeGuard'
 export { createPrometheusMetricsExporter } from './metrics/PrometheusExporter'
 export {
   CacheMissError,
+  CacheWriteSaturationError,
   type CacheSingleFlightCoordinator,
   type CacheSingleFlightExecutionOptions,
   type CacheAdaptiveTtlOptions,
@@ -34,6 +35,7 @@ export {
   type CacheEntryWriteKind,
   type CacheEntryWriteOptions,
   type CacheEntryResult,
+  type CacheGenerationCleanupOptions,
   type CacheDegradationOptions,
   type CacheFetcher,
   type CacheFetcherContext,
@@ -62,6 +64,7 @@ export {
   type CacheTtlPolicy,
   type CacheTtlPolicyContext,
   type CacheWriteBehindOptions,
+  type CacheWriteCoordinationOptions,
   type CacheWriteOptions,
   type InvalidationBus,
   type InvalidationMessage,

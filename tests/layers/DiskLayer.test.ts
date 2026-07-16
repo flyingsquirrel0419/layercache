@@ -28,6 +28,15 @@ describe('DiskLayer', () => {
     await fs.writeFile(filePath, raw)
   }
 
+  async function writePlaintextEntry(directory: string, key: string, value: unknown): Promise<string> {
+    await fs.mkdir(directory, { recursive: true })
+    const { createHash } = await import('node:crypto')
+    const hash = createHash('sha256').update(key).digest('hex')
+    const filePath = join(directory, `${hash}.lc`)
+    await fs.writeFile(filePath, JSON.stringify({ key, value, expiresAt: null }))
+    return filePath
+  }
+
   beforeEach(async () => {
     dir = join(tmpdir(), `layercache-disk-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     layer = new DiskLayer({ directory: dir, ttl: 60_000 })
@@ -308,6 +317,30 @@ describe('DiskLayer', () => {
     statSpy.mockRestore()
   })
 
+  it('rejects entries that exceed maxEntryBytes while streaming', async () => {
+    const boundedLayer = new DiskLayer({ directory: dir, maxEntryBytes: 4 })
+    const chunks = [Buffer.from('abc'), Buffer.from('de')]
+    const handle = {
+      stat: vi.fn(async () => ({ size: 4 })),
+      read: vi.fn(async (buffer: Buffer, _offset: number, _length: number, _position: number) => {
+        const chunk = chunks.shift()
+        if (!chunk) {
+          return { bytesRead: 0, buffer }
+        }
+        chunk.copy(buffer)
+        return { bytesRead: chunk.length, buffer }
+      })
+    }
+
+    await expect(
+      (
+        boundedLayer as unknown as {
+          readHandleWithLimit: (handle: typeof handle) => Promise<Buffer>
+        }
+      ).readHandleWithLimit(handle)
+    ).rejects.toThrow(/maxEntryBytes/i)
+  })
+
   it('keeps scanning when an entry cannot be opened', async () => {
     await fs.mkdir(dir, { recursive: true })
     const { createHash } = await import('node:crypto')
@@ -413,6 +446,26 @@ describe('DiskLayer', () => {
       const result = await reader.get('locked')
       expect(result).toBeNull()
     })
+
+    it('rejects attacker-written plaintext entries when encryption is configured', async () => {
+      const encrypted = new DiskLayer({ directory: dir, ttl: 60_000, encryptionKey: 'test-key' })
+      const filePath = await writePlaintextEntry(dir, 'forged', { admin: true })
+
+      await expect(encrypted.get('forged')).resolves.toBeNull()
+      await expect(fs.stat(filePath)).rejects.toThrow()
+    })
+
+    it('can read legacy plaintext entries only when explicitly allowed', async () => {
+      const encrypted = new DiskLayer({
+        directory: dir,
+        ttl: 60_000,
+        encryptionKey: 'test-key',
+        allowLegacyPlaintext: true
+      })
+      await writePlaintextEntry(dir, 'legacy', { migrated: true })
+
+      await expect(encrypted.get('legacy')).resolves.toEqual({ migrated: true })
+    })
   })
 
   describe('signing (signingKey)', () => {
@@ -452,6 +505,14 @@ describe('DiskLayer', () => {
 
       const raw = await readLcFile(dir)
       expect(raw.subarray(0, 5).toString()).toBe('LCP1:')
+    })
+
+    it('rejects attacker-written plaintext entries when signing is configured', async () => {
+      const signed = new DiskLayer({ directory: dir, ttl: 60_000, signingKey: 'sign-key' })
+      const filePath = await writePlaintextEntry(dir, 'forged-signed', { admin: true })
+
+      await expect(signed.get('forged-signed')).resolves.toBeNull()
+      await expect(fs.stat(filePath)).rejects.toThrow()
     })
   })
 

@@ -176,7 +176,8 @@ describe('operational features', () => {
 
   it('supports negative caching for null fetch results', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
-      negativeCaching: true
+      negativeCaching: true,
+      cacheNullValues: false
     })
     let fetches = 0
 
@@ -189,7 +190,7 @@ describe('operational features', () => {
         },
         { negativeTtl: 1_000 }
       )
-    ).resolves.toBeNull()
+    ).resolves.toBeUndefined()
 
     await expect(
       cache.get(
@@ -200,7 +201,7 @@ describe('operational features', () => {
         },
         { negativeTtl: 1_000 }
       )
-    ).resolves.toBeNull()
+    ).resolves.toBeUndefined()
 
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
@@ -244,7 +245,7 @@ describe('operational features', () => {
     })
   })
 
-  it('times out hung background refreshes so future refresh attempts are not blocked forever', async () => {
+  it('keeps hung background refreshes deduplicated after observer timeout', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       backgroundRefreshTimeoutMs: 20
     })
@@ -262,14 +263,14 @@ describe('operational features', () => {
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
     await waitForCondition(async () => {
-      expect(cache.getStats().backgroundRefreshes).toBe(0)
+      expect(cache.getMetrics().refreshErrors).toBe(1)
     })
 
-    expect(cache.getStats().backgroundRefreshes).toBe(0)
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
     expect(cache.getMetrics().refreshErrors).toBe(1)
 
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
   it('does not leak late background refresh rejections after a timeout', async () => {
@@ -295,11 +296,14 @@ describe('operational features', () => {
     try {
       await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
       await waitForCondition(async () => {
-        expect(cache.getStats().backgroundRefreshes).toBe(0)
+        expect(cache.getMetrics().refreshErrors).toBe(1)
       })
+      expect(cache.getStats().backgroundRefreshes).toBe(1)
 
       rejectFetch(new Error('late failure'))
-      await new Promise((resolve) => setImmediate(resolve))
+      await waitForCondition(async () => {
+        expect(cache.getStats().backgroundRefreshes).toBe(0)
+      })
 
       expect(unhandled).not.toHaveBeenCalled()
       expect(cache.getStats().backgroundRefreshes).toBe(0)
@@ -325,10 +329,10 @@ describe('operational features', () => {
     await cache.clear()
     releaseFetch()
     await waitForCondition(async () => {
-      await expect(cache.get('user:1')).resolves.toBeNull()
+      await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
   })
 
   it('does not repopulate deleted keys from in-flight background refreshes', async () => {
@@ -348,10 +352,10 @@ describe('operational features', () => {
     await cache.delete('user:1')
     releaseFetch()
     await waitForCondition(async () => {
-      await expect(cache.get('user:1')).resolves.toBeNull()
+      await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
   })
 
   it('does not repopulate deleted keys with negative-cache markers after refresh completes', async () => {
@@ -373,10 +377,10 @@ describe('operational features', () => {
     await cache.delete('user:1')
     releaseFetch()
     await waitForCondition(async () => {
-      await expect(cache.get('user:1')).resolves.toBeNull()
+      await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
     expect(cache.getMetrics().negativeCacheHits).toBe(0)
   })
 
@@ -510,9 +514,9 @@ describe('operational features', () => {
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
     await waitForCondition(async () => {
-      expect(cache.getStats().backgroundRefreshes).toBe(0)
+      expect(cache.getMetrics().refreshErrors).toBe(1)
     })
-    expect(cache.getStats().backgroundRefreshes).toBe(0)
+    expect(cache.getStats().backgroundRefreshes).toBe(1)
   })
 
   it('uses layer bulk writes for mset when available', async () => {
@@ -612,7 +616,7 @@ describe('operational features', () => {
     expect(maxConcurrent).toBeGreaterThan(1)
   })
 
-  it('does not fail fetches when shouldCache throws', async () => {
+  it('returns the fetched value but does not cache it when shouldCache throws', async () => {
     const warn = vi.fn()
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
       logger: { warn }
@@ -626,7 +630,7 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ id: 1 })
 
-    await expect(cache.get('user:1')).resolves.toEqual({ id: 1 })
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
     expect(warn).toHaveBeenCalled()
   })
 
@@ -639,7 +643,7 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ id: 1, cacheable: false })
 
-    await expect(cache.get('user:1')).resolves.toBeNull()
+    await expect(cache.get('user:1')).resolves.toBeUndefined()
   })
 
   it('supports context-aware entry options for fetched values', async () => {
@@ -695,7 +699,7 @@ describe('operational features', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
-    await expect(cache.get('report:daily')).resolves.toBeNull()
+    await expect(cache.get('report:daily')).resolves.toBeUndefined()
   })
 
   it('falls back to static entry options when context-aware overrides are omitted', async () => {
@@ -767,12 +771,12 @@ describe('operational features', () => {
     ).rejects.toThrow(/async resolvers are not supported/i)
   })
 
-  it('does not negative-cache null fetch results unless explicitly enabled', async () => {
+  it('can treat null fetch results as uncached misses when explicitly disabled', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })])
     const fetcher = vi.fn(async () => null)
 
-    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
-    await expect(cache.get('user:404', fetcher)).resolves.toBeNull()
+    await expect(cache.get('user:404', fetcher, { cacheNullValues: false })).resolves.toBeUndefined()
+    await expect(cache.get('user:404', fetcher, { cacheNullValues: false })).resolves.toBeUndefined()
 
     expect(fetcher).toHaveBeenCalledTimes(2)
   })

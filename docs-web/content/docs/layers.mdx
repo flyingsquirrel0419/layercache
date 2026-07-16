@@ -267,7 +267,8 @@ const diskLayer = new DiskLayer({
   maxWriteQueueDepth: 10_000,                    // Max pending serialized writes
   serializer: new JsonSerializer(),               // Optional custom serializer
   encryptionKey: process.env.CACHE_ENCRYPTION_KEY, // Optional AES-256-GCM encryption
-  signingKey: process.env.CACHE_SIGNING_KEY        // Optional HMAC-SHA256 signing
+  signingKey: process.env.CACHE_SIGNING_KEY,       // Optional HMAC-SHA256 signing
+  allowLegacyPlaintext: false                      // Default: reject plaintext when protection is enabled
 })
 ```
 
@@ -294,6 +295,16 @@ new DiskLayer({
   directory: './cache',
   encryptionKey: process.env.CACHE_ENCRYPTION_KEY,
   signingKey: process.env.CACHE_SIGNING_KEY
+})
+```
+
+When protection is configured, plaintext legacy entries are rejected by default. Use `allowLegacyPlaintext: true` only during a controlled migration window:
+
+```ts
+new DiskLayer({
+  directory: './cache',
+  signingKey: process.env.CACHE_SIGNING_KEY,
+  allowLegacyPlaintext: true // migration only
 })
 ```
 

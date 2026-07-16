@@ -1,5 +1,10 @@
 import { randomBytes } from 'node:crypto'
-import { type FileHandle, rename, unlink } from 'node:fs/promises'
+import { type FileHandle, lstat, realpath, rename, unlink } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
+interface SnapshotCommitOptions {
+  snapshotBaseDir: string | false | undefined
+}
 
 function isWithinSnapshotBase(
   realBaseDir: string,
@@ -35,6 +40,21 @@ async function findExistingAncestor(
   }
 }
 
+function mapUnderRealBase(
+  resolvedPath: string,
+  logicalBaseDir: string,
+  realBaseDir: string,
+  pathSeparator: string,
+  path: typeof import('node:path')
+): string {
+  if (!isWithinSnapshotBase(logicalBaseDir, resolvedPath, pathSeparator, path)) {
+    return resolvedPath
+  }
+
+  const relative = path.relative(logicalBaseDir, resolvedPath)
+  return relative.length === 0 ? realBaseDir : path.join(realBaseDir, relative)
+}
+
 export async function validateSnapshotFilePath(
   filePath: string,
   mode: 'read' | 'write',
@@ -60,7 +80,8 @@ export async function validateSnapshotFilePath(
 
   await fs.mkdir(baseDir, { recursive: true })
   const realBaseDir = await fs.realpath(baseDir)
-  if (!isWithinSnapshotBase(realBaseDir, resolved, path.sep, path)) {
+  const normalizedResolved = mapUnderRealBase(resolved, baseDir, realBaseDir, path.sep, path)
+  if (!isWithinSnapshotBase(realBaseDir, normalizedResolved, path.sep, path)) {
     throw new Error(`filePath is outside the allowed snapshot directory: ${realBaseDir}`)
   }
 
@@ -133,8 +154,35 @@ export function atomicWriteTempPath(targetPath: string): string {
   return `${targetPath}.tmp-${randomBytes(8).toString('hex')}`
 }
 
-export async function commitAtomicWrite(tempPath: string, targetPath: string): Promise<void> {
+async function assertCommitParentInsideSnapshotBase(
+  targetPath: string,
+  snapshotBaseDir: string | false | undefined
+): Promise<void> {
+  if (snapshotBaseDir === false) {
+    return
+  }
+
+  const path = await import('node:path')
+  const realBaseDir = await realpath(path.resolve(snapshotBaseDir ?? process.cwd()))
+  const realParentDir = await realpath(dirname(targetPath))
+  if (!isWithinSnapshotBase(realBaseDir, realParentDir, path.sep, path)) {
+    throw new Error(`Snapshot target parent is outside the allowed snapshot directory: ${realBaseDir}`)
+  }
+}
+
+export async function commitAtomicWrite(
+  tempPath: string,
+  targetPath: string,
+  options?: SnapshotCommitOptions
+): Promise<void> {
   try {
+    const parent = await lstat(dirname(targetPath))
+    if (parent.isSymbolicLink()) {
+      throw new Error('Snapshot target parent must not be a symbolic link.')
+    }
+    if (options) {
+      await assertCommitParentInsideSnapshotBase(targetPath, options.snapshotBaseDir)
+    }
     await rename(tempPath, targetPath)
   } catch (error) {
     await unlink(tempPath).catch(() => undefined)

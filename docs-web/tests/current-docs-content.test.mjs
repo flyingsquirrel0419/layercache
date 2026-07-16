@@ -38,6 +38,7 @@ test("integration docs describe HTTP cache safety behavior", async () => {
 
   assert.match(source, /Only 2xx JSON responses are written to the cache/);
   assert.match(source, /context\.status\(500\)/);
+  assert.match(source, /bypass implicit caching/);
   assert.match(source, /api_key/);
   assert.match(source, /private_key/);
   assert.match(source, /credentials/);
@@ -61,11 +62,12 @@ test("API docs describe generation persistence and context-aware entry options",
   assert.match(source, /contextOptions: \(\{ value \}\)/);
 });
 
-test("API docs describe null entry introspection and new resilience options", async () => {
+test("API docs describe v4 miss/null semantics and new resilience options", async () => {
   const source = await readDoc("content/docs/api.mdx");
 
   assert.match(source, /cache\.getEntry/);
-  assert.match(source, /cacheNullValues: true/);
+  assert.match(source, /Promise<T \| undefined>/);
+  assert.match(source, /`cacheNullValues` \| `boolean` \| `true`/);
   assert.match(source, /CircuitBreakerOptions/);
   assert.match(source, /breakerKey/);
   assert.match(source, /RateLimitOptions/);
@@ -81,7 +83,9 @@ test("web docs describe shared circuit breakers, queue overflow, disk queue guar
   assert.match(resilience, /scope:\s*['"]shared['"]/);
   assert.match(resilience, /queueOverflow:\s*['"]bypass['"]/);
   assert.match(layers, /maxWriteQueueDepth/);
+  assert.match(layers, /allowLegacyPlaintext/);
   assert.match(observability, /captureMetrics/);
+  assert.match(observability, /layercache\.key_hash/);
 });
 
 test("docs are configured for GitHub Pages deployment", async () => {

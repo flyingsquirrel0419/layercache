@@ -263,6 +263,26 @@ describe('CacheStack internals', () => {
         })
     ).toThrow(/stampedePrevention/i)
 
+    expect(
+      () =>
+        new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+          generationCleanup: { maxMatches: 0 }
+        })
+    ).toThrow(/generationCleanup\.maxMatches/i)
+
+    for (const [option, value] of [
+      ['maxPendingWrites', 0],
+      ['maxActiveKeys', -1],
+      ['maxPendingWritesPerKey', Number.NaN]
+    ] as const) {
+      expect(
+        () =>
+          new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+            writeCoordination: { [option]: value }
+          })
+      ).toThrow(new RegExp(`writeCoordination\\.${option}`, 'i'))
+    }
+
     const warn = vi.fn()
     const bus = {
       subscribe: vi.fn(async () => () => undefined),
@@ -378,7 +398,7 @@ describe('CacheStack internals', () => {
 
     await expect(cache.mdelete([])).resolves.toBeUndefined()
     await expect(cache.mget([])).resolves.toEqual([])
-    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual([null, null])
+    await expect(cache.mget([{ key: 'a' }, { key: 'b' }])).resolves.toEqual([undefined, undefined])
     expect(deleteSpy).toHaveBeenCalledWith('a')
 
     await expect(
@@ -638,6 +658,7 @@ describe('CacheStack internals', () => {
 
   it('covers generation cleanup, key intersection, layer deletion, and fresh-read policy branches', async () => {
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+      generation: 1,
       generationCleanup: { batchSize: 2 }
     })
 
@@ -705,6 +726,33 @@ describe('CacheStack internals', () => {
     )
     expect(scheduleSpy).toHaveBeenCalled()
     scheduleSpy.mockRestore()
+  })
+
+  it('streams generation cleanup in batches without materializing all old-generation keys first', async () => {
+    const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 })], {
+      generationCleanup: { batchSize: 2 }
+    })
+    const keyDiscovery = (
+      cache as unknown as {
+        keyDiscovery: {
+          collectKeysWithPrefix: (...args: unknown[]) => Promise<string[]>
+          forEachKeyWithPrefix: (prefix: string, visitor: (key: string) => Promise<void>) => Promise<void>
+        }
+      }
+    ).keyDiscovery
+    const collectSpy = vi.spyOn(keyDiscovery, 'collectKeysWithPrefix')
+    const forEachSpy = vi.spyOn(keyDiscovery, 'forEachKeyWithPrefix').mockImplementation(async (_prefix, visitor) => {
+      await visitor('v1:a')
+      await visitor('v1:b')
+      await visitor('v1:c')
+    })
+    const deleteKeysSpy = vi.spyOn(cache as unknown as { deleteKeys: (keys: string[]) => Promise<void> }, 'deleteKeys')
+
+    await (cache as { cleanupGeneration: (generation: number) => Promise<void> }).cleanupGeneration(1)
+
+    expect(collectSpy).not.toHaveBeenCalled()
+    expect(forEachSpy).toHaveBeenCalledWith('v1:', expect.any(Function), 10_000)
+    expect(deleteKeysSpy.mock.calls.map(([keys]) => keys)).toEqual([['v1:a', 'v1:b'], ['v1:c']])
   })
 
   it('covers tag fallback and sliding-ttl failure handling branches', async () => {

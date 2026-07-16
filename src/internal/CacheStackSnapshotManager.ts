@@ -86,7 +86,7 @@ export class CacheStackSnapshotManager {
       await openedHandle.writeFile(wroteAny ? '\n]' : ']', 'utf8')
       await openedHandle.close()
       handle = undefined
-      await commitAtomicWrite(tempPath, targetPath)
+      await commitAtomicWrite(tempPath, targetPath, { snapshotBaseDir })
     } catch (error) {
       await handle?.close().catch(() => undefined)
       await fs.unlink(tempPath).catch(() => undefined)

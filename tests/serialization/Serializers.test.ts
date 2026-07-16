@@ -27,6 +27,11 @@ describe('JsonSerializer', () => {
     expect(serializer.deserialize(serializer.serialize(true))).toBe(true)
   })
 
+  it('follows JSON undefined semantics inside containers', () => {
+    expect(serializer.serialize({ omitted: undefined })).toBe('{}')
+    expect(serializer.deserialize(serializer.serialize([undefined]))).toEqual([null])
+  })
+
   it('serializes to a string', () => {
     expect(typeof serializer.serialize({ a: 1 })).toBe('string')
   })
@@ -55,6 +60,13 @@ describe('JsonSerializer', () => {
   it('rejects excessively wide payloads during deserialize', () => {
     const wide = Array.from({ length: 10_500 }, (_, index) => ({ [`k${index}`]: index }))
     expect(() => serializer.deserialize(JSON.stringify(wide))).toThrow(/max node count/i)
+  })
+
+  it('rejects oversized payloads before parsing', () => {
+    const bounded = new JsonSerializer({ maxBytes: 8 })
+    const parse = vi.spyOn(JSON, 'parse')
+    expect(() => bounded.deserialize('{"value":1}')).toThrow(/maxBytes/i)
+    expect(parse).not.toHaveBeenCalled()
   })
 
   it('surfaces non-Error JSON.parse failures with a stringified message', () => {
@@ -86,6 +98,10 @@ describe('MsgpackSerializer', () => {
     expect(serializer.deserialize(serializer.serialize('hello'))).toBe('hello')
     expect(serializer.deserialize(serializer.serialize(null))).toBeNull()
     expect(serializer.deserialize(serializer.serialize(true))).toBe(true)
+  })
+
+  it('encodes undefined as MessagePack nil', () => {
+    expect(serializer.deserialize(serializer.serialize(undefined))).toBeNull()
   })
 
   it('serializes to a Buffer', () => {
@@ -122,6 +138,11 @@ describe('MsgpackSerializer', () => {
 
   it('rejects excessively wide payloads during deserialize', () => {
     const wide = Array.from({ length: 10_500 }, (_, index) => ({ [`k${index}`]: index }))
-    expect(() => serializer.deserialize(Buffer.from(encode(wide)))).toThrow(/max node count/i)
+    expect(() => serializer.deserialize(Buffer.from(encode(wide)))).toThrow(/max (?:node count|length)/i)
+  })
+
+  it('rejects oversized payloads before decoding', () => {
+    const bounded = new MsgpackSerializer({ maxBytes: 4 })
+    expect(() => bounded.deserialize(Buffer.from(encode({ value: 'too large' })))).toThrow(/maxBytes/i)
   })
 })

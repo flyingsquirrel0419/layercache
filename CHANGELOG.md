@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-07-16
+
+### Breaking
+
+- Public `CacheStack`, namespace, `wrap()`, `getOrSet()`, and `mget()` reads now return `undefined` for misses and negative-cache entries instead of `null`, resolving issue #90.
+- Read-through fetchers now cache `null` as a regular value by default, and `getOrThrow()` returns stored nulls while throwing only for `undefined`. Set `cacheNullValues: false` when null represents absence.
+- Automatically derived structured `wrap()` keys use the `j2:` schema, so old `j:` entries become cold misses and expire naturally.
+- Write coordination and generation cleanup now apply finite default limits and can reject saturated work with `CacheWriteSaturationError`.
+
+### Security
+
+- Fixed implicit Express/Hono private URL caching so requests containing sensitive query parameters, including OAuth `client_secret` and client assertions, bypass implicit URL-only caching unless a custom `keyResolver` is supplied.
+- Fixed namespace clearing so `CacheNamespace.clear()` invalidates the delimiter-bound namespace prefix (for example `tenant:`), preventing sibling namespace eviction such as `a` clearing `ab`.
+- Fixed DiskLayer protected reads so plaintext legacy payloads are rejected when `encryptionKey` or `signingKey` is configured. Added `allowLegacyPlaintext` as an explicit migration-only opt-in.
+- Fixed generation cleanup to stream old-generation keys into bounded batches and cap its unique-key discovery set at 10,000 entries by default.
+- Changed OpenTelemetry instrumentation to export `layercache.key_hash` by default. Raw `layercache.key` attributes now require `includeRawKeyAttributes: true`.
+- Hardened snapshot commits by rejecting symlinked target parents immediately before the final rename.
+- Hardened CLI invalidation so every wildcard-only pattern such as `*`, `**`, and `?*` requires `--force`, matching the default full-cache invalidation guard.
+- Hardened CLI Redis connection errors by scrubbing Redis URLs from nested error messages before printing them.
+- Added a Redis invalidation warning when `RedisInvalidationBus` is constructed without `signingSecret` and a logger is provided.
+- Hardened the docs playground by keeping the token-bearing worker message sender outside user-code global reach, in addition to sandboxed iframe, Blob Worker, and token checks.
+- Prevented plain objects from forging native structured cache-key tags and rotated structured argument keys from `j:` to `j2:` so previously ambiguous entries are not reused.
+- Prevented stale single and bulk writes from repopulating invalidated keys or deleting newer `mset()` values by sharing one per-key ordering boundary and checking fences after backend writes.
+- Bounded retained write-ordering state with configurable global, active-key, and per-key limits that reject saturation with `CacheWriteSaturationError`.
+- Replaced reusable per-key epoch values with monotonic tokens so maintenance pruning cannot create an ABA window for stale writes.
+- Fixed per-key fetch rate limiting so a ready key can preempt a later shared drain timer chosen by a throttled key.
+
+### Changed
+
+- Updated Vite and related development-only transitive dependencies to resolve the release audit finding.
+- Updated API, migration, serialization, resilience, integration, architecture-decision, and security documentation for v4 miss/null semantics, finite cleanup/write limits, structured-key rotation, HTTP credential handling, CLI guard, and playground isolation boundary.
+
+### Tests
+
+- Added regression coverage for all security fixes and hardening changes, including shared drain-timer preemption, disposal of queued rate-limited work, epoch rollover, empty serialized writes, symlinked snapshot bases, and serializer undefined behavior. The unit suite reports 672 passing tests and 24 skipped tests; the real Redis integration suite adds 25 passing tests.
+- Added docs-web content assertions for the updated security-sensitive documentation.
+
 ## [3.1.1] — 2026-06-14
 
 ### Fixed

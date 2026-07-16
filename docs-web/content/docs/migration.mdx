@@ -5,6 +5,39 @@ description: "Migrate from node-cache-manager, keyv, cacheable, and other cachin
 
 This guide helps you migrate from popular Node.js caching libraries to Layercache. Each section includes before/after code examples, API mappings, and key differences.
 
+## Upgrading to 4.0
+
+Layercache 4.0 resolves [issue #90](https://github.com/flyingsquirrel0419/layercache/issues/90) by giving cache misses a JavaScript-native `undefined` result while preserving intentional `null` values.
+
+### Miss and null semantics
+
+- `get()`, `getOrSet()`, `mget()`, `wrap()`, and namespace reads return `undefined` on a miss or negative-cache hit.
+- `getOrThrow()` throws only for `undefined`; a cached `null` is returned normally.
+- Read-through fetchers cache `null` as a regular value by default. Set `cacheNullValues: false` only when your fetcher uses `null` to mean absence.
+- `getEntry()` keeps its metadata contract: it returns `null` when no entry exists and exposes negative entries with `kind: 'empty'`.
+- Custom `CacheLayer` implementations keep returning `null` from their low-level read methods. Only the public stack and namespace APIs changed.
+
+Replace public miss checks such as `value === null` with `value === undefined`. If your application previously used `null` as a fetcher miss, opt out explicitly:
+
+```tsx
+const user = await cache.get('user:missing', fetchUser, {
+  cacheNullValues: false,
+  negativeCache: true
+})
+```
+
+Serializers retain their format-specific behavior: JSON omits `undefined` object properties and converts `undefined` array elements to `null`; MessagePack encodes `undefined` as nil and decodes it as `null`. Layercache does not store an `undefined` fetch result.
+
+### Security and operational boundaries
+
+This release also deliberately changes cache and operator safety boundaries:
+
+- Automatically derived structured `wrap()` argument keys now use the `j2:` schema. Existing `j:` entries are left to expire and will be cold misses; no data migration is required. Plain objects with reserved native `$type` tags (`Date`, `URL`, `RegExp`, `Map`, or `Set`) now throw instead of colliding with native values. Use a `keyResolver` when those objects are intentional inputs.
+- `generationCleanup: true` now stops after discovering 10,000 unique old-generation keys in one cleanup run. Set `generationCleanup: { batchSize, maxMatches }` to choose a lower deployment-specific bound. `maxMatches: false` is an explicit opt-out and should only be used when the keyspace is bounded elsewhere.
+- Write-through, write-behind, single-key, and `mset()` writes share finite ordering state. The defaults admit 10,000 pending key-write units, 10,000 active keys, and 1,000 pending operations per key. Tune `writeCoordination` for known bursts and handle `CacheWriteSaturationError` as backpressure rather than retrying without a limit.
+
+Wildcard-only CLI invalidation patterns now all require `--force`, including combinations of `*` and `?` such as `**` and `?*`.
+
 ## Upgrading to 3.0
 
 Layercache 3.0 is a major release because it changes operational defaults for Redis-backed deployments and HTTP middleware cache keys.
@@ -33,7 +66,17 @@ NODE_ENV=production npx layercache stats --redis redis://localhost:6379 --allow-
 
 ### Implicit HTTP cache keys
 
-Express and Hono middleware now remove common sensitive query parameters from implicit URL cache keys. This avoids storing secrets in cache keys, but entries written with older URL keys that included parameters such as `api_key`, `private_key`, or `credentials` will miss until refreshed.
+Express and Hono middleware now bypass implicit URL-only caching when common sensitive query parameters are present. This avoids both storing secrets in cache keys and collapsing private responses into one scrubbed URL key. Provide a custom `keyResolver` when private responses are selected by query credentials.
+
+The sensitive parameter names are `access_token`, `api_key`, `apikey`, `auth`, `authorization`, `client_assertion`, `client_assertion_type`, `client_secret`, `code`, `credentials`, `id_token`, `jwt`, `password`, `private_key`, `refresh_token`, `secret`, `session`, `sessionid`, `session_id`, and `token`. The same list is documented in the [integration options](./integrations#express).
+
+### DiskLayer protected entries
+
+When `DiskLayer` is configured with `encryptionKey` or `signingKey`, plaintext legacy entries are now rejected by default. If you need to read old plaintext files during a migration, enable `allowLegacyPlaintext: true` temporarily and disable it after the cache directory has been rewritten.
+
+### OpenTelemetry key attributes
+
+`createOpenTelemetryPlugin()` now exports `layercache.key_hash` by default. Pass `{ includeRawKeyAttributes: true }` only if your telemetry backend is allowed to receive raw cache keys.
 
 ### Generation persistence
 

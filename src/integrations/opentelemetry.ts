@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { CacheStack } from '../CacheStack'
 import type { CacheStackEvents } from '../types'
 
@@ -15,6 +16,13 @@ type CacheOperationStart = CacheStackEvents['operation-start']
 type CacheOperationEnd = CacheStackEvents['operation-end']
 
 const MAX_SPANS = 10_000
+const RAW_KEY_ATTRIBUTE = 'layercache.key'
+const KEY_HASH_ATTRIBUTE = 'layercache.key_hash'
+
+interface OpenTelemetryPluginOptions {
+  /** Include raw cache keys in span attributes. Disabled by default. */
+  includeRawKeyAttributes?: boolean
+}
 
 /**
  * Lightweight OpenTelemetry instrumentation for a CacheStack instance.
@@ -22,7 +30,11 @@ const MAX_SPANS = 10_000
  * This implementation subscribes to CacheStack operation hooks instead of
  * monkey-patching instance methods, so it can coexist with other plugins.
  */
-export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemetryTracer) {
+export function createOpenTelemetryPlugin(
+  cache: CacheStack,
+  tracer: OpenTelemetryTracer,
+  options: OpenTelemetryPluginOptions = {}
+) {
   const spans = new Map<number, OpenTelemetrySpan>()
 
   const onStart = (event: CacheOperationStart): void => {
@@ -35,7 +47,7 @@ export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemet
           spans.delete(oldest)
         }
       }
-      spans.set(event.id, tracer.startSpan(event.name, { attributes: event.attributes }))
+      spans.set(event.id, tracer.startSpan(event.name, { attributes: sanitizeAttributes(event.attributes, options) }))
     } catch {
       // Swallow tracer errors to avoid breaking cache operations
     }
@@ -75,4 +87,21 @@ export function createOpenTelemetryPlugin(cache: CacheStack, tracer: OpenTelemet
       spans.clear()
     }
   }
+}
+
+function sanitizeAttributes(
+  attributes: Record<string, unknown> | undefined,
+  options: OpenTelemetryPluginOptions
+): Record<string, unknown> | undefined {
+  if (!attributes || options.includeRawKeyAttributes === true || !(RAW_KEY_ATTRIBUTE in attributes)) {
+    return attributes
+  }
+
+  const sanitized = { ...attributes }
+  const rawKey = sanitized[RAW_KEY_ATTRIBUTE]
+  delete sanitized[RAW_KEY_ATTRIBUTE]
+  sanitized[KEY_HASH_ATTRIBUTE] = createHash('sha256')
+    .update(String(rawKey ?? ''))
+    .digest('hex')
+  return sanitized
 }

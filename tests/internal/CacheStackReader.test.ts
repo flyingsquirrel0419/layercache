@@ -258,7 +258,7 @@ describe('CacheStackReader', () => {
       options.layers = [createMockLayer('L0'), createMockLayer('L1')]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.misses).toBe(1)
     })
 
@@ -298,7 +298,7 @@ describe('CacheStackReader', () => {
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => expired) })]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.misses).toBe(1)
     })
 
@@ -478,12 +478,12 @@ describe('CacheStackReader', () => {
   // --- getPrepared — miss path ---
 
   describe('getPrepared — miss path', () => {
-    it('returns null on miss without fetcher', async () => {
+    it('returns undefined on miss without fetcher', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.misses).toBe(1)
     })
 
@@ -495,7 +495,7 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBe('fetched')
-      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', 'fetched', undefined)
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', 'fetched', undefined, expect.anything())
       expect(fetcher).toHaveBeenCalledWith({
         key: 'key:1',
         currentValue: undefined,
@@ -523,10 +523,10 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toEqual({ name: 'test' })
-      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', { name: 'test' }, undefined)
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', { name: 'test' }, undefined, expect.anything())
     })
 
-    it('null fetch result returns null without negative caching', async () => {
+    it('null fetch result is cached as a regular value by default', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
       options.storeEntry = vi.fn(async () => {})
@@ -534,19 +534,20 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBeNull()
-      expect(options.storeEntry).not.toHaveBeenCalled()
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', null, undefined, expect.anything())
     })
 
     it('null fetch result stores empty with negative caching enabled', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
       options.negativeCaching = true
+      options.cacheNullValues = false
       options.storeEntry = vi.fn(async () => {})
       const fetcher = vi.fn(async () => null)
 
       const result = await reader.getPrepared('key:1', fetcher)
-      expect(result).toBeNull()
-      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined)
+      expect(result).toBeUndefined()
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined, expect.anything())
     })
 
     it('null fetch result stores a value when cacheNullValues is enabled globally', async () => {
@@ -559,7 +560,7 @@ describe('CacheStackReader', () => {
 
       const result = await reader.getPrepared('key:1', fetcher)
       expect(result).toBeNull()
-      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', null, undefined)
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', null, undefined, expect.anything())
     })
 
     it('null fetch result stores a value when cacheNullValues is enabled per operation', async () => {
@@ -575,7 +576,8 @@ describe('CacheStackReader', () => {
         'key:1',
         'value',
         null,
-        expect.objectContaining({ cacheNullValues: true })
+        expect.objectContaining({ cacheNullValues: true }),
+        expect.anything()
       )
     })
 
@@ -588,8 +590,8 @@ describe('CacheStackReader', () => {
       const fetcher = vi.fn(async () => undefined)
 
       const result = await reader.getPrepared('key:1', fetcher)
-      expect(result).toBeNull()
-      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined)
+      expect(result).toBeUndefined()
+      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'empty', null, undefined, expect.anything())
     })
 
     it('shouldCache returning false skips storage but returns value', async () => {
@@ -605,7 +607,7 @@ describe('CacheStackReader', () => {
       expect(options.storeEntry).not.toHaveBeenCalled()
     })
 
-    it('shouldCache error logs warning but continues', async () => {
+    it('shouldCache error logs warning and fails closed to no storage', async () => {
       const { reader, options } = createReader()
       options.layers = [createMockLayer('L0')]
       options.storeEntry = vi.fn(async () => {})
@@ -618,7 +620,7 @@ describe('CacheStackReader', () => {
         }
       })
       expect(result).toBe('value')
-      expect(options.storeEntry).toHaveBeenCalledWith('key:1', 'value', 'value', expect.anything())
+      expect(options.storeEntry).not.toHaveBeenCalled()
       expect(options.logger.warn).toHaveBeenCalledWith('shouldCache-error', expect.objectContaining({ key: 'key:1' }))
     })
   })
@@ -794,6 +796,33 @@ describe('CacheStackReader', () => {
         vi.useRealTimers()
       }
     })
+
+    it('bounds repeated coordinator waiter selection to one retry', async () => {
+      vi.useFakeTimers()
+      const { reader, options } = createReader()
+      options.layers = [createMockLayer('L0', { get: vi.fn(async () => null) })]
+      const execute = vi.fn(
+        async (
+          _key: string,
+          _opts: unknown,
+          _worker: () => Promise<string | null>,
+          waiter: () => Promise<string | null>
+        ) => waiter()
+      )
+      options.singleFlightCoordinator = { execute }
+      options.singleFlightTimeoutMs = 20
+      options.singleFlightPollMs = 10
+      options.sleep = vi.fn(async (ms: number) => {
+        vi.advanceTimersByTime(ms)
+      })
+
+      try {
+        await expect(reader.getPrepared('key:1', async () => 'never')).rejects.toThrow(/timed out/i)
+        expect(execute).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   // --- Background refresh management ---
@@ -962,7 +991,7 @@ describe('CacheStackReader', () => {
       options.layers = [createMockLayer('L0', { get: vi.fn(async () => negative) })]
 
       const result = await reader.getPrepared('key:1')
-      expect(result).toBeNull()
+      expect(result).toBeUndefined()
       expect(options.metricsCollector.snapshot.negativeCacheHits).toBe(1)
     })
   })

@@ -37,6 +37,10 @@ interface RedisLayerOptions {
    * Prevents decompression bomb attacks. Defaults to 64 MiB.
    */
   decompressionMaxBytes?: number
+  /** Maximum compressed bytes accepted before decompression. Defaults to 4 MiB. */
+  decompressionMaxInputBytes?: number
+  /** Maximum allowed decompression expansion ratio. Defaults to 10 000. */
+  decompressionMaxRatio?: number
   /**
    * Per-command timeout in milliseconds for Redis round-trips.
    * Slow commands reject so CacheStack can treat the layer as degraded.
@@ -62,6 +66,8 @@ export class RedisLayer implements CacheLayer {
   private readonly compression?: CompressionAlgorithm
   private readonly compressionThreshold: number
   private readonly decompressionMaxBytes: number
+  private readonly decompressionMaxInputBytes: number
+  private readonly decompressionMaxRatio: number
   private readonly commandTimeoutMs: number | undefined
   private readonly disconnectOnDispose: boolean
 
@@ -81,6 +87,8 @@ export class RedisLayer implements CacheLayer {
     this.compression = options.compression
     this.compressionThreshold = options.compressionThreshold ?? 1_024
     this.decompressionMaxBytes = options.decompressionMaxBytes ?? 64 * 1_024 * 1_024
+    this.decompressionMaxInputBytes = options.decompressionMaxInputBytes ?? 4 * 1_024 * 1_024
+    this.decompressionMaxRatio = options.decompressionMaxRatio ?? 10_000
     this.commandTimeoutMs = this.normalizeCommandTimeoutMs(options.commandTimeoutMs)
     this.disconnectOnDispose = options.disconnectOnDispose ?? false
   }
@@ -314,6 +322,7 @@ export class RedisLayer implements CacheLayer {
    * Returns keys under this layer's prefix without the prefix included.
    */
   async keys(): Promise<string[]> {
+    this.assertBulkKeyOwnership('keys')
     const pattern = `${this.prefix}*`
     const keys = await this.scanKeys(pattern)
     if (!this.prefix) {
@@ -326,6 +335,7 @@ export class RedisLayer implements CacheLayer {
    * Visits keys under this layer's prefix without materializing all results.
    */
   async forEachKey(visitor: (key: string) => void | Promise<void>): Promise<void> {
+    this.assertBulkKeyOwnership('forEachKey')
     const pattern = `${this.prefix}*`
     let cursor = '0'
 
@@ -478,10 +488,12 @@ export class RedisLayer implements CacheLayer {
     }
 
     if (payload.subarray(0, 10).toString() === 'LCZ1:gzip:') {
+      if (this.compression !== 'gzip') return payload
       return this.decompressWithLimit(createGunzip(), payload.subarray(10))
     }
 
     if (payload.subarray(0, 12).toString() === 'LCZ1:brotli:') {
+      if (this.compression !== 'brotli') return payload
       return this.decompressWithLimit(createBrotliDecompress(), payload.subarray(12))
     }
 
@@ -489,6 +501,11 @@ export class RedisLayer implements CacheLayer {
   }
 
   private async decompressWithLimit(decompressor: Transform, payload: Buffer): Promise<Buffer> {
+    if (payload.byteLength > this.decompressionMaxInputBytes) {
+      throw new Error(
+        `Compressed payload (${payload.byteLength} bytes) exceeds decompressionMaxInputBytes limit (${this.decompressionMaxInputBytes} bytes).`
+      )
+    }
     return new Promise<Buffer>((resolve, reject) => {
       const source = Readable.from(payload)
       const chunks: Buffer[] = []
@@ -514,11 +531,10 @@ export class RedisLayer implements CacheLayer {
       decompressor.on('data', (chunk: Buffer | string) => {
         const normalized = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
         totalBytes += normalized.byteLength
-        if (totalBytes > this.decompressionMaxBytes) {
+        const ratioLimit = Math.max(1, payload.byteLength) * this.decompressionMaxRatio
+        if (totalBytes > this.decompressionMaxBytes || totalBytes > ratioLimit) {
           fail(
-            new Error(
-              `Decompressed payload (${totalBytes} bytes) exceeds decompressionMaxBytes limit (${this.decompressionMaxBytes} bytes).`
-            )
+            new Error(`Decompressed payload (${totalBytes} bytes) exceeds configured output or expansion-ratio limits.`)
           )
           return
         }
@@ -546,6 +562,14 @@ export class RedisLayer implements CacheLayer {
 
       source.pipe(decompressor)
     })
+  }
+
+  private assertBulkKeyOwnership(operation: string): void {
+    if (!this.prefix && !this.allowUnprefixedClear) {
+      throw new Error(
+        `RedisLayer.${operation}() requires a prefix or allowUnprefixedClear=true to avoid enumerating unrelated keys.`
+      )
+    }
   }
 
   private normalizeCommandTimeoutMs(value: number | undefined): number | undefined {

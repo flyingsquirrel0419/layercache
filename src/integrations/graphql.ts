@@ -16,7 +16,7 @@ export function cacheGraphqlResolver<TArgs extends unknown[], TResult>(
   prefix: string,
   resolver: (...args: TArgs) => Promise<TResult>,
   options: GraphqlCacheOptions<TArgs> = {}
-): (...args: TArgs) => Promise<TResult | null> {
+): (...args: TArgs) => Promise<TResult | undefined> {
   if (!options.keyResolver && options.allowImplicitContextCaching !== true) {
     throw new Error(
       'cacheGraphqlResolver requires a keyResolver or allowImplicitContextCaching=true because resolver output may depend on request context.'

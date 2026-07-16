@@ -14,6 +14,20 @@ describe('PayloadProtection', () => {
     expect(protection.unprotect(payload)).toEqual(payload)
   })
 
+  it('rejects unprotected plaintext payloads when protection is enabled', () => {
+    const protection = new PayloadProtection({ signingKey: 'sig-key' })
+
+    expect(() => protection.unprotect(Buffer.from('{"value":true}'))).toThrow(PayloadProtectionError)
+    expect(() => protection.unprotect(Buffer.from('{"value":true}'))).toThrow(/plaintext payload rejected/i)
+  })
+
+  it('can explicitly allow legacy plaintext payloads during migrations', () => {
+    const protection = new PayloadProtection({ signingKey: 'sig-key', allowLegacyPlaintext: true })
+    const payload = Buffer.from('{"value":true}')
+
+    expect(protection.unprotect(payload)).toEqual(payload)
+  })
+
   it('throws when decrypting an encrypted payload without an encryption key', () => {
     const writer = new PayloadProtection({ encryptionKey: 'enc-key' })
     const reader = new PayloadProtection({})

@@ -19,8 +19,8 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="license"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-first-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A5_20-339933?logo=nodedotjs&logoColor=white" alt="Node.js >= 20">
-  <img src="https://img.shields.io/badge/tests-601_passing-brightgreen" alt="tests">
-  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260517" alt="Coveralls"></a>
+  <img src="https://img.shields.io/badge/tests-672_passing-brightgreen" alt="tests">
+  <a href="https://coveralls.io/github/flyingsquirrel0419/layercache?branch=main"><img src="https://coveralls.io/repos/github/flyingsquirrel0419/layercache/badge.svg?branch=main&t=20260716" alt="Coveralls"></a>
 </p>
 
 <p align="center">
@@ -51,13 +51,17 @@ const results = await Promise.all(
 
 layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stampede prevention, tag invalidation, and distributed consistency are built in — no extra config required.
 
+### Version 4.0
+
+Public reads now return `undefined` on cache miss while preserving an intentional cached `null`. Read-through fetchers cache `null` by default, and `getOrThrow()` throws only for `undefined`. See the [4.0 migration guide](./docs/migration-guide.md#upgrading-to-40) before upgrading.
+
 ---
 
 ## What's New in 3.0
 
 - `RedisTagIndex` uses 16 known-key shards by default. Existing Redis tag indexes that still use the legacy `<prefix>:keys` set should be migrated with `npx layercache migrate-tag-index`.
 - Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed. Prefer `rediss://` for production Redis endpoints.
-- Express and Hono implicit URL cache keys now strip sensitive query parameters before caching, and non-2xx JSON responses are not cached by default.
+- Express and Hono implicit URL caching now skips requests with sensitive query parameters unless you provide a custom `keyResolver`, and non-2xx JSON responses are not cached by default.
 - Redis-backed generation persistence is available through `RedisGenerationStore`, and `CacheStack.getGeneration()` exposes the active generation.
 - The docs site now runs on Rspress and GitHub Pages.
 
@@ -262,7 +266,7 @@ const cache = new CacheStack([
 | **Namespaces** | Scoped cache views with hierarchical prefix support |
 | **Cache warming** | Pre-populate layers at startup with priority-based loading |
 | **Negative caching** | Cache misses (e.g., "user not found") for short TTLs |
-| **Stored null values** | `cacheNullValues` keeps intentional `null` values distinct from misses |
+| **Stored null values** | Intentional `null` values are cached by default and remain distinct from `undefined` misses |
 | **Entry introspection** | `getEntry()` reports value, kind, state, key, and source layer |
 
 ### Invalidation & Freshness
@@ -291,7 +295,7 @@ const cache = new CacheStack([
 | **Fetcher rate limiting** | Scoped to global, per-key, or per-fetcher; `queueOverflow: 'reject'` rejects saturated queues and `'bypass'` runs overflow work directly |
 | **Write policies** | `strict` (fail if any layer fails) or `best-effort` |
 | **Write-behind** | Batch writes with configurable flush interval |
-| **Bounded disk writes** | `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized write buildup |
+| **Bounded write coordination** | `CacheStack.writeCoordination` bounds retained per-key ordering state, and `DiskLayer.maxWriteQueueDepth` bounds serialized disk work |
 | **Compression** | gzip / brotli in RedisLayer with configurable threshold |
 | **MessagePack** | Pluggable serializers (JSON default, MessagePack alternative) |
 | **Persistence** | Export/import snapshots to memory or disk |
@@ -325,7 +329,7 @@ layercache plugs into the frameworks you already use:
 | **tRPC** | `createTrpcCacheMiddleware(cache, prefix, opts)` - procedure middleware |
 | **GraphQL** | `cacheGraphqlResolver(cache, prefix, resolver, opts)` - field resolver wrapper |
 | **Next.js** | Works natively with App Router and API routes |
-| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - event-driven tracing spans without monkey-patching |
+| **OpenTelemetry** | `createOpenTelemetryPlugin(cache, tracer)` - event-driven tracing spans with hashed cache-key attributes by default |
 
 <details>
 <summary><b>Express example</b></summary>
@@ -378,7 +382,7 @@ layercache is built for multi-instance production environments:
 ```
 
 - **Redis single-flight** - dedup misses across instances with distributed locks
-- **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency
+- **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency; set `signingSecret` for shared Redis channels
 - **Redis tag index** - shared tag tracking with 16 known-key shards by default
 - **Snapshot persistence** - export/import state between instances
 

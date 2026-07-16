@@ -42,13 +42,18 @@ layercache includes several built-in security measures:
 - **Input validation** — cache keys, patterns, and tags are validated before any operation
 - **Prototype pollution protection** — all JSON/MessagePack deserialization strips dangerous keys
 - **Decompression limits** — RedisLayer enforces `decompressionMaxBytes` (default 64 MiB) to prevent compression bombs
-- **Atomic file writes** — snapshots use temp file + `fs.rename` to prevent TOCTOU races
+- **Snapshot path hardening** — snapshots are restricted to `snapshotBaseDir` by default, use temp file + `fs.rename`, and reject symlinked target parents before commit
 - **Key truncation** — error messages truncate long keys to prevent log injection
-- **Bounded work queues** — fetcher rate limiting rejects saturated queues by default, and `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized disk writes
+- **Bounded work queues** — fetcher rate limiting and cache write coordination reject saturated retained work by default, generation cleanup caps unique matches, and `DiskLayer.maxWriteQueueDepth` prevents unbounded serialized disk writes
 - **Circuit breaker isolation** — per-key, shared, and explicit breaker buckets are namespaced to avoid accidental dependency-bucket collisions
-- **Redis CLI safeguards** — mass deletion requires `--force`, Redis passwords are masked in output, production `redis://` URLs are rejected unless `--allow-plaintext` is explicitly passed, and scan commands have bounded default limits
-- **HTTP cache-key filtering** — Express and Hono implicit URL cache keys omit common sensitive query parameters such as access tokens, API keys, passwords, private keys, credentials, and session identifiers
-- **Signed invalidation messages** — RedisInvalidationBus can sign and verify pub/sub invalidation messages with HMAC-SHA256 via `signingSecret`
+- **Redis CLI safeguards** — full-cache invalidation and wildcard-only patterns require `--force`, Redis passwords are masked in output and nested connection errors, production `redis://` URLs are rejected unless `--allow-plaintext` is explicitly passed, and scan commands have bounded default limits
+- **HTTP private-cache safeguards** — Express and Hono implicit URL caching bypasses requests with common sensitive query parameters such as access tokens, API keys, OAuth client secrets and assertions, passwords, private keys, credentials, and session identifiers unless callers provide a custom `keyResolver`
+- **Structured cache-key separation** — versioned canonical keys reject forged native type tags, keeping plain objects distinct from `Date`, `URL`, `RegExp`, `Map`, and `Set` values
+- **Stale-write fencing** — monotonic key epochs and shared single/bulk ordering prevent delayed writes or cleanup from repopulating invalidated keys or deleting newer values
+- **Playground message isolation** — the token-bearing worker sender remains lexical and outside dynamically constructed user code's global reach
+- **Disk payload protection** — DiskLayer rejects unprotected plaintext entries when `encryptionKey` or `signingKey` is configured, unless `allowLegacyPlaintext` is explicitly enabled for migration
+- **Telemetry key redaction** — OpenTelemetry exports hashed cache-key attributes by default; raw cache keys require explicit opt-in
+- **Signed invalidation messages** — RedisInvalidationBus can sign and verify pub/sub invalidation messages with HMAC-SHA256 via `signingSecret`, and warns through the configured logger when running unsigned
 - **Sharded Redis tag indexes** — RedisTagIndex defaults to 16 known-key shards to reduce single-set hot spots, with a migration command for legacy single-set deployments
 - **Stats endpoint protection** — defaults to protected mode, requires explicit opt-in for public access
 
@@ -57,4 +62,6 @@ layercache includes several built-in security measures:
 - Use `rediss://` for production Redis endpoints. Only pass `--allow-plaintext` for trusted private networks where plaintext Redis is intentional.
 - Set `signingSecret` on every process that shares a Redis invalidation channel outside a fully isolated Redis deployment.
 - Migrate legacy RedisTagIndex known-key sets with `layercache migrate-tag-index` before depending on the v3 sharded layout in long-lived or mixed-version deployments.
-- Avoid implicit URL cache keys for private responses unless `allowPrivateCaching` is intentionally enabled and the cache policy is reviewed.
+- Use custom `keyResolver` functions for private HTTP responses, especially when identity or authorization data appears in query parameters.
+- Keep `snapshotBaseDir` and DiskLayer directories process-owned and avoid group/world-writable parent directories.
+- Treat `allowLegacyPlaintext` and `includeRawKeyAttributes` as temporary or explicitly reviewed opt-ins.

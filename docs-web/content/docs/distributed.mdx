@@ -134,7 +134,7 @@ const cache = new CacheStack([
 | `invalidationBus` | `RedisInvalidationBus` | - | Bus instance |
 | `broadcastL1Invalidation` | `boolean` | `false` | Enable L1 invalidation broadcasts |
 | `channel` | `string` | `'layercache:invalidation'` | Pub/sub channel name |
-| `signingSecret` | `string \| Buffer` | - | Optional HMAC-SHA256 secret for message authenticity |
+| `signingSecret` | `string \| Buffer` | - | HMAC-SHA256 secret for message authenticity; strongly recommended for shared Redis channels |
 | `logger` | `Logger` | - | Optional logger for errors |
 
 ### Invalidation Message Format
@@ -178,7 +178,7 @@ const bus = new RedisInvalidationBus({
 
 ### Signed Messages
 
-Use `signingSecret` when a Redis channel can be reached by more than one trusted application. Layercache signs published invalidation messages and verifies inbound messages before handlers run.
+Use `signingSecret` when a Redis channel can be reached by more than one trusted application. Layercache signs published invalidation messages and verifies inbound messages before handlers run. If omitted, the bus runs in unsigned compatibility mode and emits a logger warning when a logger is configured.
 
 ```tsx
 const bus = new RedisInvalidationBus({

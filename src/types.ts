@@ -22,6 +22,19 @@ export class CacheMissError extends Error {
   }
 }
 
+/** Thrown when bounded write coordination cannot safely admit more retained work. */
+export class CacheWriteSaturationError extends Error {
+  readonly limit: number
+  readonly scope: 'pending-writes' | 'active-keys' | 'per-key'
+
+  constructor(scope: CacheWriteSaturationError['scope'], limit: number) {
+    super(`Cache write coordination ${scope} limit (${limit}) exceeded.`)
+    this.name = 'CacheWriteSaturationError'
+    this.scope = scope
+    this.limit = limit
+  }
+}
+
 /** Per-layer millisecond values keyed by each layer's `name`. */
 export interface LayerTtlMap {
   /** Millisecond value for the named layer, or `undefined` to fall back. */
@@ -63,9 +76,9 @@ export interface CacheContextOptionsContext {
 
 /** Options accepted by write operations and read-through fetch writes. */
 export interface CacheWriteOptions extends CacheEntryWriteOptions {
-  /** Cache `null` fetcher results using `negativeTtl` instead of treating them as misses. */
+  /** Cache `undefined` results, and `null` when `cacheNullValues` is false, as empty entries. */
   negativeCache?: boolean
-  /** Cache `null` fetcher results as regular values instead of negative/empty entries. */
+  /** Cache `null` fetcher results as regular values. Defaults to true in v4. */
   cacheNullValues?: boolean
   /** Extend a key's TTL on fresh reads. */
   slidingTtl?: boolean
@@ -381,9 +394,9 @@ export interface CacheStackOptions {
    * @deprecated Use `broadcastL1Invalidation` instead.
    */
   publishSetInvalidation?: boolean
-  /** Cache null fetcher results as negative entries. */
+  /** Cache absence-like fetcher results as negative entries. */
   negativeCaching?: boolean
-  /** Cache null fetcher results as regular values instead of negative/empty entries. */
+  /** Cache null fetcher results as regular values. Defaults to true in v4. */
   cacheNullValues?: boolean
   /** Default negative-cache TTL in milliseconds. */
   negativeTtl?: number | LayerTtlMap
@@ -407,6 +420,8 @@ export interface CacheStackOptions {
   writeStrategy?: 'write-through' | 'write-behind'
   /** Queue controls used when `writeStrategy` is `write-behind`. */
   writeBehind?: CacheWriteBehindOptions
+  /** Finite admission limits shared by write-through, write-behind, and bulk writes. */
+  writeCoordination?: CacheWriteCoordinationOptions
   /** Default fetcher rate limit settings. */
   fetcherRateLimit?: CacheRateLimitOptions
   /** Max milliseconds allowed for background refresh before it is aborted. */
@@ -451,6 +466,12 @@ export interface CacheAdaptiveTtlOptions {
 export interface CacheGenerationCleanupOptions {
   /** Number of old-generation keys to remove per cleanup batch. */
   batchSize?: number
+  /**
+   * Maximum unique old-generation keys discovered in one cleanup run.
+   * Defaults to 10 000. Set to `false` only when another deployment-level
+   * memory bound is guaranteed.
+   */
+  maxMatches?: number | false
 }
 
 /** Built-in TTL policies or a function that returns a TTL in milliseconds. */
@@ -516,6 +537,16 @@ export interface CacheWriteBehindOptions {
   batchSize?: number
   /** Maximum queued writes before new writes are rejected. */
   maxQueueSize?: number
+}
+
+/** Admission controls for retained write ordering state. */
+export interface CacheWriteCoordinationOptions {
+  /** Maximum pending key-write units across all active writes. Defaults to 10 000. */
+  maxPendingWrites?: number
+  /** Maximum distinct keys retained by write ordering state. Defaults to 10 000. */
+  maxActiveKeys?: number
+  /** Maximum queued write operations retained for one key. Defaults to 1 000. */
+  maxPendingWritesPerKey?: number
 }
 
 /** Entry used by `CacheStack.warm()` to pre-populate a key. */
@@ -661,7 +692,7 @@ export interface CacheStackEvents {
     name: string
     attributes?: Record<string, unknown>
     success: boolean
-    result?: 'null'
+    result?: 'null' | 'undefined'
     error?: unknown
   }
   /** Fired when an error occurs (layer failure, circuit breaker, etc.). */

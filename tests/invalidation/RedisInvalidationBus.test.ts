@@ -27,12 +27,27 @@ describe('RedisInvalidationBus', () => {
       })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).toHaveBeenCalledTimes(1)
-    expect(errorSpy).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalled()
+    })
 
     await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('warns when constructed without a signing secret', () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { warn: vi.fn() }
+
+    new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:unsigned-warning', logger })
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('without signingSecret'), {
+      channel: 'layercache:test:unsigned-warning'
+    })
+
     publisher.disconnect()
     subscriber.disconnect()
   })
@@ -68,10 +83,10 @@ describe('RedisInvalidationBus', () => {
       })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).toHaveBeenCalledTimes(2)
-    expect(errorSpy).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(2)
+      expect(errorSpy).toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -94,10 +109,10 @@ describe('RedisInvalidationBus', () => {
       JSON.stringify({ scope: 'key', sourceId: 'inst', keys: ['k'], operation: 'delete' })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler1).toHaveBeenCalledTimes(1)
-    expect(handler2).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(handler1).toHaveBeenCalledTimes(1)
+      expect(handler2).toHaveBeenCalledTimes(1)
+    })
 
     // Unsubscribing one handler should not affect the other
     await unsub1()
@@ -107,10 +122,10 @@ describe('RedisInvalidationBus', () => {
       JSON.stringify({ scope: 'clear', sourceId: 'inst', operation: 'clear' })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler1).toHaveBeenCalledTimes(1) // no more calls
-    expect(handler2).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => {
+      expect(handler1).toHaveBeenCalledTimes(1) // no more calls
+      expect(handler2).toHaveBeenCalledTimes(2)
+    })
 
     await unsub2()
     publisher.disconnect()
@@ -138,10 +153,10 @@ describe('RedisInvalidationBus', () => {
       JSON.stringify({ scope: 'key', sourceId: 'inst', keys: ['k'], operation: 'delete' })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(logger.error).toHaveBeenCalled()
-    expect(consoleSpy).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(logger.error).toHaveBeenCalled()
+      expect(consoleSpy).not.toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -178,10 +193,10 @@ describe('RedisInvalidationBus', () => {
       })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).not.toHaveBeenCalled()
-    expect(logger.error).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -213,10 +228,10 @@ describe('RedisInvalidationBus', () => {
       })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).not.toHaveBeenCalled()
-    expect(logger.error).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -235,10 +250,10 @@ describe('RedisInvalidationBus', () => {
     await bus.publish({ scope: 'key', sourceId: 'inst', keys: ['user:1'], operation: 'delete' })
     await publisher.publish('layercache:test:shape', JSON.stringify(42))
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).toHaveBeenCalledTimes(1)
-    expect(errorSpy).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -263,16 +278,16 @@ describe('RedisInvalidationBus', () => {
       JSON.stringify({ scope: 'keys', sourceId: 'inst', keys: ['user:2'], operation: 'unknown' })
     )
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).toHaveBeenCalledTimes(1)
-    expect(handler).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: 'expire',
-        keys: ['user:1']
-      })
-    )
-    expect(errorSpy).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(1)
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: 'expire',
+          keys: ['user:1']
+        })
+      )
+      expect(errorSpy).toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -295,15 +310,17 @@ describe('RedisInvalidationBus', () => {
     const unsubscribe = await busB.subscribe(handler)
 
     await busA.publish({ scope: 'key', sourceId: 'inst', keys: ['user:1'], operation: 'delete' })
-    await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(handler).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: 'key',
-        keys: ['user:1'],
-        operation: 'delete'
-      })
-    )
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'key',
+          keys: ['user:1'],
+          operation: 'delete'
+        })
+      )
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
 
     await unsubscribe()
     publisher.disconnect()
@@ -324,12 +341,48 @@ describe('RedisInvalidationBus', () => {
       channel,
       JSON.stringify({ scope: 'key', sourceId: 'inst', keys: ['user:1'], operation: 'delete' })
     )
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).not.toHaveBeenCalled()
-    expect(logger.error).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalled()
+    })
 
     await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('rejects non-object signed envelopes when a signing secret is configured', async () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const logger = { error: vi.fn() }
+    const channel = 'layercache:test:signed-non-object'
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel, signingSecret: 'shared-secret', logger })
+    const handler = vi.fn()
+
+    const unsubscribe = await bus.subscribe(handler)
+
+    await publisher.publish(channel, JSON.stringify(42))
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalledWith('invalid invalidation payload', {
+        error: expect.any(Error)
+      })
+    })
+
+    await unsubscribe()
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('keeps signing helper guarded when no signing secret is configured', () => {
+    const publisher = new Redis()
+    const subscriber = publisher.duplicate()
+    const bus = new RedisInvalidationBus({ publisher, subscriber, channel: 'layercache:test:no-secret-helper' })
+
+    expect(() => (bus as unknown as { createSignature: (payload: string) => string }).createSignature('{}')).toThrow(
+      /signing key is not configured/i
+    )
+
     publisher.disconnect()
     subscriber.disconnect()
   })
@@ -346,8 +399,9 @@ describe('RedisInvalidationBus', () => {
     const unsubscribe = await bus.subscribe(handler)
 
     await bus.publish({ scope: 'key', sourceId: 'inst', keys: ['user:1'], operation: 'delete' })
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(handler).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
 
     const signedPayload = String(publishSpy.mock.calls[0]?.[1])
     const parsedPayload = JSON.parse(signedPayload) as {
@@ -362,10 +416,10 @@ describe('RedisInvalidationBus', () => {
     logger.error.mockClear()
 
     await publisher.publish(channel, JSON.stringify(tampered))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-
-    expect(handler).not.toHaveBeenCalled()
-    expect(logger.error).toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled()
+      expect(logger.error).toHaveBeenCalled()
+    })
 
     await unsubscribe()
     publisher.disconnect()
