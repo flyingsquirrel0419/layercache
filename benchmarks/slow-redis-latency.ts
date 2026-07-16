@@ -84,13 +84,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 }
 
 function createLayeredCache(redis: Redis, prefix: string, gracefulDegradation: boolean): LayeredCacheContext {
-  const memory = new MemoryLayer({ ttl: 60, maxSize: 50 })
+  const memory = new MemoryLayer({ ttl: 60_000, maxSize: 50 })
   const cache = new CacheStack(
     [
       memory,
       new RedisLayer({
         client: redis,
-        ttl: 300,
+        ttl: 300_000,
         prefix: `${prefix}:cache:`,
         commandTimeoutMs: COMMAND_TIMEOUT_MS
       })
@@ -126,8 +126,8 @@ async function runSlowRedisAtDelay(delayMs: number): Promise<SlowRedisResult[]> 
   const graceful = createLayeredCache(gracefulRedis, `slow:graceful:${delayMs}:${Date.now()}`, true)
 
   try {
-    await strict.cache.get('warm:key', async () => ({ source: 'origin', delayMs }), { ttl: 60 })
-    await graceful.cache.get('warm:key', async () => ({ source: 'origin', delayMs }), { ttl: 60 })
+    await strict.cache.get('warm:key', async () => ({ source: 'origin', delayMs }), { ttl: 60_000 })
+    await graceful.cache.get('warm:key', async () => ({ source: 'origin', delayMs }), { ttl: 60_000 })
     proxy.setLatencyMs(delayMs)
 
     const hotStrict = await measure(() =>
@@ -172,7 +172,7 @@ async function runSlowRedisAtDelay(delayMs: number): Promise<SlowRedisResult[]> 
 
     const coldStrict = await measure(() =>
       withTimeout(
-        strict.cache.get('cold:key', async () => ({ source: 'origin', delayMs }), { ttl: 60 }),
+        strict.cache.get('cold:key', async () => ({ source: 'origin', delayMs }), { ttl: 60_000 }),
         TIMEOUT_MS,
         `${delayLabel} strict cold`
       )
@@ -190,7 +190,7 @@ async function runSlowRedisAtDelay(delayMs: number): Promise<SlowRedisResult[]> 
 
     const coldGraceful = await measure(() =>
       withTimeout(
-        graceful.cache.get('cold:key', async () => ({ source: 'origin', delayMs }), { ttl: 60 }),
+        graceful.cache.get('cold:key', async () => ({ source: 'origin', delayMs }), { ttl: 60_000 }),
         TIMEOUT_MS,
         `${delayLabel} graceful cold`
       )
@@ -227,14 +227,14 @@ async function runDeadRedisContrast(): Promise<SlowRedisResult[]> {
   const graceful = createLayeredCache(gracefulRedis, `dead:graceful:${Date.now()}`, true)
 
   try {
-    await strict.cache.get('warm:key', async () => ({ source: 'origin' }), { ttl: 60 })
-    await graceful.cache.get('warm:key', async () => ({ source: 'origin' }), { ttl: 60 })
+    await strict.cache.get('warm:key', async () => ({ source: 'origin' }), { ttl: 60_000 })
+    await graceful.cache.get('warm:key', async () => ({ source: 'origin' }), { ttl: 60_000 })
 
     await pauseRedisContainer()
 
     const strictCold = await measure(() =>
       withTimeout(
-        strict.cache.get('cold:key', async () => ({ source: 'origin' }), { ttl: 60 }),
+        strict.cache.get('cold:key', async () => ({ source: 'origin' }), { ttl: 60_000 }),
         2_000,
         'dead strict cold'
       )
@@ -252,7 +252,7 @@ async function runDeadRedisContrast(): Promise<SlowRedisResult[]> {
 
     const gracefulCold = await measure(() =>
       withTimeout(
-        graceful.cache.get('cold:key', async () => ({ source: 'origin' }), { ttl: 60 }),
+        graceful.cache.get('cold:key', async () => ({ source: 'origin' }), { ttl: 60_000 }),
         2_000,
         'dead graceful cold'
       )

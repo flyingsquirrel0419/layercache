@@ -75,7 +75,7 @@ process.on('message', async (message: WorkerMessage) => {
 
       const layer = new RedisLayer({
         client: redis,
-        ttl: 300,
+        ttl: 300_000,
         prefix: `${message.prefix}:cache:`,
         commandTimeoutMs: message.commandTimeoutMs
       })
@@ -88,7 +88,7 @@ process.on('message', async (message: WorkerMessage) => {
               channel: message.busChannel
             })
 
-      cache = new CacheStack([new MemoryLayer({ ttl: 60, maxSize: 1_000 }), layer], {
+      cache = new CacheStack([new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }), layer], {
         stampedePrevention: true,
         invalidationBus: bus,
         broadcastL1Invalidation: bus ? true : undefined,
@@ -113,7 +113,7 @@ process.on('message', async (message: WorkerMessage) => {
     const initializedCache = await ensureInitialized(message)
 
     if (message.type === 'seed') {
-      await initializedCache.set(message.key, message.value, { ttl: 60 })
+      await initializedCache.set(message.key, message.value, { ttl: 60_000 })
       reply(message.id, true, { seeded: true })
       return
     }
@@ -139,7 +139,7 @@ process.on('message', async (message: WorkerMessage) => {
             await sleep(message.fetchDelayMs)
             return { key: message.key, fetchedAt: Date.now() }
           },
-          { ttl: 60 }
+          { ttl: 60_000 }
         )
       })
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000

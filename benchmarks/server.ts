@@ -29,14 +29,14 @@ export async function startBenchmarkServer(redis: Redis): Promise<BenchmarkServe
   const fixturePath = resolveBenchmarkFixturePath()
   await ensureFixtureFile(fixturePath)
 
-  const memoryCache = new CacheStack([new MemoryLayer({ ttl: 60, maxSize: 2_000 })], {
+  const memoryCache = new CacheStack([new MemoryLayer({ ttl: 60_000, maxSize: 2_000 })], {
     stampedePrevention: true
   })
 
   const layeredCache = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 2_000 }),
-      new RedisLayer({ client: redis, ttl: 300, prefix: 'layercache-bench:http:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 2_000 }),
+      new RedisLayer({ client: redis, ttl: 300_000, prefix: 'layercache-bench:http:' })
     ],
     {
       stampedePrevention: true,
@@ -49,8 +49,8 @@ export async function startBenchmarkServer(redis: Redis): Promise<BenchmarkServe
 
   const gracefulLayeredCache = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 2_000 }),
-      new RedisLayer({ client: redis, ttl: 300, prefix: 'layercache-bench:http:graceful:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 2_000 }),
+      new RedisLayer({ client: redis, ttl: 300_000, prefix: 'layercache-bench:http:graceful:' })
     ],
     {
       stampedePrevention: true,

@@ -37,15 +37,15 @@ function createNoCacheRunner(): CacheRunner {
 }
 
 function createMemoryRunner(): CacheRunner {
-  const cache = new CacheStack([new MemoryLayer({ ttl: 60, maxSize: 2_000 })], {
+  const cache = new CacheStack([new MemoryLayer({ ttl: 60_000, maxSize: 2_000 })], {
     stampedePrevention: true
   })
 
   return {
     read: async <T>(key: string, fetcher: () => Promise<T>) => {
       const value = await cache.get(key, fetcher)
-      if (value === null) {
-        throw new Error(`Cache unexpectedly returned null for ${key}`)
+      if (value === undefined) {
+        throw new Error(`Cache unexpectedly returned undefined for ${key}`)
       }
 
       return value
@@ -62,8 +62,8 @@ function createMemoryRunner(): CacheRunner {
 function createLayeredRunner(redis: Redis): CacheRunner {
   const cache = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 2_000 }),
-      new RedisLayer({ client: redis, ttl: 300, prefix: 'layercache-bench:direct:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 2_000 }),
+      new RedisLayer({ client: redis, ttl: 300_000, prefix: 'layercache-bench:direct:' })
     ],
     {
       stampedePrevention: true,
@@ -77,8 +77,8 @@ function createLayeredRunner(redis: Redis): CacheRunner {
   return {
     read: async <T>(key: string, fetcher: () => Promise<T>) => {
       const value = await cache.get(key, fetcher)
-      if (value === null) {
-        throw new Error(`Cache unexpectedly returned null for ${key}`)
+      if (value === undefined) {
+        throw new Error(`Cache unexpectedly returned undefined for ${key}`)
       }
 
       return value

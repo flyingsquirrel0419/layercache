@@ -63,7 +63,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 }
 
 function createLayeredCache(redis: Redis, prefix: string, gracefulDegradation: boolean): BenchmarkCacheContext {
-  const memory = new MemoryLayer({ ttl: 60, maxSize: 50 })
+  const memory = new MemoryLayer({ ttl: 60_000, maxSize: 50 })
   const originFetcher = createCountedFetcher(async () => ({
     source: 'origin',
     warmedAt: Date.now()
@@ -72,7 +72,7 @@ function createLayeredCache(redis: Redis, prefix: string, gracefulDegradation: b
   return {
     memory,
     originFetcher,
-    cache: new CacheStack([memory, new RedisLayer({ client: redis, ttl: 300, prefix: `${prefix}:cache:` })], {
+    cache: new CacheStack([memory, new RedisLayer({ client: redis, ttl: 300_000, prefix: `${prefix}:cache:` })], {
       stampedePrevention: true,
       ...(gracefulDegradation ? { gracefulDegradation: { retryAfterMs: 10_000 } } : {}),
       singleFlightCoordinator: new RedisSingleFlightCoordinator({
@@ -84,7 +84,7 @@ function createLayeredCache(redis: Redis, prefix: string, gracefulDegradation: b
 }
 
 async function warmCache(context: BenchmarkCacheContext, key: string): Promise<void> {
-  await context.cache.get(key, () => context.originFetcher.run(), { ttl: 60 })
+  await context.cache.get(key, () => context.originFetcher.run(), { ttl: 60_000 })
 }
 
 async function measureBatch(
@@ -102,7 +102,7 @@ async function measureBatch(
   const requestLatenciesMs = await runConcurrent(concurrency, async () => {
     const requestStartedAt = process.hrtime.bigint()
     await withTimeout(
-      context.cache.get(key, () => context.originFetcher.run(), { ttl: 60 }),
+      context.cache.get(key, () => context.originFetcher.run(), { ttl: 60_000 }),
       TIMEOUT_MS,
       `${delayLabel} ${scenario} ${buildConcurrencyLabel(concurrency)}`
     )

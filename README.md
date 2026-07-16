@@ -51,21 +51,18 @@ const results = await Promise.all(
 
 layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stampede prevention, tag invalidation, and distributed consistency are built in — no extra config required.
 
-### Version 4.0
-
-Public reads now return `undefined` on cache miss while preserving an intentional cached `null`. Read-through fetchers cache `null` by default, and `getOrThrow()` throws only for `undefined`. See the [4.0 migration guide](./docs/migration-guide.md#upgrading-to-40) before upgrading.
-
 ---
 
-## What's New in 3.0
+## What's New in 4.0
 
-- `RedisTagIndex` uses 16 known-key shards by default. Existing Redis tag indexes that still use the legacy `<prefix>:keys` set should be migrated with `npx layercache migrate-tag-index`.
-- Production CLI commands reject plaintext `redis://` URLs unless `--allow-plaintext` is passed. Prefer `rediss://` for production Redis endpoints.
-- Express and Hono implicit URL caching now skips requests with sensitive query parameters unless you provide a custom `keyResolver`, and non-2xx JSON responses are not cached by default.
-- Redis-backed generation persistence is available through `RedisGenerationStore`, and `CacheStack.getGeneration()` exposes the active generation.
-- The docs site now runs on Rspress and GitHub Pages.
+- Public `get()`, `getOrSet()`, `mget()`, `wrap()`, and namespace reads return `undefined` on misses while preserving intentional cached `null` values. Read-through fetchers cache `null` by default, and `getOrThrow()` throws only for `undefined`.
+- Structured `wrap()` argument keys use the collision-resistant `j2:` schema. Existing `j:` entries become cold misses and expire naturally.
+- Single, bulk, and write-behind operations share bounded per-key ordering, preventing stale writes from repopulating invalidated keys and surfacing overload as `CacheWriteSaturationError`.
+- Generation cleanup is streamed and capped at 10,000 discovered keys by default, with explicit tuning and opt-out controls.
+- Snapshot commits, protected `DiskLayer` reads, signed invalidation, HTTP credential handling, destructive CLI patterns, OpenTelemetry key attributes, and the docs playground trust boundary are hardened.
+- Benchmark TTLs now match the documented millisecond API, and the benchmark runner uses current `autocannon` dependencies with a clean npm audit.
 
-See the [changelog](./CHANGELOG.md) and [migration guide](./docs/migration-guide.md) before upgrading an existing deployment.
+See the [4.0 changelog](./CHANGELOG.md#400--2026-07-16) and [migration guide](./docs/migration-guide.md#upgrading-to-40) before upgrading an existing deployment.
 
 ---
 
@@ -119,18 +116,18 @@ const cache = new CacheStack([
 ## Performance
 
 ```
-Environment: Node.js v20.20.1, Redis 7-alpine, Linux x86_64
-CPU: AMD EPYC 4584PX 16-Core  |  RAM: 1.9 GB
-Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
+Measured 2026-07-16 on Node.js v24.16.0, Redis 7.4.9, Docker 29.1.3, Linux x86_64
+CPU: 2 vCPU (AMD Ryzen 9 9900X host)  |  RAM: 3.8 GiB
+Layers: MemoryLayer(ttl=60_000, maxSize=2000) + RedisLayer(ttl=300_000)
 ```
 
 ```
 ┌──────────────────────────────┬──────────┬──────────┬──────────┬──────────┐
 │ Scenario                     │  avg ms  │  p95 ms  │  min ms  │  max ms  │
 ├──────────────────────────────┼──────────┼──────────┼──────────┼──────────┤
-│ L1 memory hit (warm)         │   0.011  │   0.016  │   0.004  │   0.405  │
-│ L1 hit in layered setup      │   0.006  │   0.007  │   0.004  │   0.077  │
-│ No cache / origin fetch      │   6.844  │  11.196  │   4.683  │  11.196  │
+│ L1 memory hit (warm)         │   0.013  │   0.035  │   0.004  │   0.543  │
+│ L1 hit in layered setup      │   0.009  │   0.026  │   0.003  │   0.158  │
+│ No cache / origin fetch      │   3.729  │   4.789  │   3.020  │   5.937  │
 └──────────────────────────────┴──────────┴──────────┴──────────┴──────────┘
 
 ┌──────────────────────────────┬────────────────────┐
@@ -141,7 +138,17 @@ Layers: MemoryLayer(ttl=60, maxSize=2000) + RedisLayer(ttl=300)
 └──────────────────────────────┴────────────────────┘
 ```
 
-Benchmark commands and full scenario notes: [docs/benchmarking.md](./docs/benchmarking.md)
+The HTTP benchmark used 40 connections for 8 seconds per route:
+
+| Route | Requests/sec | Avg latency | p97.5 latency | Errors/timeouts |
+|---|---:|---:|---:|---:|
+| No cache / origin | 261 | 153.88 ms | 203 ms | 0 / 0 |
+| Memory cache | 38,151 | 0.40 ms | 2 ms | 0 / 0 |
+| Layered cache, warm L1 | 37,600 | 0.42 ms | 2 ms | 0 / 0 |
+
+These are reproducible snapshots from one constrained host, not universal guarantees. Workload, payload size, CPU allocation, Redis placement, and network latency will change the result.
+
+Benchmark commands, methodology, edge/slow-Redis results, and the full environment: [docs/benchmarking.md](./docs/benchmarking.md)
 
 ---
 

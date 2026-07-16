@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Updated Vite and related development-only transitive dependencies to resolve the release audit finding.
+- Updated the README and benchmarking guide with a fresh reproducible 4.0.0 baseline covering direct, HTTP, payload, slow-Redis, queue-amplification, memory-pressure, invalidation, and distributed single-flight scenarios.
+- Corrected benchmark TTLs to use the documented millisecond units and updated Autocannon plus its Hyperid override so the HTTP benchmark runs on current Node.js with zero npm audit findings.
 - Updated API, migration, serialization, resilience, integration, architecture-decision, and security documentation for v4 miss/null semantics, finite cleanup/write limits, structured-key rotation, HTTP credential handling, CLI guard, and playground isolation boundary.
 
 ### Tests

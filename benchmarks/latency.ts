@@ -6,8 +6,8 @@ async function main(): Promise<void> {
   const iterations = 5_000
   const redis = new Redis()
   const cache = new CacheStack([
-    new MemoryLayer({ ttl: 60, maxSize: 10_000 }),
-    new RedisLayer({ client: redis, ttl: 300 })
+    new MemoryLayer({ ttl: 60_000, maxSize: 10_000 }),
+    new RedisLayer({ client: redis, ttl: 300_000 })
   ])
 
   await cache.set('bench:key', { ok: true })

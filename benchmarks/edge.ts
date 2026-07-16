@@ -53,9 +53,9 @@ async function measure<TResult>(task: () => Promise<TResult>): Promise<{ duratio
   }
 }
 
-function requireValue<T>(value: T | null, label: string): T {
-  if (value === null) {
-    throw new Error(`${label} unexpectedly returned null`)
+function requireValue<T>(value: T | undefined, label: string): T {
+  if (value === undefined) {
+    throw new Error(`${label} unexpectedly returned undefined`)
   }
 
   return value
@@ -74,14 +74,14 @@ async function runTtlExpiryStampede(): Promise<ModeSummary[]> {
   const redis = createRedisClient()
   await redis.ping()
 
-  const memoryCache = new CacheStack([new MemoryLayer({ ttl: 1, maxSize: 1_000 })], {
+  const memoryCache = new CacheStack([new MemoryLayer({ ttl: 1_000, maxSize: 1_000 })], {
     stampedePrevention: true
   })
 
   const layeredCache = new CacheStack(
     [
-      new MemoryLayer({ ttl: 1, maxSize: 1_000 }),
-      new RedisLayer({ client: redis, ttl: 1, prefix: 'layercache-bench:edge:ttl:' })
+      new MemoryLayer({ ttl: 1_000, maxSize: 1_000 }),
+      new RedisLayer({ client: redis, ttl: 1_000, prefix: 'layercache-bench:edge:ttl:' })
     ],
     {
       stampedePrevention: true,
@@ -108,13 +108,13 @@ async function runTtlExpiryStampede(): Promise<ModeSummary[]> {
           await redis.flushdb()
         }
 
-        await cache.get(`ttl:key:${index}`, async () => ({ version: 1 }), { ttl: 1 })
+        await cache.get(`ttl:key:${index}`, async () => ({ version: 1 }), { ttl: 1_000 })
         await sleep(TTL_MS)
 
         const fetcher = createCountedFetcher(async () => ({ version: 2 }))
         const { durationMs } = await measure(() =>
           runConcurrent(TTL_CONCURRENCY, async () =>
-            requireValue(await cache.get(`ttl:key:${index}`, () => fetcher.run(), { ttl: 1 }), `${mode} ttl`)
+            requireValue(await cache.get(`ttl:key:${index}`, () => fetcher.run(), { ttl: 1_000 }), `${mode} ttl`)
           )
         )
 
@@ -140,9 +140,9 @@ async function runPayloadSizeVariation(): Promise<ModeSummary[]> {
   const redis = createRedisClient()
   await redis.ping()
 
-  const memoryCache = new CacheStack([new MemoryLayer({ ttl: 60, maxSize: 100 })])
+  const memoryCache = new CacheStack([new MemoryLayer({ ttl: 60_000, maxSize: 100 })])
   const redisCache = new CacheStack([
-    new RedisLayer({ client: redis, ttl: 300, prefix: 'layercache-bench:edge:payload:' })
+    new RedisLayer({ client: redis, ttl: 300_000, prefix: 'layercache-bench:edge:payload:' })
   ])
 
   try {
@@ -162,7 +162,7 @@ async function runPayloadSizeVariation(): Promise<ModeSummary[]> {
       await scenario.cache.set(
         `payload:${scenario.mode}`,
         { size: scenario.bytes, payload: buildPayloadString(scenario.bytes) },
-        { ttl: 60 }
+        { ttl: 60_000 }
       )
 
       const samples: number[] = []
@@ -194,10 +194,10 @@ async function runRedisOutageScenario(): Promise<OutageResult[]> {
 
   const strictCache = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 500 }),
+      new MemoryLayer({ ttl: 60_000, maxSize: 500 }),
       new RedisLayer({
         client: strictRedis,
-        ttl: 300,
+        ttl: 300_000,
         prefix: 'layercache-bench:edge:strict:',
         commandTimeoutMs: COMMAND_TIMEOUT_MS
       })
@@ -214,10 +214,10 @@ async function runRedisOutageScenario(): Promise<OutageResult[]> {
 
   const gracefulCache = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 500 }),
+      new MemoryLayer({ ttl: 60_000, maxSize: 500 }),
       new RedisLayer({
         client: gracefulRedis,
-        ttl: 300,
+        ttl: 300_000,
         prefix: 'layercache-bench:edge:graceful:',
         commandTimeoutMs: COMMAND_TIMEOUT_MS
       })
@@ -238,8 +238,8 @@ async function runRedisOutageScenario(): Promise<OutageResult[]> {
     await gracefulCache.clear()
     await strictRedis.flushdb()
 
-    await strictCache.get('outage:warm', async () => ({ version: 'warm-strict' }), { ttl: 60 })
-    await gracefulCache.get('outage:warm', async () => ({ version: 'warm-graceful' }), { ttl: 60 })
+    await strictCache.get('outage:warm', async () => ({ version: 'warm-strict' }), { ttl: 60_000 })
+    await gracefulCache.get('outage:warm', async () => ({ version: 'warm-graceful' }), { ttl: 60_000 })
 
     await pauseRedisContainer()
 
@@ -262,7 +262,7 @@ async function runRedisOutageScenario(): Promise<OutageResult[]> {
 
     const coldStrict = await measure(() =>
       withTimeout(
-        strictCache.get('outage:cold:strict', async () => ({ version: 'strict-cold' }), { ttl: 60 }),
+        strictCache.get('outage:cold:strict', async () => ({ version: 'strict-cold' }), { ttl: 60_000 }),
         2_000,
         'strict cold miss'
       )
@@ -274,7 +274,7 @@ async function runRedisOutageScenario(): Promise<OutageResult[]> {
 
     const coldGraceful = await measure(() =>
       withTimeout(
-        gracefulCache.get('outage:cold:graceful', async () => ({ version: 'graceful-cold' }), { ttl: 60 }),
+        gracefulCache.get('outage:cold:graceful', async () => ({ version: 'graceful-cold' }), { ttl: 60_000 }),
         2_000,
         'graceful cold miss'
       )
@@ -315,8 +315,8 @@ async function runMultiInstanceInvalidation(): Promise<InvalidationResult> {
 
   const cacheA = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 100 }),
-      new RedisLayer({ client: dataA, ttl: 300, prefix: 'layercache-bench:edge:invalidation:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+      new RedisLayer({ client: dataA, ttl: 300_000, prefix: 'layercache-bench:edge:invalidation:' })
     ],
     {
       invalidationBus: busA,
@@ -325,8 +325,8 @@ async function runMultiInstanceInvalidation(): Promise<InvalidationResult> {
   )
   const cacheB = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 100 }),
-      new RedisLayer({ client: dataB, ttl: 300, prefix: 'layercache-bench:edge:invalidation:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+      new RedisLayer({ client: dataB, ttl: 300_000, prefix: 'layercache-bench:edge:invalidation:' })
     ],
     {
       invalidationBus: busB,
@@ -338,11 +338,11 @@ async function runMultiInstanceInvalidation(): Promise<InvalidationResult> {
     await cacheA.clear()
     await dataA.flushdb()
 
-    await cacheA.get('shared:key', async () => ({ version: 1 }), { ttl: 60 })
-    await cacheB.get('shared:key', async () => ({ version: 1 }), { ttl: 60 })
+    await cacheA.get('shared:key', async () => ({ version: 1 }), { ttl: 60_000 })
+    await cacheB.get('shared:key', async () => ({ version: 1 }), { ttl: 60_000 })
 
     await cacheA.delete('shared:key')
-    await cacheA.get('shared:key', async () => ({ version: 2 }), { ttl: 60 })
+    await cacheA.get('shared:key', async () => ({ version: 2 }), { ttl: 60_000 })
 
     const startedAt = performance.now()
     let observedVersion: number | null = null
@@ -387,8 +387,8 @@ async function runDistributedSingleFlight(): Promise<DistributedSingleFlightResu
 
   const cacheA = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 100 }),
-      new RedisLayer({ client: redisA, ttl: 300, prefix: 'layercache-bench:edge:distributed:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+      new RedisLayer({ client: redisA, ttl: 300_000, prefix: 'layercache-bench:edge:distributed:' })
     ],
     {
       stampedePrevention: true,
@@ -397,8 +397,8 @@ async function runDistributedSingleFlight(): Promise<DistributedSingleFlightResu
   )
   const cacheB = new CacheStack(
     [
-      new MemoryLayer({ ttl: 60, maxSize: 100 }),
-      new RedisLayer({ client: redisB, ttl: 300, prefix: 'layercache-bench:edge:distributed:' })
+      new MemoryLayer({ ttl: 60_000, maxSize: 100 }),
+      new RedisLayer({ client: redisB, ttl: 300_000, prefix: 'layercache-bench:edge:distributed:' })
     ],
     {
       stampedePrevention: true,

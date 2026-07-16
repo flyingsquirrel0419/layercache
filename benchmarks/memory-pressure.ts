@@ -65,7 +65,7 @@ async function main(): Promise<void> {
 
   let evictions = 0
   const memoryLayer = new MemoryLayer({
-    ttl: 60,
+    ttl: 60_000,
     maxSize: EVICTION_CAPACITY,
     onEvict: () => {
       evictions += 1
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
 
   const cache = new CacheStack([
     memoryLayer,
-    new RedisLayer({ client: redis, ttl: 300, prefix: 'pressure:benchmark:' })
+    new RedisLayer({ client: redis, ttl: 300_000, prefix: 'pressure:benchmark:' })
   ])
 
   const heapBeforeMb = process.memoryUsage().heapUsed / (1024 * 1024)
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
 
     for (let index = 0; index < EVICTION_KEYS; index += 1) {
       await cache.get(`pressure:${index}`, async () => ({ key: index, ...buildLargePayload(EVICTION_PAYLOAD_BYTES) }), {
-        ttl: 60
+        ttl: 60_000
       })
     }
 
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
             revisitOriginFetches += 1
             return { key: index, ...buildLargePayload(EVICTION_PAYLOAD_BYTES) }
           },
-          { ttl: 60 }
+          { ttl: 60_000 }
         )
       )
       revisitSamples.push(durationMs)
