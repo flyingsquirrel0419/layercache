@@ -46,6 +46,15 @@ export default defineConfig({
     cleanUrls: true,
   },
   head: [
+    ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
+    ["link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }],
+    [
+      "link",
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Spline+Sans+Mono:wght@400;500&display=swap",
+      },
+    ],
     ["meta", { name: "ai-content-declaration", content: "Content-Signal: search=yes, ai-input=yes, ai-train=no" }],
     ["link", { rel: "service-doc", href: withBase("/docs/api"), type: "text/html", title: "Layercache API Reference" }],
     ...googleAnalyticsHead,
