@@ -1,0 +1,625 @@
+/* Layercache landing — depth = latency, heat = cache hit.
+   The 3D scene is pinned full-viewport; scroll drives the camera down
+   through the cache strata (see ScrollJourney.tsx).
+   Palette: void #050810 · stratum #0E1526 · hairline #232E4A
+   hot #FFB347 (hits/CTA only) · ice #7CD7E6 · text #E8ECF4 · muted #8A93A8 */
+
+.landing {
+  --lc-void: #050810;
+  --lc-stratum: #0e1526;
+  --lc-hairline: #232e4a;
+  --lc-hot: #ffb347;
+  --lc-ice: #7cd7e6;
+  --lc-text: #e8ecf4;
+  --lc-muted: #8a93a8;
+  --lc-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --lc-mono: "Spline Sans Mono", ui-monospace, "SF Mono", monospace;
+
+  background:
+    radial-gradient(120% 70% at 70% 0%, #101a33 0%, rgba(16, 26, 51, 0) 60%),
+    linear-gradient(180deg, #070b16 0%, var(--lc-void) 45%, #03040a 100%);
+  color: var(--lc-text);
+  overflow-x: clip;
+}
+
+.landing a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.landing :focus-visible {
+  outline: 2px solid var(--lc-hot);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* ---------- scroll journey ---------- */
+
+.journey {
+  position: relative;
+  height: 560vh;
+}
+
+.journeyViewport {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.journeyViewport[data-fallback="true"] {
+  background:
+    linear-gradient(165deg, rgba(124, 215, 230, 0.1) 0%, rgba(124, 215, 230, 0) 30%),
+    repeating-linear-gradient(180deg, rgba(35, 46, 74, 0.5) 0 1px, transparent 1px 22%);
+}
+
+.sceneCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---------- journey intro caption (chapter 0) ---------- */
+
+.journeyIntro {
+  position: absolute;
+  top: 5.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  width: min(44rem, calc(100vw - 3rem));
+  z-index: 3;
+  transition: opacity 0.5s ease;
+}
+
+.journeyIntro[data-hidden="true"] {
+  opacity: 0;
+}
+
+.introEyebrow {
+  font-family: var(--lc-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--lc-ice);
+  margin: 0 0 0.7rem;
+}
+
+.introTitle {
+  font-family: var(--lc-display);
+  font-weight: 620;
+  font-size: clamp(1.5rem, 3vw, 2.3rem);
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.introTitle em {
+  font-style: normal;
+  color: var(--lc-hot);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.ctaPrimary,
+.ctaGhost {
+  font-family: var(--lc-mono);
+  font-size: 0.9rem;
+  font-weight: 500;
+  padding: 0.72rem 1.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.ctaPrimary {
+  background: var(--lc-hot);
+  color: #1a1206;
+  border: 1px solid var(--lc-hot);
+}
+
+.ctaPrimary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(255, 179, 71, 0.35);
+}
+
+.ctaGhost {
+  background: rgba(5, 8, 16, 0.4);
+  color: var(--lc-text);
+  border: 1px solid var(--lc-hairline);
+}
+
+.ctaGhost:hover {
+  border-color: var(--lc-ice);
+  color: var(--lc-ice);
+}
+
+/* ---------- chapter panels ---------- */
+
+.chapterPanel {
+  position: absolute;
+  top: 50%;
+  width: min(24rem, calc(100vw - 3rem));
+  padding: 1.6rem 1.7rem;
+  border: 1px solid var(--lc-hairline);
+  border-radius: 8px;
+  background: rgba(9, 14, 27, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(-50% + 28px));
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+.chapterPanel[data-active="true"] {
+  opacity: 1;
+  transform: translateY(-50%);
+}
+
+.chapterPanel[data-side="right"] {
+  right: max(2.5rem, calc(50vw - 36rem));
+}
+
+.chapterPanel[data-side="left"] {
+  left: max(2.5rem, calc(50vw - 36rem));
+}
+
+.chapterPanel[data-side="center"] {
+  left: 50%;
+  top: auto;
+  bottom: 3.5rem;
+  transform: translate(-50%, 28px);
+}
+
+.chapterPanel[data-side="center"][data-active="true"] {
+  transform: translate(-50%, 0);
+}
+
+.chapterStep {
+  font-family: var(--lc-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--lc-ice);
+  margin: 0 0 0.75rem;
+}
+
+.chapterHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.chapterTitle {
+  font-family: var(--lc-display);
+  font-weight: 600;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.chapterLatency {
+  font-family: var(--lc-mono);
+  font-size: 0.8rem;
+  color: var(--lc-hot);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapterBody {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--lc-muted);
+}
+
+/* ---------- scene overlays ---------- */
+
+.layerLabel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-family: var(--lc-mono);
+  pointer-events: none;
+  white-space: nowrap;
+  padding-left: 0.9rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 2;
+}
+
+.layerLabel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 0.55rem;
+  height: 1px;
+  background: var(--lc-muted);
+}
+
+.layerName {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--lc-text);
+}
+
+.layerLatency {
+  font-size: 0.68rem;
+  color: var(--lc-muted);
+}
+
+.telemetry {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 1.25rem;
+  display: flex;
+  gap: 1.6rem;
+  font-family: var(--lc-mono);
+  z-index: 3;
+}
+
+.telemetryItem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
+.telemetryValue {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--lc-ice);
+  font-variant-numeric: tabular-nums;
+}
+
+.telemetryHot {
+  color: var(--lc-hot);
+}
+
+.telemetryKey {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--lc-muted);
+}
+
+.stampedeBadge {
+  position: absolute;
+  left: 1.5rem;
+  bottom: 1.4rem;
+  font-family: var(--lc-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--lc-hot);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  z-index: 3;
+}
+
+.stampedeBadge[data-live="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.scrollHint {
+  position: absolute;
+  left: 50%;
+  bottom: 1.4rem;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--lc-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--lc-text);
+  opacity: 0.75;
+  transition: opacity 0.4s ease;
+  z-index: 3;
+}
+
+.scrollHint[data-hidden="true"] {
+  opacity: 0;
+}
+
+.scrollHintArrow {
+  animation: hint-bob 1.6s ease-in-out infinite;
+}
+
+@keyframes hint-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(5px); }
+}
+
+/* ---------- sections after the journey ---------- */
+
+.section {
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 4.5rem 2rem;
+  border-top: 1px solid rgba(35, 46, 74, 0.55);
+}
+
+.sectionEyebrow {
+  font-family: var(--lc-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--lc-ice);
+  margin: 0 0 1rem;
+}
+
+.sectionTitle {
+  font-family: var(--lc-display);
+  font-weight: 560;
+  font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  max-width: 42rem;
+  margin: 0 0 2.6rem;
+}
+
+/* ---------- capability cards ---------- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.5rem 1.4rem;
+  border: 1px solid var(--lc-hairline);
+  border-radius: 6px;
+  background: rgba(14, 21, 38, 0.45);
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.card:hover {
+  border-color: rgba(124, 215, 230, 0.55);
+  background: rgba(17, 26, 46, 0.7);
+  transform: translateY(-2px);
+}
+
+.cardTag {
+  font-family: var(--lc-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lc-ice);
+}
+
+.cardTitle {
+  font-family: var(--lc-display);
+  font-weight: 560;
+  font-size: 1.12rem;
+  margin: 0;
+}
+
+.cardDetail {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--lc-muted);
+  flex-grow: 1;
+}
+
+.cardMore {
+  font-family: var(--lc-mono);
+  font-size: 0.75rem;
+  color: var(--lc-hot);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.card:hover .cardMore,
+.card:focus-visible .cardMore {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* ---------- quick start code ---------- */
+
+.codeWrap {
+  border: 1px solid var(--lc-hairline);
+  border-radius: 6px;
+  background: #090e1c;
+  overflow-x: auto;
+}
+
+.code {
+  margin: 0;
+  padding: 1.6rem 1.8rem;
+  font-family: var(--lc-mono);
+  font-size: 0.88rem;
+  line-height: 1.75;
+  color: var(--lc-text);
+}
+
+.tokKeyword {
+  color: var(--lc-ice);
+}
+
+.tokString {
+  color: var(--lc-hot);
+}
+
+.tokNumber {
+  color: #c9a0ff;
+}
+
+.tokFn {
+  color: #9bb4ff;
+}
+
+.tokComment {
+  color: #5f6b85;
+}
+
+/* ---------- footer CTA ---------- */
+
+.footerCta {
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 5rem 2rem 6rem;
+  border-top: 1px solid rgba(35, 46, 74, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.8rem;
+  text-align: center;
+}
+
+.footerTitle {
+  font-family: var(--lc-display);
+  font-weight: 640;
+  font-size: clamp(1.8rem, 3.4vw, 2.6rem);
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.footerNote {
+  font-family: var(--lc-mono);
+  font-size: 0.75rem;
+  color: var(--lc-muted);
+  margin: 0;
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 960px) {
+  .journeyIntro {
+    top: 4.6rem;
+  }
+
+  .chapterPanel,
+  .chapterPanel[data-side="right"],
+  .chapterPanel[data-side="left"] {
+    left: 50%;
+    right: auto;
+    top: auto;
+    bottom: 3.2rem;
+    width: min(26rem, calc(100vw - 2rem));
+    transform: translate(-50%, 28px);
+  }
+
+  .chapterPanel[data-active="true"],
+  .chapterPanel[data-side="right"][data-active="true"],
+  .chapterPanel[data-side="left"][data-active="true"] {
+    transform: translate(-50%, 0);
+  }
+
+  .telemetry {
+    right: 1rem;
+    bottom: 1rem;
+    gap: 1.1rem;
+  }
+
+  .stampedeBadge {
+    left: 1rem;
+    bottom: 1.2rem;
+  }
+
+  .scrollHint {
+    display: none;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+
+  .section {
+    padding: 3.2rem 1.25rem;
+  }
+}
+
+/* ---------- reduced motion: collapse the journey into static content ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .journey {
+    height: auto;
+  }
+
+  .journeyViewport {
+    position: relative;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 6.5rem 2rem 4rem;
+  }
+
+  .sceneCanvas {
+    position: absolute;
+    z-index: 0;
+    opacity: 0.55;
+  }
+
+  .journeyIntro,
+  .chapterPanel {
+    position: static;
+    opacity: 1 !important;
+    transform: none !important;
+    pointer-events: auto;
+    transition: none;
+    margin: 0;
+  }
+
+  .journeyIntro {
+    text-align: left;
+    width: auto;
+  }
+
+  .chapterPanel {
+    width: min(30rem, 100%);
+  }
+
+  .telemetry,
+  .stampedeBadge,
+  .scrollHint,
+  .layerLabel {
+    display: none;
+  }
+
+  .ctaPrimary,
+  .ctaGhost,
+  .card,
+  .cardMore {
+    transition: none;
+  }
+
+  .scrollHintArrow {
+    animation: none;
+  }
+}
