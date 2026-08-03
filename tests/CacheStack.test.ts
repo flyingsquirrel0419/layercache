@@ -58,31 +58,6 @@ class InMemoryInvalidationBus implements InvalidationBus {
   }
 }
 
-async function waitForCondition(
-  assertion: () => Promise<void> | void,
-  timeoutMs = 1_000,
-  pollIntervalMs = 10
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  let lastError: unknown
-
-  while (Date.now() < deadline) {
-    try {
-      await assertion()
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-    }
-  }
-
-  if (lastError instanceof Error) {
-    throw lastError
-  }
-
-  throw new Error('timed out waiting for condition')
-}
-
 describe('CacheStack', () => {
   it('backfills upper layers on lower-layer hits', async () => {
     const redis = createTestRedis()
@@ -133,7 +108,7 @@ describe('CacheStack', () => {
 
     const fetcher = vi.fn(async () => ({ version: 2 }))
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
     })
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -174,7 +149,7 @@ describe('CacheStack', () => {
 
     const fetcher = vi.fn(async () => ({ version: 2 }))
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
     })
 
@@ -762,7 +737,7 @@ describe('CacheStack', () => {
 
     const fetcher = vi.fn(async () => ({ version: 2 }))
     await expect(cacheB.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cacheB.get('user:1')).resolves.toEqual({ version: 2 })
     })
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -986,7 +961,7 @@ realRedisTest.describe('Multi-instance distributed caching', () => {
 
     await cacheA.invalidateByTag('tag:invalidate')
 
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cacheB.get('tagged:item')).resolves.toBeUndefined()
     })
   })

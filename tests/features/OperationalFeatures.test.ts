@@ -145,31 +145,6 @@ class InMemoryInvalidationBus implements InvalidationBus {
   }
 }
 
-async function waitForCondition(
-  assertion: () => Promise<void> | void,
-  timeoutMs = 1_000,
-  pollIntervalMs = 10
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  let lastError: unknown
-
-  while (Date.now() < deadline) {
-    try {
-      await assertion()
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-    }
-  }
-
-  if (lastError instanceof Error) {
-    throw lastError
-  }
-
-  throw new Error('timed out waiting for condition')
-}
-
 describe('operational features', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -234,7 +209,7 @@ describe('operational features', () => {
       })
     ).resolves.toEqual({ version: 1 })
 
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       expect(cache.getStats().backgroundRefreshes).toBe(0)
     })
 
@@ -263,7 +238,7 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       expect(cache.getMetrics().refreshErrors).toBe(1)
     })
 
@@ -296,13 +271,13 @@ describe('operational features', () => {
 
     try {
       await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-      await waitForCondition(async () => {
+      await vi.waitFor(async () => {
         expect(cache.getMetrics().refreshErrors).toBe(1)
       })
       expect(cache.getStats().backgroundRefreshes).toBe(1)
 
       rejectFetch(new Error('late failure'))
-      await waitForCondition(async () => {
+      await vi.waitFor(async () => {
         expect(cache.getStats().backgroundRefreshes).toBe(0)
       })
 
@@ -329,7 +304,7 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.clear()
     releaseFetch()
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
@@ -352,7 +327,7 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.delete('user:1')
     releaseFetch()
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
@@ -377,7 +352,7 @@ describe('operational features', () => {
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
     await cache.delete('user:1')
     releaseFetch()
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toBeUndefined()
     })
 
@@ -514,7 +489,7 @@ describe('operational features', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(cache.getStats().backgroundRefreshes).toBe(1)
 
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       expect(cache.getMetrics().refreshErrors).toBe(1)
     })
     expect(cache.getStats().backgroundRefreshes).toBe(1)
@@ -1036,7 +1011,7 @@ describe('operational features', () => {
     await new Promise((resolve) => setTimeout(resolve, 1_100))
 
     await expect(cache.get('greeting', async () => 'hello-v2')).resolves.toBe('hello-v1')
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('greeting')).resolves.toBe('hello-v2')
     })
   })
