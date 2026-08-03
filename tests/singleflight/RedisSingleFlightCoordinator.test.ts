@@ -115,33 +115,25 @@ describe('RedisSingleFlightCoordinator', () => {
   realRedisTest.it('allows retry after lease expiration', async () => {
     const client = createTestRedis()
     const coordinator = new RedisSingleFlightCoordinator({ client, prefix: 'sf:' })
-    let firstCall = false
-    let secondCall = false
+    let workerCalled = false
 
     const shortLease = { leaseMs: 200, waitTimeoutMs: 5_000, pollIntervalMs: 50 }
+    const lockKey = `sf:${encodeURIComponent('lease:expire')}`
 
-    await coordinator.execute(
+    await client.set(lockKey, 'orphaned-token', 'PX', 200)
+    await sleep(250)
+
+    const result = await coordinator.execute(
       'lease:expire',
       shortLease,
       async () => {
-        firstCall = true
-        await sleep(50)
-        return 'first'
+        workerCalled = true
+        return 'reacquired'
       },
       async () => 'waiter'
     )
 
-    await coordinator.execute(
-      'lease:expire',
-      shortLease,
-      async () => {
-        secondCall = true
-        return 'second'
-      },
-      async () => 'waiter'
-    )
-
-    expect(firstCall).toBe(true)
-    expect(secondCall).toBe(true)
+    expect(workerCalled).toBe(true)
+    expect(result).toBe('reacquired')
   })
 })

@@ -986,10 +986,9 @@ realRedisTest.describe('Multi-instance distributed caching', () => {
 
     await cacheA.invalidateByTag('tag:invalidate')
 
-    await sleep(300)
-
-    const after = await cacheB.get('tagged:item')
-    expect(after).toBeUndefined()
+    await waitForCondition(async () => {
+      await expect(cacheB.get('tagged:item')).resolves.toBeUndefined()
+    })
   })
 
   realRedisTest.it('stampede prevention deduplicates across instances', async () => {
@@ -1003,8 +1002,8 @@ realRedisTest.describe('Multi-instance distributed caching', () => {
 
     const results = await Promise.all([cacheA.get('stampede:cross', fetcher), cacheB.get('stampede:cross', fetcher)])
 
-    expect(results[0]).toBeDefined()
-    expect(results[1]).toBeDefined()
-    expect(fetchCount).toBeLessThanOrEqual(2)
+    expect(fetchCount).toBe(1)
+    expect(results[0]).toEqual({ fetch: 1 })
+    expect(results[1]).toEqual({ fetch: 1 })
   })
 })

@@ -408,7 +408,7 @@ describe('RedisLayer', () => {
     const client = createTestRedis()
     const layer = new RedisLayer({ client, prefix: 'layer:', ttl: 60_000 })
 
-    await layer.set('expiring', 'gone-soon', 1)
+    await layer.set('expiring', 'gone-soon', 100)
     await expect(layer.get('expiring')).resolves.toBe('gone-soon')
 
     await sleep(1_100)
