@@ -1,8 +1,9 @@
 import Redis from 'ioredis'
 import RedisMock from 'ioredis-mock'
-import { describe, it } from 'vitest'
+import { describe, inject, it } from 'vitest'
+import { DEFAULT_REDIS_PORT } from './redis-config'
 
-export const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
+export const REDIS_URL = process.env.REDIS_URL ?? inject('redisUrl') ?? `redis://localhost:${DEFAULT_REDIS_PORT}`
 
 const POOL_ID = Number.parseInt(process.env.VITEST_POOL_ID ?? '1', 10) || 1
 // Real-redis suites (redis-integration + real-redis-mirror) pin each worker to a

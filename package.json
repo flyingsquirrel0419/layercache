@@ -94,6 +94,7 @@
     "@types/node": "^22.15.2",
     "@vitest/coverage-v8": "^4.1.2",
     "autocannon": "^8.0.0",
+    "get-port": "^7.2.0",
     "ioredis": "^5.6.1",
     "ioredis-mock": "^8.13.0",
     "tsup": "^8.5.0",

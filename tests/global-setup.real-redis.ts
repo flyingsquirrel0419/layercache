@@ -1,15 +1,17 @@
 import { spawn } from 'node:child_process'
 import net from 'node:net'
+import type { TestProject } from 'vitest/node'
+import { DEFAULT_REDIS_PORT, prepareRedisUrl } from './helpers/redis-config'
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 const dockerBin = process.platform === 'win32' ? 'docker.exe' : 'docker'
 const useExistingRedis = process.env.REDIS_AVAILABLE === '1'
 
-function run(command: string, args: string[]): Promise<number> {
+function run(command: string, args: string[], environment?: Record<string, string>): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: 'inherit',
-      shell: false
+      shell: false,
+      env: { ...process.env, ...environment }
     })
 
     child.on('error', reject)
@@ -23,9 +25,9 @@ function run(command: string, args: string[]): Promise<number> {
   })
 }
 
-async function waitForRedis(timeoutMs = 15_000): Promise<void> {
+async function waitForRedis(redisUrl: string, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  const url = REDIS_URL.includes('://') ? new URL(REDIS_URL) : new URL(`redis://${REDIS_URL}`)
+  const url = redisUrl.includes('://') ? new URL(redisUrl) : new URL(`redis://${redisUrl}`)
   const host = url.hostname || '127.0.0.1'
   const port = Number(url.port || 6379)
 
@@ -45,33 +47,41 @@ async function waitForRedis(timeoutMs = 15_000): Promise<void> {
     }
   }
 
-  throw new Error(`Redis did not become ready at ${REDIS_URL} within ${timeoutMs}ms`)
+  throw new Error(`Redis did not become ready at ${redisUrl} within ${timeoutMs}ms`)
 }
 
-async function composeDown(): Promise<void> {
-  const downCode = await run(dockerBin, ['compose', 'down'])
+async function composeDown(projectName: string): Promise<void> {
+  const downCode = await run(dockerBin, ['compose', '--project-name', projectName, 'down'])
   if (downCode !== 0) {
     throw new Error(`docker compose down failed with exit code ${downCode}`)
   }
 }
 
-export async function setup(): Promise<(() => Promise<void>) | undefined> {
+export async function setup({ provide }: TestProject): Promise<(() => Promise<void>) | undefined> {
   if (useExistingRedis) {
-    await waitForRedis()
+    const redisUrl = process.env.REDIS_URL ?? `redis://localhost:${DEFAULT_REDIS_PORT}`
+    provide('redisUrl', redisUrl)
+    await waitForRedis(redisUrl)
     return
   }
 
-  const upCode = await run(dockerBin, ['compose', 'up', '-d', 'redis'])
+  const redisUrl = process.env.REDIS_URL ?? (await prepareRedisUrl())
+  provide('redisUrl', redisUrl)
+  const redisPort = new URL(redisUrl.includes('://') ? redisUrl : `redis://${redisUrl}`).port || '6379'
+  const projectName = `layercache-test-${redisPort}`
+  const upCode = await run(dockerBin, ['compose', '--project-name', projectName, 'up', '-d', 'redis'], {
+    REDIS_PORT: redisPort
+  })
   if (upCode !== 0) {
     throw new Error(`docker compose up failed with exit code ${upCode}`)
   }
 
   try {
-    await waitForRedis()
+    await waitForRedis(redisUrl)
   } catch (error) {
-    await composeDown().catch(() => undefined)
+    await composeDown(projectName).catch(() => undefined)
     throw error
   }
 
-  return composeDown
+  return () => composeDown(projectName)
 }
