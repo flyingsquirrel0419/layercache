@@ -1,10 +1,10 @@
-import Redis from 'ioredis-mock'
 import { describe, expect, it, vi } from 'vitest'
 import { RedisTagIndex } from '../../src/invalidation/RedisTagIndex'
+import { createTestRedis } from '../helpers/test-redis'
 
 describe('RedisTagIndex', () => {
   it('tracks tags, supports tag lookups, and removes reverse indexes', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:track' })
 
     await index.track('user:1', ['team:a', 'role:admin'])
@@ -19,7 +19,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('replaces old tag mappings when a key is re-tracked and clears empty indexes safely', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:update' })
 
     await index.track('user:1', ['team:a', 'role:admin'])
@@ -37,7 +37,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('supports prefix scans over tracked keys', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:test' })
 
     await index.touch('user:1')
@@ -48,7 +48,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('filters prefix scan results with startsWith for literal safety', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:safe' })
 
     await index.touch('user[1]:a')
@@ -58,7 +58,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('supports sharding the known-keys set for larger indexes', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:sharded', knownKeysShards: 4 })
 
     await index.touch('user:1')
@@ -69,7 +69,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('defaults known-key tracking to 16 shards', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:default-shards' })
 
     await index.touch('user:1')
@@ -84,7 +84,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('reads and warns about legacy unsharded known-key sets after the default shard upgrade', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const logger = { warn: vi.fn() }
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:legacy', logger })
 
@@ -99,7 +99,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('migrates legacy known keys into the configured shard layout', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:migrate' })
 
     await redis.sadd('tags:migrate:keys', 'user:1', 'user:2', 'post:1')
@@ -110,7 +110,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('supports pattern scans and async visitor helpers', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:visitors', scanCount: 1 })
 
     await index.track('user:1', ['people'])
@@ -139,7 +139,7 @@ describe('RedisTagIndex', () => {
   })
 
   it('clears all index keys and rejects invalid shard counts', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const index = new RedisTagIndex({ client: redis, prefix: 'tags:clear' })
 
     await index.track('user:1', ['team:a'])

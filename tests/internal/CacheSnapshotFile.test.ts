@@ -48,10 +48,11 @@ describe('CacheSnapshotFile', () => {
   it('allows write validation when the existing target is a regular file', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'layercache-snapshot-existing-file-'))
     const filePath = join(dir, 'snapshot.json')
+    const realFilePath = join(await realpath(dir), 'snapshot.json')
 
     try {
       await writeFile(filePath, '[]', 'utf8')
-      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(filePath)
+      await expect(validateSnapshotFilePath(filePath, 'write', dir)).resolves.toBe(realFilePath)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

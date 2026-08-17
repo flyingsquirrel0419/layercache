@@ -1,10 +1,10 @@
-import Redis from 'ioredis-mock'
 import { describe, expect, it } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
+import { createTestRedis } from '../helpers/test-redis'
 
 function makeLayer(compression: 'gzip' | 'brotli', threshold = 10) {
   return new RedisLayer({
-    client: new Redis(),
+    client: createTestRedis(),
     compression,
     compressionThreshold: threshold
   })
@@ -96,7 +96,7 @@ describe('RedisLayer — compression', () => {
     describe(`${algo} decompressionMaxBytes`, () => {
       it('rejects decompressed payloads exceeding the byte limit', async () => {
         const layer = new RedisLayer({
-          client: new Redis(),
+          client: createTestRedis(),
           compression: algo,
           compressionThreshold: 1,
           decompressionMaxBytes: 64
@@ -114,7 +114,7 @@ describe('RedisLayer — compression', () => {
 
       it('allows decompressed payloads within the byte limit', async () => {
         const layer = new RedisLayer({
-          client: new Redis(),
+          client: createTestRedis(),
           compression: algo,
           compressionThreshold: 1,
           decompressionMaxBytes: 1024 * 1024

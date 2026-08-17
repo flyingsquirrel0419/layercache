@@ -1,11 +1,13 @@
-import Redis from 'ioredis-mock'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../src/CacheStack'
 import { createStoredValueEnvelope } from '../src/internal/StoredValue'
+import { RedisInvalidationBus } from '../src/invalidation/RedisInvalidationBus'
 import { RedisTagIndex } from '../src/invalidation/RedisTagIndex'
 import { MemoryLayer } from '../src/layers/MemoryLayer'
 import { RedisLayer } from '../src/layers/RedisLayer'
+import { RedisSingleFlightCoordinator } from '../src/singleflight/RedisSingleFlightCoordinator'
 import { type CacheLayer, CacheMissError, type InvalidationBus, type InvalidationMessage } from '../src/types'
+import { createTestRedis, realRedisTest } from './helpers/test-redis'
 
 class RecordingLayer implements CacheLayer {
   readonly name: string
@@ -56,34 +58,9 @@ class InMemoryInvalidationBus implements InvalidationBus {
   }
 }
 
-async function waitForCondition(
-  assertion: () => Promise<void> | void,
-  timeoutMs = 1_000,
-  pollIntervalMs = 10
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  let lastError: unknown
-
-  while (Date.now() < deadline) {
-    try {
-      await assertion()
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-    }
-  }
-
-  if (lastError instanceof Error) {
-    throw lastError
-  }
-
-  throw new Error('timed out waiting for condition')
-}
-
 describe('CacheStack', () => {
   it('backfills upper layers on lower-layer hits', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const memoryLayer = new MemoryLayer({ ttl: 60_000 })
     const redisLayer = new RedisLayer({ client: redis, ttl: 120_000 })
     const cache = new CacheStack([memoryLayer, redisLayer])
@@ -131,7 +108,7 @@ describe('CacheStack', () => {
 
     const fetcher = vi.fn(async () => ({ version: 2 }))
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
     })
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -172,7 +149,7 @@ describe('CacheStack', () => {
 
     const fetcher = vi.fn(async () => ({ version: 2 }))
     await expect(cache.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cache.get('user:1')).resolves.toEqual({ version: 2 })
     })
 
@@ -277,7 +254,7 @@ describe('CacheStack', () => {
   })
 
   it('invalidates by wildcard pattern using actual layer keys after tag-index state is lost', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:pattern:' })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer])
 
@@ -293,7 +270,7 @@ describe('CacheStack', () => {
   })
 
   it('invalidates by prefix using actual layer keys after tag-index state is lost', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:prefix:' })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer])
 
@@ -536,7 +513,7 @@ describe('CacheStack', () => {
   })
 
   it('can clean up stale generations after a generation bump', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const redisLayer = new RedisLayer({ client: redis, ttl: 300_000, prefix: 'cache:generation:' })
     const cache = new CacheStack([new MemoryLayer({ ttl: 60_000 }), redisLayer], {
       generation: 1,
@@ -661,7 +638,7 @@ describe('CacheStack', () => {
   })
 
   it('propagates invalidation to local layers across bridge instances', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000 })], {
       invalidationBus: bus,
@@ -683,7 +660,7 @@ describe('CacheStack', () => {
   })
 
   it('does not broadcast write invalidations by default', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const cacheA = new CacheStack([new MemoryLayer({ ttl: 60_000 }), new RedisLayer({ client: redis, ttl: 300_000 })], {
       invalidationBus: bus
@@ -703,7 +680,7 @@ describe('CacheStack', () => {
   })
 
   it('supports distributed tag invalidation with a shared redis tag index', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:test' })
     const cacheA = new CacheStack(
@@ -731,7 +708,7 @@ describe('CacheStack', () => {
   })
 
   it('broadcasts tag expiration without deleting remote local stale values', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const sharedTagIndex = new RedisTagIndex({ client: redis, prefix: 'tag-index:expire' })
     const cacheA = new CacheStack(
@@ -760,7 +737,7 @@ describe('CacheStack', () => {
 
     const fetcher = vi.fn(async () => ({ version: 2 }))
     await expect(cacheB.get('user:1', fetcher)).resolves.toEqual({ version: 1 })
-    await waitForCondition(async () => {
+    await vi.waitFor(async () => {
       await expect(cacheB.get('user:1')).resolves.toEqual({ version: 2 })
     })
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -821,7 +798,7 @@ describe('CacheStack', () => {
   })
 
   it('matches redis tag patterns via incremental set scanning', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const originalSscan = redis.sscan.bind(redis)
     let sscanCalls = 0
 
@@ -871,7 +848,7 @@ describe('CacheStack', () => {
   })
 
   it('can skip write-triggered invalidation broadcasts', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const bus = new InMemoryInvalidationBus()
     const memoryB = new MemoryLayer({ ttl: 60_000 })
     const cacheA = new CacheStack(
@@ -915,5 +892,93 @@ describe('CacheStack', () => {
         'does not implement keys() can leave invalidateByPattern() and invalidateByPrefix() incomplete'
       )
     )
+  })
+})
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+realRedisTest.describe('Multi-instance distributed caching', () => {
+  let cacheA: CacheStack
+  let cacheB: CacheStack
+
+  beforeEach(() => {
+    const redis = createTestRedis()
+    const subscriberA = createTestRedis()
+    const subscriberB = createTestRedis()
+    const channel = 'bus:multi'
+    const cachePrefix = 'multi:shared:'
+
+    const busA = new RedisInvalidationBus({ publisher: redis, subscriber: subscriberA, channel })
+    const busB = new RedisInvalidationBus({ publisher: redis, subscriber: subscriberB, channel })
+
+    const tagIndex = new RedisTagIndex({ client: redis, prefix: 'tags:multi' })
+    const coordinator = new RedisSingleFlightCoordinator({ client: redis, prefix: 'sf:multi' })
+
+    cacheA = new CacheStack(
+      [
+        new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),
+        new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300_000 })
+      ],
+      {
+        invalidationBus: busA,
+        tagIndex,
+        singleFlightCoordinator: coordinator
+      }
+    )
+
+    cacheB = new CacheStack(
+      [
+        new MemoryLayer({ ttl: 60_000, maxSize: 1_000 }),
+        new RedisLayer({ client: redis, prefix: cachePrefix, ttl: 300_000 })
+      ],
+      {
+        invalidationBus: busB,
+        tagIndex,
+        singleFlightCoordinator: coordinator
+      }
+    )
+  })
+
+  afterEach(async () => {
+    await cacheA.disconnect()
+    await cacheB.disconnect()
+  })
+
+  realRedisTest.it('instance A writes to shared Redis, instance B reads via L2 backfill', async () => {
+    await cacheA.set('shared:key1', { value: 'from-a' }, { tags: ['shared'] })
+
+    const result = await cacheB.get('shared:key1', async () => ({ value: 'from-b' }))
+    expect(result).toEqual({ value: 'from-a' })
+  })
+
+  realRedisTest.it('tag invalidation on A propagates and clears L1 on B', async () => {
+    await cacheA.set('tagged:item', { name: 'hello' }, { tags: ['tag:invalidate'] })
+    await cacheB.get('tagged:item', async () => ({ name: 'hello' }))
+
+    await cacheA.invalidateByTag('tag:invalidate')
+
+    await vi.waitFor(async () => {
+      await expect(cacheB.get('tagged:item')).resolves.toBeUndefined()
+    })
+  })
+
+  realRedisTest.it('stampede prevention deduplicates across instances', async () => {
+    let fetchCount = 0
+
+    const fetcher = async () => {
+      fetchCount++
+      await sleep(50)
+      return { fetch: fetchCount }
+    }
+
+    const results = await Promise.all([cacheA.get('stampede:cross', fetcher), cacheB.get('stampede:cross', fetcher)])
+
+    expect(fetchCount).toBe(1)
+    expect(results[0]).toEqual({ fetch: 1 })
+    expect(results[1]).toEqual({ fetch: 1 })
   })
 })

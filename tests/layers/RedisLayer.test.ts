@@ -1,9 +1,10 @@
 import { Transform } from 'node:stream'
-import Redis from 'ioredis-mock'
+import type Redis from 'ioredis'
 import { describe, expect, it, vi } from 'vitest'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import { JsonSerializer } from '../../src/serialization/JsonSerializer'
 import { MsgpackSerializer } from '../../src/serialization/MsgpackSerializer'
+import { createTestRedis, realRedisTest } from '../helpers/test-redis'
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
@@ -29,7 +30,7 @@ class ErrorTransform extends Transform {
 
 describe('RedisLayer', () => {
   it('round-trips json values', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, ttl: 60_000 })
 
     await layer.set('user:1', { id: 1, name: 'Alice' })
@@ -38,7 +39,7 @@ describe('RedisLayer', () => {
   })
 
   it('supports empty bulk operations and unprefixed dbsize counting', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, allowUnprefixedClear: true })
 
     await expect(layer.getMany([])).resolves.toEqual([])
@@ -51,7 +52,7 @@ describe('RedisLayer', () => {
   })
 
   it('supports alternate serializers', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, serializer: new MsgpackSerializer() })
 
     await layer.set('numbers', [1, 2, 3])
@@ -60,7 +61,7 @@ describe('RedisLayer', () => {
   })
 
   it('supports bulk set/get, key iteration, and ttl/has semantics', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, prefix: 'cache:' })
 
     await layer.setMany([
@@ -85,7 +86,7 @@ describe('RedisLayer', () => {
   })
 
   it('treats deserialization failures as cache misses and removes the corrupted key', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, serializer: new MsgpackSerializer() })
 
     await client.set('broken', 'not-msgpack')
@@ -95,7 +96,7 @@ describe('RedisLayer', () => {
   })
 
   it('treats pipeline command errors and corrupted payloads as cache misses in bulk reads', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, serializer: new MsgpackSerializer() })
 
     await layer.set('good', { ok: true })
@@ -107,7 +108,7 @@ describe('RedisLayer', () => {
   })
 
   it('refuses to clear an unprefixed redis namespace unless explicitly allowed', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client })
 
     await layer.set('user:1', { id: 1 })
@@ -117,7 +118,7 @@ describe('RedisLayer', () => {
   })
 
   it('refuses unprefixed key discovery unless bulk ownership is explicitly allowed', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client })
 
     await expect(layer.keys()).rejects.toThrow(/requires a prefix or allowUnprefixedClear=true/i)
@@ -127,7 +128,7 @@ describe('RedisLayer', () => {
   })
 
   it('does not auto-decompress marked values when compression is disabled', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client })
     const marked = Buffer.concat([Buffer.from('LCZ1:gzip:'), Buffer.from('untrusted')])
 
@@ -137,7 +138,7 @@ describe('RedisLayer', () => {
   })
 
   it('clears prefixed keys without touching other redis data', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const prefixedLayer = new RedisLayer({ client, prefix: 'cache:' })
     const otherLayer = new RedisLayer({ client, prefix: 'other:' })
 
@@ -151,7 +152,7 @@ describe('RedisLayer', () => {
   })
 
   it('counts prefixed keys without materializing the full key list', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const prefixedLayer = new RedisLayer({ client, prefix: 'cache:' })
     const otherLayer = new RedisLayer({ client, prefix: 'other:' })
 
@@ -164,7 +165,7 @@ describe('RedisLayer', () => {
   })
 
   it('can deserialize with fallback serializers and rewrite using the primary serializer', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const json = new JsonSerializer()
     const msgpack = new MsgpackSerializer()
     const layer = new RedisLayer({ client, serializer: [msgpack, json] })
@@ -179,7 +180,7 @@ describe('RedisLayer', () => {
   })
 
   it('treats oversized decompressed payloads as cache misses and removes the key', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({
       client,
       compression: 'gzip',
@@ -194,7 +195,7 @@ describe('RedisLayer', () => {
   })
 
   it('supports brotli compression and deleteMany on prefixed keys', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({
       client,
       prefix: 'brotli:',
@@ -212,7 +213,7 @@ describe('RedisLayer', () => {
   })
 
   it('pings redis health and optionally disconnects on dispose', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const disconnect = vi.spyOn(client, 'disconnect')
     const layer = new RedisLayer({ client, disconnectOnDispose: true })
 
@@ -248,14 +249,14 @@ describe('RedisLayer', () => {
   })
 
   it('rejects invalid commandTimeoutMs values', () => {
-    const client = new Redis()
+    const client = createTestRedis()
 
     expect(() => new RedisLayer({ client, commandTimeoutMs: 0 })).toThrow(/positive number/i)
     expect(() => new RedisLayer({ client, commandTimeoutMs: Number.NaN })).toThrow(/positive number/i)
   })
 
   it('can clear unprefixed keys when explicitly allowed', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({ client, allowUnprefixedClear: true })
 
     await layer.set('user:1', { id: 1 })
@@ -265,7 +266,7 @@ describe('RedisLayer', () => {
   })
 
   it('covers serializer, rewrite, and decompression helper branches', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const layer = new RedisLayer({
       client,
@@ -324,7 +325,7 @@ describe('RedisLayer', () => {
   })
 
   it('handles decompressor end and error events in the limit helper', async () => {
-    const client = new Redis()
+    const client = createTestRedis()
     const layer = new RedisLayer({
       client,
       decompressionMaxBytes: 16
@@ -349,7 +350,7 @@ describe('RedisLayer', () => {
 
   describe('key validation', () => {
     it('rejects empty keys in single operations', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client })
       await expect(layer.get('')).rejects.toThrow(/must not be empty/)
       await expect(layer.set('', 'x')).rejects.toThrow(/must not be empty/)
@@ -359,7 +360,7 @@ describe('RedisLayer', () => {
     })
 
     it('rejects keys exceeding 1024 characters in single operations', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client })
       const longKey = 'x'.repeat(1_025)
       await expect(layer.get(longKey)).rejects.toThrow(/at most 1 024/)
@@ -367,32 +368,32 @@ describe('RedisLayer', () => {
     })
 
     it('rejects keys with control characters in single operations', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client })
       await expect(layer.get('bad\x00key')).rejects.toThrow(/control characters/)
       await expect(layer.set('bad\x01key', 'x')).rejects.toThrow(/control characters/)
     })
 
     it('rejects empty keys in getMany', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client })
       await expect(layer.getMany(['valid', ''])).rejects.toThrow(/must not be empty/)
     })
 
     it('rejects keys exceeding 1024 characters in setMany', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client })
       await expect(layer.setMany([{ key: 'x'.repeat(1_025), value: 1 }])).rejects.toThrow(/at most 1 024/)
     })
 
     it('rejects keys with control characters in deleteMany', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client })
       await expect(layer.deleteMany(['bad\x00key'])).rejects.toThrow(/control characters/)
     })
 
     it('accepts valid keys in batch operations', async () => {
-      const client = new Redis()
+      const client = createTestRedis()
       const layer = new RedisLayer({ client, ttl: 60_000 })
       await layer.setMany([
         { key: 'a', value: 1, ttl: 10_000 },
@@ -401,5 +402,17 @@ describe('RedisLayer', () => {
       await expect(layer.getMany(['a', 'b'])).resolves.toEqual([1, 2])
       await expect(layer.deleteMany(['a'])).resolves.toBeUndefined()
     })
+  })
+
+  realRedisTest.it('respects TTL expiration', async () => {
+    const client = createTestRedis()
+    const layer = new RedisLayer({ client, prefix: 'layer:', ttl: 60_000 })
+
+    await layer.set('expiring', 'gone-soon', 100)
+    await expect(layer.get('expiring')).resolves.toBe('gone-soon')
+
+    await sleep(1_100)
+
+    await expect(layer.get('expiring')).resolves.toBeNull()
   })
 })

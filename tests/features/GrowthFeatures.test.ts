@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Redis from 'ioredis-mock'
+import type Redis from 'ioredis'
 import { describe, expect, it, vi } from 'vitest'
 import { CacheStack } from '../../src/CacheStack'
 import { createCachedMethodDecorator } from '../../src/decorators/createCachedMethodDecorator'
@@ -13,6 +13,7 @@ import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 import { RedisLayer } from '../../src/layers/RedisLayer'
 import type { CacheLayer } from '../../src/types'
+import { createTestRedis } from '../helpers/test-redis'
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => {
@@ -261,7 +262,7 @@ describe('growth features', () => {
   it('refreshes sliding ttl across backfilled upper layers', async () => {
     vi.useFakeTimers()
     try {
-      const redis = new Redis()
+      const redis = createTestRedis()
       const memory = new MemoryLayer({ ttl: 60_000 })
       const redisLayer = new RedisLayer({ client: redis, ttl: 60_000, prefix: 'sliding:' })
       const cache = new CacheStack([memory, redisLayer])
@@ -324,7 +325,7 @@ describe('growth features', () => {
   })
 
   it('supports compressed redis payloads and stats handlers', async () => {
-    const redis = new Redis()
+    const redis = createTestRedis()
     const layer = new RedisLayer({
       client: redis,
       compression: 'gzip',
