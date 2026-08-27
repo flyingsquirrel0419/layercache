@@ -389,7 +389,7 @@ layercache is built for multi-instance production environments:
 ```
 
 - **Redis single-flight** - dedup misses across instances with distributed locks
-- **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency; set `signingSecret` for shared Redis channels
+- **Redis invalidation bus** - pub/sub-based L1 invalidation for memory consistency; set `signingSecret` for shared Redis channels (and `requireSignature: true` to fail fast when the secret is missing — without signing, any client that can publish to the channel can forge invalidation messages)
 - **Redis tag index** - shared tag tracking with 16 known-key shards by default
 - **Snapshot persistence** - export/import state between instances
 
@@ -406,7 +406,8 @@ const redis = new Redis(process.env.REDIS_URL)
 const bus = new RedisInvalidationBus({
   publisher: redis,
   subscriber: new Redis(process.env.REDIS_URL),
-  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET,
+  requireSignature: process.env.NODE_ENV === 'production'
 })
 const tagIndex = new RedisTagIndex({ client: redis, prefix: 'myapp:tags', knownKeysShards: 16 })
 const coordinator = new RedisSingleFlightCoordinator({ client: redis })

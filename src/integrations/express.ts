@@ -1,6 +1,6 @@
 import type { CacheStack } from '../CacheStack'
 import type { CacheGetOptions } from '../types'
-import { hasSensitiveHttpCacheQuery, normalizeHttpCacheUrl } from './httpCacheKeys'
+import { hasSensitiveHttpCacheHeaders, hasSensitiveHttpCacheQuery, normalizeHttpCacheUrl } from './httpCacheKeys'
 
 interface ExpressLikeRequest {
   method?: string
@@ -68,6 +68,11 @@ export function createExpressCacheMiddleware(cache: CacheStack, options: Express
 
       const rawUrl = req.originalUrl ?? req.url ?? '/'
       if (!options.keyResolver && hasSensitiveHttpCacheQuery(rawUrl)) {
+        next()
+        return
+      }
+
+      if (!options.keyResolver && hasSensitiveHttpCacheHeaders(req)) {
         next()
         return
       }

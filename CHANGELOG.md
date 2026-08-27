@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Hardened implicit Express/Hono URL caching so requests carrying common authentication headers (`authorization`, `cookie`, `x-api-key`, `x-session-id`, `x-auth-token`, `x-forwarded-user`) bypass implicit URL-only caching unless a custom `keyResolver` is supplied, preventing one user's authenticated response from being served to another.
+- Hardened tRPC middleware implicit context caching so requests with an authenticated request context (`user`, `session`, `auth`, `identity`, `principal`, `claims`, `currentUser`, `tenant`, or `req` in `ctx`) bypass implicit caching, and emit a startup warning when `allowImplicitContextCaching` is enabled without a `keyResolver`.
+- Emit a startup warning when `cacheGraphqlResolver` runs with implicit context caching (`allowImplicitContextCaching: true`) and no `keyResolver`, since implicit keys do not include the GraphQL request context.
+- Added `RedisInvalidationBus.requireSignature` so deployments can fail fast at construction when `signingSecret` is missing, preventing an unsigned invalidation channel that any Redis publisher could forge messages on.
+
 ## [4.0.0] — 2026-07-19
 
 ### Breaking

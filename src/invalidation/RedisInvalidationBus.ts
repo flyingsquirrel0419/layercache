@@ -11,10 +11,16 @@ interface RedisInvalidationBusOptions {
   /** Pub/sub channel name. Defaults to `layercache:invalidation`. */
   channel?: string
   /**
-   * Optional shared secret used to sign and verify invalidation messages.
+   * Shared secret used to sign and verify invalidation messages.
    * When configured, unsigned or invalidly signed messages are rejected.
    */
   signingSecret?: string | Buffer
+  /**
+   * Require a signing secret. When `true`, constructing the bus without a
+   * `signingSecret` throws instead of silently running an unsigned channel
+   * that any Redis publisher could forge messages on. Defaults to `false`.
+   */
+  requireSignature?: boolean
   /** Optional logger for invalid payloads or subscriber errors. */
   logger?: CacheLogger
 }
@@ -47,9 +53,17 @@ export class RedisInvalidationBus implements InvalidationBus {
     this.channel = options.channel ?? 'layercache:invalidation'
     this.logger = options.logger
     this.signingKey = options.signingSecret ? normalizeSigningSecret(options.signingSecret) : undefined
+    if (!this.signingKey && options.requireSignature === true) {
+      throw new Error(
+        'RedisInvalidationBus requires a signingSecret when requireSignature=true. ' +
+          'Without signing, any Redis publisher can forge invalidation messages on the channel.'
+      )
+    }
     if (!this.signingKey) {
       this.logger?.warn?.(
-        'RedisInvalidationBus is running without signingSecret; invalidation messages are unsigned.',
+        'RedisInvalidationBus is running without signingSecret; invalidation messages are unsigned. ' +
+          'Any client that can publish to the channel can forge invalidation messages. ' +
+          'Set signingSecret (or requireSignature=true) for shared or untrusted Redis channels.',
         {
           channel: this.channel
         }
