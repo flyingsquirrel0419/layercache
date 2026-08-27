@@ -5,12 +5,35 @@ import { createExpressCacheMiddleware } from '../../src/integrations/express'
 import { createFastifyLayercachePlugin } from '../../src/integrations/fastify'
 import { cacheGraphqlResolver } from '../../src/integrations/graphql'
 import { createHonoCacheMiddleware } from '../../src/integrations/hono'
+import { hasSensitiveHttpCacheHeaders } from '../../src/integrations/httpCacheKeys'
 import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 function makeCache() {
   return new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 }
+
+// ---------------------------------------------------------------------------
+// Sensitive HTTP header detection
+// ---------------------------------------------------------------------------
+describe('hasSensitiveHttpCacheHeaders', () => {
+  it('returns false for falsy and non-object inputs', () => {
+    expect(hasSensitiveHttpCacheHeaders(undefined)).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders(null)).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders('authorization')).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders(42)).toBe(false)
+  })
+
+  it('returns true for a nested headers record regardless of casing', () => {
+    expect(hasSensitiveHttpCacheHeaders({ headers: { Authorization: 'Bearer abc' } })).toBe(true)
+    expect(hasSensitiveHttpCacheHeaders({ headers: { cookie: 'session=abc' } })).toBe(true)
+  })
+
+  it('returns false when no sensitive headers are present', () => {
+    expect(hasSensitiveHttpCacheHeaders({ headers: { accept: 'application/json' } })).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders({})).toBe(false)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // HTTP stats handler
