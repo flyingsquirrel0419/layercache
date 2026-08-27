@@ -49,16 +49,21 @@ export class RedisInvalidationBus implements InvalidationBus {
 
   constructor(options: RedisInvalidationBusOptions) {
     this.publisher = options.publisher
-    this.subscriber = options.subscriber ?? options.publisher.duplicate()
     this.channel = options.channel ?? 'layercache:invalidation'
     this.logger = options.logger
-    this.signingKey = options.signingSecret ? normalizeSigningSecret(options.signingSecret) : undefined
+
+    const rawSecret = resolveSigningSecret(options.signingSecret)
+    this.signingKey = rawSecret ? normalizeSigningSecret(rawSecret) : undefined
+
     if (!this.signingKey && options.requireSignature === true) {
       throw new Error(
         'RedisInvalidationBus requires a signingSecret when requireSignature=true. ' +
           'Without signing, any Redis publisher can forge invalidation messages on the channel.'
       )
     }
+
+    this.subscriber = options.subscriber ?? options.publisher.duplicate()
+
     if (!this.signingKey) {
       this.logger?.warn?.(
         'RedisInvalidationBus is running without signingSecret; invalidation messages are unsigned. ' +
@@ -228,6 +233,17 @@ export class RedisInvalidationBus implements InvalidationBus {
 function normalizeSigningSecret(secret: string | Buffer): Buffer {
   const raw = Buffer.isBuffer(secret) ? secret : Buffer.from(secret, 'utf8')
   return createHash('sha256').update(raw).digest()
+}
+
+/** Treats zero-length strings and buffers as missing so they cannot pass as a configured secret. */
+function resolveSigningSecret(secret: string | Buffer | undefined): string | Buffer | undefined {
+  if (secret === undefined) {
+    return undefined
+  }
+  if (Buffer.isBuffer(secret)) {
+    return secret.byteLength > 0 ? secret : undefined
+  }
+  return secret.length > 0 ? secret : undefined
 }
 
 function isEqualSignature(actual: string, expected: string): boolean {

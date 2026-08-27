@@ -725,6 +725,41 @@ describe('createExpressCacheMiddleware', () => {
     expect(calls).toBe(1)
   })
 
+  it('bypasses implicit express caching when a differently-cased authorization header is present', async () => {
+    const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const response = {
+        setHeader: vi.fn(),
+        json: vi.fn((body: unknown) => body)
+      }
+
+      await middleware(
+        {
+          method: 'GET',
+          url: '/api/me',
+          headers: { Authorization: 'Bearer abc', 'X-API-Key': 'k' }
+        },
+        response,
+        () => {
+          calls += 1
+          response.json?.({ calls })
+        }
+      )
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
   it('allows custom express key resolvers to cache sensitive query URLs', async () => {
     const cache = makeCache()
     const setSpy = vi.spyOn(cache, 'set')
@@ -892,7 +927,10 @@ describe('createExpressCacheMiddleware', () => {
   it('respects custom key resolvers for private request contexts', async () => {
     const cache = makeCache()
     const middleware = createExpressCacheMiddleware(cache, {
-      keyResolver: (request) => `${request.method}:${request.url}:${String(request.headers?.['x-tenant-id'])}`
+      keyResolver: (request) => {
+        const headers = request.headers as Record<string, unknown> | undefined
+        return `${request.method}:${request.url}:${String(headers?.['x-tenant-id'])}`
+      }
     })
     let calls = 0
 
@@ -1371,6 +1409,34 @@ describe('createHonoCacheMiddleware', () => {
           method: 'GET',
           url: '/api/me',
           header: vi.fn((name: string) => (name === 'cookie' ? 'session=abc' : undefined))
+        },
+        header: vi.fn(),
+        json: vi.fn((body) => body)
+      }
+
+      await middleware(context, async () => {
+        calls += 1
+        context.json({ calls })
+      })
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
+  })
+
+  it('bypasses implicit hono caching when a differently-cased request header accessor is used', async () => {
+    const cache = makeCache()
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const context = {
+        req: {
+          method: 'GET',
+          url: '/api/me',
+          header: vi.fn((name: string) => (name === 'authorization' ? 'Bearer abc' : undefined))
         },
         header: vi.fn(),
         json: vi.fn((body) => body)

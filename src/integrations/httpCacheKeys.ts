@@ -74,16 +74,21 @@ export function hasSensitiveHttpCacheHeaders(request: unknown): boolean {
   return false
 }
 
+/** Reads a single header value from an accessor-bearing or plain-record header object. */
 function readHeader(record: Record<string, unknown>, name: string): string | undefined | null {
   if (typeof record.get === 'function' || typeof record.header === 'function') {
-    const accessor = (typeof record.get === 'function' ? record.get : record.header) as (
+    const method = (typeof record.get === 'function' ? record.get : record.header) as (
+      this: unknown,
       n: string
     ) => string | undefined | null
-    return accessor(name)
+    return method.call(record, name)
   }
 
-  if (typeof record[name] === 'string') {
-    return record[name] as string
+  // Plain records may use any casing (e.g. `Authorization`); match case-insensitively.
+  for (const [key, value] of Object.entries(record)) {
+    if (key.toLowerCase() === name && typeof value === 'string' && value !== '') {
+      return value
+    }
   }
 
   return undefined

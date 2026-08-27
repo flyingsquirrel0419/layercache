@@ -1073,7 +1073,7 @@ import { createTrpcCacheMiddleware } from 'layercache'
 
 // keyResolver is required: it must include every input and context attribute
 // that affects procedure output (including the authenticated user, if any).
-const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', {
+const cacheMiddleware = createTrpcCacheMiddleware<unknown, unknown, { id?: string }>(cache, 'trpc', {
   keyResolver: (input, path, _type, context) => `${context?.id ?? 'anon'}:${path}:${JSON.stringify(input)}`,
   ttl: 60_000
 })
