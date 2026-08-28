@@ -5,9 +5,9 @@ description: "Migrate from node-cache-manager, keyv, cacheable, and other cachin
 
 This guide helps you migrate from popular Node.js caching libraries to Layercache. Each section includes before/after code examples, API mappings, and key differences.
 
-## Upgrading to 4.1
+## Upgrading to 5.0
 
-Layercache 4.1 hardens cache isolation so authenticated responses are never served across users, and makes cross-instance invalidation fail closed.
+Layercache 5.0 is a major release that hardens cache isolation so authenticated responses are never served across users, and makes cross-instance invalidation fail closed.
 
 ### `createTrpcCacheMiddleware` and `cacheGraphqlResolver` require a `keyResolver`
 

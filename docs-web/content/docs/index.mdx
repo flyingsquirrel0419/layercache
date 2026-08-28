@@ -19,16 +19,16 @@ Every read follows the same path:
 
 Layercache keeps responses stable under pressure with stale serving, circuit breakers, and timeout guards.
 
-## Version 4.1 Highlights
+## Version 5.0 Highlights
 
-Layercache 4.1 hardens cache isolation and distributed invalidation:
+Layercache 5.0 is a major release because it hardens cache isolation so authenticated responses are never served across users:
 
+- **Breaking:** `createTrpcCacheMiddleware` and `cacheGraphqlResolver` now require a `keyResolver` — the `allowImplicitContextCaching` option is removed. Implicit path+input or argument-only keys could not distinguish authenticated callers.
 - Express and Hono middlewares bypass implicit URL-only caching when requests carry authentication headers (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-session-id`, `x-auth-token`, `x-forwarded-user`), so one user's authenticated response is never served to another. Provide a `keyResolver` to opt back in for safe keys.
-- `createTrpcCacheMiddleware` and `cacheGraphqlResolver` require a `keyResolver` and drop `allowImplicitContextCaching`, preventing caller-specific data from being cached under a shared key.
 - `RedisInvalidationBus` supports `requireSignature` to fail fast when a signing secret is missing, preventing forged invalidation messages on shared Redis channels.
 - The test suite is split into unit and real-Redis Vitest projects, and docker-compose Redis uses the configurable `REDIS_PORT`.
 
-Read the [migration guide](./migration#upgrading-to-41) before upgrading an existing deployment.
+Read the [migration guide](./migration#upgrading-to-50) before upgrading an existing deployment.
 
 ## Version 4.0 Highlights
 

@@ -1,6 +1,6 @@
 {
   "name": "layercache",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "description": "Production-ready multi-layer caching for Node.js. Stack memory + Redis + disk behind one API with stampede prevention, tag invalidation, stale serving, and full observability.",
   "keywords": [
     "cache",
