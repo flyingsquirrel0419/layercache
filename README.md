@@ -53,7 +53,16 @@ layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stamp
 
 ---
 
-## What's New in 4.0
+## What's New in 4.1
+
+- The Express and Hono cache middlewares no longer serve one user's authenticated response to another: requests carrying authentication headers (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-session-id`, `x-auth-token`, `x-forwarded-user`) bypass implicit URL-only caching unless you supply a `keyResolver`. Header names are matched case-insensitively.
+- `createTrpcCacheMiddleware` and `cacheGraphqlResolver` now require a `keyResolver` and drop the `allowImplicitContextCaching` option, so caller-specific procedure and resolver output can no longer be cached under a shared key.
+- `RedisInvalidationBus` gained `requireSignature` to fail fast when a signing secret is missing, preventing unsigned invalidation channels that any Redis publisher could forge messages on.
+- The test suite is split into unit and real-Redis Vitest projects (`npm test`, `npm run test:integration`, `npm run test:all`), and the local docker-compose Redis port is configurable via `REDIS_PORT`.
+
+See the [4.1 changelog](./CHANGELOG.md#410--2026-08-28) and the [migration guide](./docs/migration-guide.md#upgrading-to-41) before upgrading an existing deployment.
+
+### What's New in 4.0
 
 - Public `get()`, `getOrSet()`, `mget()`, `wrap()`, and namespace reads return `undefined` on misses while preserving intentional cached `null` values. Read-through fetchers cache `null` by default, and `getOrThrow()` throws only for `undefined`.
 - Structured `wrap()` argument keys use the collision-resistant `j2:` schema. Existing `j:` entries become cold misses and expire naturally.
@@ -62,7 +71,7 @@ layercache is a multi-layer cache (Memory → Redis → Disk) for Node.js. Stamp
 - Snapshot commits, protected `DiskLayer` reads, signed invalidation, HTTP credential handling, destructive CLI patterns, OpenTelemetry key attributes, and the docs playground trust boundary are hardened.
 - Benchmark TTLs now match the documented millisecond API, and the benchmark runner uses current `autocannon` dependencies with a clean npm audit.
 
-See the [4.0 changelog](./CHANGELOG.md#400--2026-07-16) and [migration guide](./docs/migration-guide.md#upgrading-to-40) before upgrading an existing deployment.
+See the [4.0 changelog](./CHANGELOG.md#400--2026-07-19) before upgrading an existing deployment.
 
 ---
 

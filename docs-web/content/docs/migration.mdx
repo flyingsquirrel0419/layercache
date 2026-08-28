@@ -5,6 +5,53 @@ description: "Migrate from node-cache-manager, keyv, cacheable, and other cachin
 
 This guide helps you migrate from popular Node.js caching libraries to Layercache. Each section includes before/after code examples, API mappings, and key differences.
 
+## Upgrading to 4.1
+
+Layercache 4.1 hardens cache isolation so authenticated responses are never served across users, and makes cross-instance invalidation fail closed.
+
+### `createTrpcCacheMiddleware` and `cacheGraphqlResolver` require a `keyResolver`
+
+Both wrappers previously accepted `allowImplicitContextCaching: true` to derive cache keys from the procedure path + input (tRPC) or resolver arguments (GraphQL). Those keys did not include the authenticated request context, so caller-specific results could be cached under a shared key and served to another user. The option is removed and `keyResolver` is now required.
+
+If your code passed `allowImplicitContextCaching: true`, add a `keyResolver` that includes every input and context attribute affecting the result:
+
+```tsx
+// Before (tRPC)
+const middleware = createTrpcCacheMiddleware(cache, 'proc', { allowImplicitContextCaching: true })
+
+// After (tRPC) — include the authenticated context in the key
+const middleware = createTrpcCacheMiddleware<unknown, unknown, { id?: string }>(cache, 'proc', {
+  keyResolver: (input, path, _type, context) => `${context?.id ?? 'anon'}:${path}:${JSON.stringify(input)}`
+})
+```
+
+```tsx
+// Before (GraphQL)
+const user = cacheGraphqlResolver(cache, 'user', resolver, { allowImplicitContextCaching: true })
+
+// After (GraphQL) — include the caller identity in the key
+const user = cacheGraphqlResolver(cache, 'user', resolver, {
+  keyResolver: (root, args) => `${root.userId}:${args.id}`
+})
+```
+
+### Express and Hono implicit caching skips authenticated requests
+
+When `allowPrivateCaching: true` is used without a `keyResolver`, the Express and Hono middlewares now bypass implicit URL-only caching for requests carrying authentication headers (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-session-id`, `x-auth-token`, `x-forwarded-user`). This prevents one user's authenticated response from being served to another. Provide a `keyResolver` that includes the caller identity if you need to cache such responses.
+
+### `RedisInvalidationBus.requireSignature`
+
+Add `requireSignature: true` so the bus throws at construction when `signingSecret` is missing. Zero-length secrets are treated as missing. Without signing, any client that can publish to the channel can forge invalidation messages:
+
+```tsx
+const bus = new RedisInvalidationBus({
+  publisher: redis,
+  subscriber: new Redis(process.env.REDIS_URL),
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET,
+  requireSignature: process.env.NODE_ENV === 'production'
+})
+```
+
 ## Upgrading to 4.0
 
 Layercache 4.0 resolves [issue #90](https://github.com/flyingsquirrel0419/layercache/issues/90) by giving cache misses a JavaScript-native `undefined` result while preserving intentional `null` values.
