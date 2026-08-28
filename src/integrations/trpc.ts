@@ -20,30 +20,31 @@ interface TrpcCacheMiddlewareContext<TInput = unknown, TResult = unknown, TConte
 
 interface TrpcCacheMiddlewareOptions<TInput, TContext> extends CacheGetOptions {
   /** Converts procedure input and metadata into a stable cache key suffix. */
-  keyResolver?: (input: TInput, path?: string, type?: string, context?: TContext) => string
-  /** Allow fallback key generation from procedure path and raw input. */
-  allowImplicitContextCaching?: boolean
+  keyResolver: (input: TInput, path?: string, type?: string, context?: TContext) => string
 }
 
 /**
  * Creates a tRPC middleware that caches successful procedure results.
+ *
+ * A `keyResolver` is required: procedure output can depend on authenticated
+ * request context, so the key must include every input and context attribute
+ * that affects the result. Implicit path+input keys do not distinguish
+ * authenticated callers and would leak one user's data to another.
  */
 export function createTrpcCacheMiddleware<TInput = unknown, TResult = unknown, TContext = unknown>(
   cache: CacheStack,
   prefix: string,
-  options: TrpcCacheMiddlewareOptions<TInput, TContext> = {}
+  options: TrpcCacheMiddlewareOptions<TInput, TContext> = {} as TrpcCacheMiddlewareOptions<TInput, TContext>
 ) {
-  if (!options.keyResolver && options.allowImplicitContextCaching !== true) {
+  if (!options.keyResolver) {
     throw new Error(
-      'createTrpcCacheMiddleware requires a keyResolver or allowImplicitContextCaching=true because procedure output may depend on request context.'
+      'createTrpcCacheMiddleware requires a keyResolver that includes every request attribute affecting procedure output, including authenticated context.'
     )
   }
 
   return async (context: TrpcCacheMiddlewareContext<TInput, TResult, TContext>) => {
     const input = await resolveTrpcInput(context)
-    const key = options.keyResolver
-      ? `${prefix}:${options.keyResolver(input, context.path, context.type, context.ctx)}`
-      : `${prefix}:${context.path ?? 'procedure'}:${JSON.stringify(input ?? null)}`
+    const key = `${prefix}:${options.keyResolver(input, context.path, context.type, context.ctx)}`
 
     const callerShouldCache = options.shouldCache
     const cacheOptions: CacheGetOptions = {

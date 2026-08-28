@@ -5,12 +5,35 @@ import { createExpressCacheMiddleware } from '../../src/integrations/express'
 import { createFastifyLayercachePlugin } from '../../src/integrations/fastify'
 import { cacheGraphqlResolver } from '../../src/integrations/graphql'
 import { createHonoCacheMiddleware } from '../../src/integrations/hono'
+import { hasSensitiveHttpCacheHeaders } from '../../src/integrations/httpCacheKeys'
 import { createTrpcCacheMiddleware } from '../../src/integrations/trpc'
 import { MemoryLayer } from '../../src/layers/MemoryLayer'
 
 function makeCache() {
   return new CacheStack([new MemoryLayer({ ttl: 60_000 })])
 }
+
+// ---------------------------------------------------------------------------
+// Sensitive HTTP header detection
+// ---------------------------------------------------------------------------
+describe('hasSensitiveHttpCacheHeaders', () => {
+  it('returns false for falsy and non-object inputs', () => {
+    expect(hasSensitiveHttpCacheHeaders(undefined)).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders(null)).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders('authorization')).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders(42)).toBe(false)
+  })
+
+  it('returns true for a nested headers record regardless of casing', () => {
+    expect(hasSensitiveHttpCacheHeaders({ headers: { Authorization: 'Bearer abc' } })).toBe(true)
+    expect(hasSensitiveHttpCacheHeaders({ headers: { cookie: 'session=abc' } })).toBe(true)
+  })
+
+  it('returns false when no sensitive headers are present', () => {
+    expect(hasSensitiveHttpCacheHeaders({ headers: { accept: 'application/json' } })).toBe(false)
+    expect(hasSensitiveHttpCacheHeaders({})).toBe(false)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // HTTP stats handler
@@ -480,30 +503,35 @@ describe('createTrpcCacheMiddleware', () => {
     expect(() => createTrpcCacheMiddleware(cache, 'proc')).toThrow(/requires a keyResolver/i)
   })
 
-  it('supports implicit context caching only when explicitly allowed', async () => {
+  it('separates authenticated callers when the keyResolver includes context', async () => {
     const cache = makeCache()
-    const middleware = createTrpcCacheMiddleware(cache, 'proc', { allowImplicitContextCaching: true })
+    const middleware = createTrpcCacheMiddleware<{ id: number }, { id: number; userId: string }, { userId: string }>(
+      cache,
+      'proc',
+      { keyResolver: (input, _path, _type, context) => `${context?.userId}:${input.id}` }
+    )
     let calls = 0
-    const ctx = {
-      path: 'listUsers',
-      type: 'query',
-      rawInput: { page: 1 },
-      next: async () => {
-        calls += 1
-        return { ok: true, data: ['a'] }
-      }
-    }
 
-    await middleware(ctx)
-    await middleware(ctx)
+    const run = (userId: string) =>
+      middleware({
+        path: 'getCurrentUser',
+        input: { id: 1 },
+        ctx: { userId },
+        next: async () => {
+          calls += 1
+          return { ok: true, data: { id: 1, userId } }
+        }
+      })
 
-    expect(calls).toBe(1)
+    await expect(run('user-a')).resolves.toEqual({ ok: true, data: { id: 1, userId: 'user-a' } })
+    await expect(run('user-b')).resolves.toEqual({ ok: true, data: { id: 1, userId: 'user-b' } })
+    expect(calls).toBe(2)
   })
 
   it('falls back to next() when cache returns undefined without invoking the fetch wrapper', async () => {
     const cache = makeCache()
     const getSpy = vi.spyOn(cache, 'get').mockResolvedValueOnce(undefined)
-    const middleware = createTrpcCacheMiddleware(cache, 'proc', { allowImplicitContextCaching: true })
+    const middleware = createTrpcCacheMiddleware(cache, 'proc', { keyResolver: () => 'ping' })
     const next = vi.fn(async () => ({ ok: true, data: { id: 1 } }))
 
     await expect(middleware({ next, rawInput: { id: 1 } })).resolves.toEqual({ ok: true, data: { id: 1 } })
@@ -617,6 +645,138 @@ describe('createExpressCacheMiddleware', () => {
 
     await run('one')
     await run('two')
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('bypasses implicit express caching when an authorization header is present', async () => {
+    const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const response = {
+        setHeader: vi.fn(),
+        json: vi.fn((body: unknown) => body)
+      }
+
+      await middleware(
+        {
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: 'Bearer abc' }
+        },
+        response,
+        () => {
+          calls += 1
+          response.json?.({ calls })
+        }
+      )
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('bypasses implicit express caching when a cookie header is present', async () => {
+    const cache = makeCache()
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const response = {
+        setHeader: vi.fn(),
+        json: vi.fn((body: unknown) => body)
+      }
+
+      await middleware(
+        {
+          method: 'GET',
+          url: '/api/me',
+          headers: { cookie: 'session=abc' }
+        },
+        response,
+        () => {
+          calls += 1
+          response.json?.({ calls })
+        }
+      )
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
+  })
+
+  it('still caches implicit express keys when only non-sensitive headers are present', async () => {
+    const cache = makeCache()
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const response = {
+        setHeader: vi.fn(),
+        json: vi.fn((body: unknown) => body)
+      }
+
+      await middleware(
+        {
+          method: 'GET',
+          url: '/public',
+          headers: { accept: 'application/json', 'x-request-id': 'r1' }
+        },
+        response,
+        () => {
+          calls += 1
+          response.json?.({ calls })
+        }
+      )
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(1)
+  })
+
+  it('bypasses implicit express caching when a differently-cased authorization header is present', async () => {
+    const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createExpressCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const response = {
+        setHeader: vi.fn(),
+        json: vi.fn((body: unknown) => body)
+      }
+
+      await middleware(
+        {
+          method: 'GET',
+          url: '/api/me',
+          headers: { Authorization: 'Bearer abc', 'X-API-Key': 'k' }
+        },
+        response,
+        () => {
+          calls += 1
+          response.json?.({ calls })
+        }
+      )
+    }
+
+    await run()
+    await run()
 
     expect(calls).toBe(2)
     expect(getSpy).not.toHaveBeenCalled()
@@ -790,7 +950,10 @@ describe('createExpressCacheMiddleware', () => {
   it('respects custom key resolvers for private request contexts', async () => {
     const cache = makeCache()
     const middleware = createExpressCacheMiddleware(cache, {
-      keyResolver: (request) => `${request.method}:${request.url}:${String(request.headers?.['x-tenant-id'])}`
+      keyResolver: (request) => {
+        const headers = request.headers as Record<string, unknown> | undefined
+        return `${request.method}:${request.url}:${String(headers?.['x-tenant-id'])}`
+      }
     })
     let calls = 0
 
@@ -1224,5 +1387,93 @@ describe('createHonoCacheMiddleware', () => {
 
     expect(getSpy).not.toHaveBeenCalled()
     expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('bypasses implicit hono caching when an authorization header is present', async () => {
+    const cache = makeCache()
+    const getSpy = vi.spyOn(cache, 'get')
+    const setSpy = vi.spyOn(cache, 'set')
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const context = {
+        req: {
+          method: 'GET',
+          path: '/api/me',
+          header: vi.fn((name: string) => (name === 'authorization' ? 'Bearer abc' : undefined))
+        },
+        header: vi.fn(),
+        json: vi.fn((body) => body)
+      }
+
+      await middleware(context, async () => {
+        calls += 1
+        context.json({ calls })
+      })
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  it('bypasses implicit hono caching when a cookie header is present', async () => {
+    const cache = makeCache()
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const context = {
+        req: {
+          method: 'GET',
+          url: '/api/me',
+          header: vi.fn((name: string) => (name === 'cookie' ? 'session=abc' : undefined))
+        },
+        header: vi.fn(),
+        json: vi.fn((body) => body)
+      }
+
+      await middleware(context, async () => {
+        calls += 1
+        context.json({ calls })
+      })
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
+  })
+
+  it('bypasses implicit hono caching when a differently-cased request header accessor is used', async () => {
+    const cache = makeCache()
+    const middleware = createHonoCacheMiddleware(cache, { allowPrivateCaching: true })
+    let calls = 0
+
+    const run = async () => {
+      const context = {
+        req: {
+          method: 'GET',
+          url: '/api/me',
+          header: vi.fn((name: string) => (name === 'authorization' ? 'Bearer abc' : undefined))
+        },
+        header: vi.fn(),
+        json: vi.fn((body) => body)
+      }
+
+      await middleware(context, async () => {
+        calls += 1
+        context.json({ calls })
+      })
+    }
+
+    await run()
+    await run()
+
+    expect(calls).toBe(2)
   })
 })

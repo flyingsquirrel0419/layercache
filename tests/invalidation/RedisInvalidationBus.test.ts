@@ -52,6 +52,90 @@ describe('RedisInvalidationBus', () => {
     subscriber.disconnect()
   })
 
+  it('requires a signing secret when requireSignature is enabled', () => {
+    const publisher = createTestRedis()
+    const subscriber = publisher.duplicate()
+
+    expect(
+      () =>
+        new RedisInvalidationBus({
+          publisher,
+          subscriber,
+          channel: 'layercache:test:required-signature',
+          requireSignature: true
+        })
+    ).toThrow(/requires a signingSecret/i)
+
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('accepts a signing secret when requireSignature is enabled', () => {
+    const publisher = createTestRedis()
+    const subscriber = publisher.duplicate()
+
+    expect(
+      () =>
+        new RedisInvalidationBus({
+          publisher,
+          subscriber,
+          channel: 'layercache:test:required-signature-configured',
+          signingSecret: 'shared-secret',
+          requireSignature: true
+        })
+    ).not.toThrow()
+
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+  it('rejects zero-length signing secrets when requireSignature is enabled', () => {
+    const publisher = createTestRedis()
+    const subscriber = publisher.duplicate()
+
+    expect(
+      () =>
+        new RedisInvalidationBus({
+          publisher,
+          subscriber,
+          channel: 'layercache:test:empty-string-secret',
+          signingSecret: '',
+          requireSignature: true
+        })
+    ).toThrow(/requires a signingSecret/i)
+
+    expect(
+      () =>
+        new RedisInvalidationBus({
+          publisher,
+          subscriber,
+          channel: 'layercache:test:empty-buffer-secret',
+          signingSecret: Buffer.alloc(0),
+          requireSignature: true
+        })
+    ).toThrow(/requires a signingSecret/i)
+
+    publisher.disconnect()
+    subscriber.disconnect()
+  })
+
+  it('does not create a subscriber before rejecting a missing required signature', () => {
+    const publisher = createTestRedis()
+    const duplicateSpy = vi.spyOn(publisher, 'duplicate')
+
+    expect(
+      () =>
+        new RedisInvalidationBus({
+          publisher,
+          channel: 'layercache:test:no-subscriber-on-reject',
+          requireSignature: true
+        })
+    ).toThrow(/requires a signingSecret/i)
+
+    expect(duplicateSpy).not.toHaveBeenCalled()
+
+    publisher.disconnect()
+  })
+
   it('logs handler errors without breaking the subscription', async () => {
     const publisher = createTestRedis()
     const subscriber = publisher.duplicate()

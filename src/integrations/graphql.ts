@@ -3,23 +3,22 @@ import type { CacheGetOptions } from '../types'
 
 interface GraphqlCacheOptions<TArgs extends unknown[]> extends CacheGetOptions {
   /** Converts resolver arguments into a stable cache key suffix. */
-  keyResolver?: (...args: TArgs) => string
-  /** Allow fallback key generation from resolver args when no `keyResolver` is provided. */
-  allowImplicitContextCaching?: boolean
+  keyResolver: (...args: TArgs) => string
 }
 
 /**
- * Wraps a GraphQL resolver with read-through caching.
+ * Wraps a GraphQL resolver with read-through caching. The key resolver must
+ * include every argument and request-context attribute that affects output.
  */
 export function cacheGraphqlResolver<TArgs extends unknown[], TResult>(
   cache: CacheStack,
   prefix: string,
   resolver: (...args: TArgs) => Promise<TResult>,
-  options: GraphqlCacheOptions<TArgs> = {}
+  options: GraphqlCacheOptions<TArgs> = {} as GraphqlCacheOptions<TArgs>
 ): (...args: TArgs) => Promise<TResult | undefined> {
-  if (!options.keyResolver && options.allowImplicitContextCaching !== true) {
+  if (!options.keyResolver) {
     throw new Error(
-      'cacheGraphqlResolver requires a keyResolver or allowImplicitContextCaching=true because resolver output may depend on request context.'
+      'cacheGraphqlResolver requires a keyResolver that includes every resolver argument and request-context attribute affecting output.'
     )
   }
 

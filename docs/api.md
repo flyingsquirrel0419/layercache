@@ -984,7 +984,12 @@ import { RedisInvalidationBus } from 'layercache'
 const bus = new RedisInvalidationBus({
   publisher: redis,
   subscriber: new Redis(),
-  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET
+  // Sign messages with HMAC-SHA256 so subscribers can verify authenticity.
+  // Without signing, any client that can publish to the channel can forge
+  // invalidation messages. Use requireSignature: true to fail fast when the
+  // secret is missing in a given environment.
+  signingSecret: process.env.LAYERCACHE_INVALIDATION_SECRET,
+  requireSignature: process.env.NODE_ENV === 'production'
 })
 
 new CacheStack([...], {
@@ -1070,7 +1075,12 @@ app.use('/api/*', createHonoCacheMiddleware(cache, { ttl: 60_000 }))
 ```ts
 import { createTrpcCacheMiddleware } from 'layercache'
 
-const cacheMiddleware = createTrpcCacheMiddleware(cache, 'trpc', { ttl: 60_000 })
+// keyResolver is required: it must include every input and context attribute
+// that affects procedure output (including the authenticated user, if any).
+const cacheMiddleware = createTrpcCacheMiddleware<unknown, unknown, { id?: string }>(cache, 'trpc', {
+  keyResolver: (input, path, _type, context) => `${context?.id ?? 'anon'}:${path}:${JSON.stringify(input)}`,
+  ttl: 60_000
+})
 export const cachedProcedure = t.procedure.use(cacheMiddleware)
 ```
 
