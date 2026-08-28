@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened implicit Express/Hono URL caching so requests carrying common authentication headers (`authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-session-id`, `x-auth-token`, `x-forwarded-user`) bypass implicit URL-only caching unless a custom `keyResolver` is supplied, preventing one user's authenticated response from being served to another. Header names are matched case-insensitively, and header accessors (`Headers#get`, `get()`/`header()`) are invoked with the correct receiver.
 - Added `RedisInvalidationBus.requireSignature` so deployments can fail fast at construction when `signingSecret` is missing, preventing an unsigned invalidation channel that any Redis publisher could forge messages on. Zero-length strings and buffers are treated as missing secrets, and the requirement is validated before a default subscriber is created.
 
+### Changed
+
+- Reworked the test suite around two Vitest projects: `npm test` now runs only the unit project, `npm run test:integration` runs Redis‑backed suites against a live server, and `npm run test:all` runs both. The legacy `scripts/run-integration-tests.mjs` and `vitest.integration.config.ts` were removed, and `get-port` was added as a dev dependency for dynamic Redis port selection in local tests. The docker‑compose Redis port is now configurable via the `REDIS_PORT` environment variable.
+
 ## [4.0.0] — 2026-07-19
 
 ### Breaking
